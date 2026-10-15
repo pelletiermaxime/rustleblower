@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Rustleblower
+Comment=Review connections and manage OpenSnitch application rules
+Exec=rustleblower
+Icon=dev.rustleblower.Rustleblower
+Terminal=false
+Categories=Network;Security;
+StartupNotify=true

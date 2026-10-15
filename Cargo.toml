@@ -1,0 +1,63 @@
+[package]
+name = "rustleblower"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "A small native OpenSnitch frontend"
+repository = "https://github.com/pelletiermaxime/rustleblower"
+rust-version = "1.99"
+
+[features]
+default = ["desktop"]
+desktop = ["dep:gpui-kit", "dep:gpui", "dep:gpui_platform", "dep:raw-window-handle", "dep:x11rb", "dep:log"]
+headless-tests = ["desktop", "gpui/test-support", "gpui-kit/test-support", "gpui_platform/test-support", "dep:gpui_wgpu", "dep:image"]
+
+[dependencies]
+anyhow = "1"
+chrono = { version = "0.4", default-features = false, features = ["std"] }
+clap = { version = "4", features = ["derive"] }
+futures-util = "0.3"
+# The unchanged daemon uses its UDS path as :authority. Enable only our scoped
+# server compatibility patch; ordinary HTTP authorities still validate normally.
+h2 = { version = "=0.4.20", features = ["opensnitch-uds-authority"] }
+gpui-kit = { version = "=0.7.3", features = ["gpui-fast"], optional = true }
+gpui = { package = "gpui-fast", version = "=0.1.7", default-features = false, features = ["wayland", "x11"], optional = true }
+gpui_platform = { package = "gpui-fast-platform", version = "=0.1.7", default-features = false, features = ["font-kit", "wayland", "x11"], optional = true }
+gpui_wgpu = { package = "gpui-fast-wgpu", version = "=0.1.7", optional = true, features = ["test-support"] }
+image = { version = "0.25", default-features = false, features = ["png"], optional = true }
+prost = "0.13"
+log = { version = "0.4", optional = true }
+raw-window-handle = { version = "0.6", optional = true }
+x11rb = { version = "0.13", features = ["randr"], optional = true }
+rusqlite = { version = "0.37", features = ["bundled", "backup"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["raw_value", "arbitrary_precision"] }
+sha2 = "0.10"
+tempfile = "3"
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "net", "signal", "macros"] }
+tokio-stream = { version = "0.1", features = ["net"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+tonic = { version = "0.12", features = ["transport"] }
+tower = { version = "0.4", features = ["util"] }
+
+[dev-dependencies]
+hyper-util = { version = "0.1", features = ["tokio"] }
+regex = "1"
+
+[patch.crates-io]
+# Generated from a checksum-verified release and patches/h2-opensnitch.patch.
+# Run scripts/prepare_dependencies.py or use scripts/cargo.py on a fresh checkout.
+h2 = { path = ".deps/h2-0.4.20" }
+
+[profile.dev]
+debug = 0
+
+[profile.dev.package.gpui-fast]
+opt-level = 2
+
+[profile.dev.package.taffy]
+opt-level = 2
+
+[profile.release]
+lto = "thin"
+strip = true

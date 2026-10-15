@@ -1,0 +1,94 @@
+name: Linux checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      packages:
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: linux-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Linux build and GPU test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config cmake clang patch dpkg-dev curl file \
+            libssl-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev \
+            libfontconfig1-dev libfreetype-dev libxcb1-dev libx11-dev libxi-dev \
+            libxcursor-dev libxrandr-dev libegl1 mesa-vulkan-drivers fonts-dejavu-core
+      - name: Install pinned Rust
+        run: rustup toolchain install 1.99.0 --profile minimal --component rustfmt --component clippy
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: linux-x86_64
+          cache-on-failure: true
+      - name: Prepare scoped transport patch and fetch dependencies
+        run: python3 scripts/cargo.py fetch --locked
+      - name: Formatting
+        run: python3 scripts/cargo.py fmt --all --check
+      - name: Verification helper guards
+        run: python3 -m unittest discover -s tests -p 'test_*.py' -v
+      - name: Clippy
+        run: python3 scripts/cargo.py clippy --all-targets --all-features --locked -- -D warnings
+      - name: Core protocol and persistence tests
+        run: python3 scripts/cargo.py test --no-default-features --locked
+      - name: Background GPU and input journeys
+        run: |
+          for feature in all popup-preferences countdown checksums history-tools statistics nodes daemon-preferences; do
+            python3 scripts/verify-headless.py --feature "$feature" --timeout 1200
+          done
+      - name: Preserve GPU proof
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: linux-gpu-proof
+          path: .verification/headless/
+          include-hidden-files: true
+          retention-days: 7
+          if-no-files-found: warn
+      - name: Check release tag and notes
+        if: inputs.packages
+        run: |
+          python3 - <<'PYCODE'
+          import os, pathlib, tomllib
+          version = tomllib.loads(pathlib.Path('Cargo.toml').read_text())['package']['version']
+          assert os.environ['GITHUB_REF_NAME'] == f'v{version}', 'Tag and Cargo version differ'
+          assert pathlib.Path(f'docs/releases/v{version}.md').is_file(), 'Release notes missing'
+          PYCODE
+      - name: Build Linux release
+        if: inputs.packages
+        run: python3 scripts/cargo.py build --release --locked
+      - name: Create AppImage, Debian package and archive
+        if: inputs.packages
+        run: bash scripts/package-linux.sh "$GITHUB_REF_NAME"
+      - name: Verify packages on clean Ubuntu
+        if: inputs.packages
+        run: python3 scripts/verify-packages.py
+      - name: Preserve Linux packages
+        if: inputs.packages
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: linux-packages
+          path: target/packages/*
+          if-no-files-found: error
+          compression-level: 0

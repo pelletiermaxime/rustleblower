@@ -1,0 +1,41 @@
+--- Cargo.toml
++++ Cargo.toml
+@@ -48,6 +48,7 @@
+ features = ["stream"]
+ 
+ [features]
++opensnitch-uds-authority = []
+ stream = []
+ unstable = []
+ 
+--- src/server.rs
++++ src/server.rs
+@@ -1703,6 +1703,28 @@
+         if let Some(authority) = pseudo.authority {
+             let maybe_authority = uri::Authority::from_maybe_shared(authority.clone().into_inner());
+             parts.authority = Some(maybe_authority.or_else(|why| {
++                // Rustleblower only listens on a local Unix socket. OpenSnitch's
++                // unchanged Go client uses the socket path as :authority, while
++                // newer C-core clients may percent-encode it. It is a transport
++                // identifier, never a host used for routing or authentication.
++                // Scope the exception to the five UI RPCs and path-shaped values;
++                // preserve ordinary HTTP validation everywhere else.
++                #[cfg(feature = "opensnitch-uds-authority")]
++                if !is_connect
++                    && matches!(
++                        pseudo.path.as_deref(),
++                        Some("/protocol.UI/Ping"
++                            | "/protocol.UI/Subscribe"
++                            | "/protocol.UI/AskRule"
++                            | "/protocol.UI/Notifications"
++                            | "/protocol.UI/PostAlert")
++                    )
++                    && (authority.starts_with('/')
++                        || authority.contains("%2F")
++                        || authority.contains("%2f"))
++                {
++                    return Ok(uri::Authority::from_static("localhost"));
++                }
+                 malformed!(
+                     "malformed headers: malformed authority ({:?}): {}",
+                     authority,

@@ -1,0 +1,10 @@
+[package]
+name = "rustleblower-protocol-generator"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+[dependencies]
+tonic-build = "=0.12.3"
+prost-build = "=0.13.5"

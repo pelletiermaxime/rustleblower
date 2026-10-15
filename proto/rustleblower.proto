@@ -1,0 +1,206 @@
+// SPDX-License-Identifier: MIT
+// Rustleblower's interoperability contract. Numeric tags, enum values and RPC
+// paths match the OpenSnitch 1.7.2 wire interface. This is not a copy of its
+// implementation or explanatory comments. See README.md in this directory.
+syntax = "proto3";
+package protocol;
+
+service UI {
+  rpc Subscribe(ClientConfig) returns (ClientConfig);
+  rpc Notifications(stream NotificationReply) returns (stream Notification);
+  rpc AskRule(Connection) returns (Rule);
+  rpc Ping(PingRequest) returns (PingReply);
+  rpc PostAlert(Alert) returns (MsgResponse);
+}
+
+// Session inventory and asynchronous commands.
+message ClientConfig {
+  uint64 id = 1;
+  string name = 2;
+  string version = 3;
+  bool is_firewall_running = 4;
+  string config = 5;
+  uint32 log_level = 6;
+  repeated Rule rules = 7;
+  SysFirewall system_firewall = 8;
+}
+message Notification {
+  uint64 id = 1;
+  string client_name = 2;
+  string server_name = 3;
+  Action type = 4;
+  string data = 5;
+  repeated Rule rules = 6;
+  SysFirewall sys_firewall = 7;
+}
+message NotificationReply {
+  uint64 id = 1;
+  NotificationReplyCode code = 2;
+  string data = 3;
+}
+enum NotificationReplyCode { OK = 0; ERROR = 1; }
+enum Action {
+  NONE = 0;
+  ENABLE_INTERCEPTION = 1;
+  DISABLE_INTERCEPTION = 2;
+  ENABLE_FIREWALL = 3;
+  DISABLE_FIREWALL = 4;
+  RELOAD_FW_RULES = 5;
+  CHANGE_CONFIG = 6;
+  ENABLE_RULE = 7;
+  DISABLE_RULE = 8;
+  DELETE_RULE = 9;
+  CHANGE_RULE = 10;
+  LOG_LEVEL = 11;
+  STOP = 12;
+  TASK_START = 13;
+  TASK_STOP = 14;
+}
+
+// Permission requests and daemon-owned application policies.
+message Connection {
+  string protocol = 1;
+  string src_ip = 2;
+  uint32 src_port = 3;
+  string dst_ip = 4;
+  string dst_host = 5;
+  uint32 dst_port = 6;
+  uint32 user_id = 7;
+  uint32 process_id = 8;
+  string process_path = 9;
+  string process_cwd = 10;
+  repeated string process_args = 11;
+  map<string, string> process_env = 12;
+  map<string, string> process_checksums = 13;
+  repeated StringInt process_tree = 14;
+}
+message Rule {
+  int64 created = 1;
+  string name = 2;
+  string description = 3;
+  bool enabled = 4;
+  bool precedence = 5;
+  bool nolog = 6;
+  string action = 7;
+  string duration = 8;
+  Operator operator = 9;
+}
+message Operator {
+  string type = 1;
+  string operand = 2;
+  string data = 3;
+  bool sensitive = 4;
+  repeated Operator list = 5;
+}
+message StringInt { string key = 1; uint32 value = 2; }
+
+// Reported counters and connection events are distinct from permission replies.
+message PingRequest { uint64 id = 1; Statistics stats = 2; }
+message PingReply { uint64 id = 1; }
+message Statistics {
+  string daemon_version = 1;
+  uint64 rules = 2;
+  uint64 uptime = 3;
+  uint64 dns_responses = 4;
+  uint64 connections = 5;
+  uint64 ignored = 6;
+  uint64 accepted = 7;
+  uint64 dropped = 8;
+  uint64 rule_hits = 9;
+  uint64 rule_misses = 10;
+  map<string, uint64> by_proto = 11;
+  map<string, uint64> by_address = 12;
+  map<string, uint64> by_host = 13;
+  map<string, uint64> by_port = 14;
+  map<string, uint64> by_uid = 15;
+  map<string, uint64> by_executable = 16;
+  repeated Event events = 17;
+}
+message Event {
+  string time = 1;
+  Connection connection = 2;
+  Rule rule = 3;
+  int64 unixnano = 4;
+}
+
+// These messages retain reported process and system-firewall metadata.
+message Process {
+  uint64 pid = 1;
+  uint64 ppid = 2;
+  uint64 uid = 3;
+  string comm = 4;
+  string path = 5;
+  repeated string args = 6;
+  map<string, string> env = 7;
+  string cwd = 8;
+  map<string, string> checksums = 9;
+  uint64 io_reads = 10;
+  uint64 io_writes = 11;
+  uint64 net_reads = 12;
+  uint64 net_writes = 13;
+  repeated StringInt process_tree = 14;
+}
+message SysFirewall {
+  bool enabled = 1;
+  uint32 version = 2;
+  repeated FwChains system_rules = 3;
+}
+message FwChains { FwRule rule = 1; repeated FwChain chains = 2; }
+message FwChain {
+  string name = 1;
+  string table = 2;
+  string family = 3;
+  string priority = 4;
+  string type = 5;
+  string hook = 6;
+  string policy = 7;
+  repeated FwRule rules = 8;
+}
+message FwRule {
+  string table = 1;
+  string chain = 2;
+  string uuid = 3;
+  bool enabled = 4;
+  uint64 position = 5;
+  string description = 6;
+  string parameters = 7;
+  repeated Expressions expressions = 8;
+  string target = 9;
+  string target_parameters = 10;
+}
+message Expressions { Statement statement = 1; }
+message Statement {
+  string op = 1;
+  string name = 2;
+  repeated StatementValues values = 3;
+}
+message StatementValues { string key = 1; string value = 2; }
+
+// Alerts have a sparse oneof: tag 7 is intentionally absent.
+message MsgResponse { uint64 id = 1; }
+message Alert {
+  uint64 id = 1;
+  Type type = 2;
+  Action action = 3;
+  Priority priority = 4;
+  What what = 5;
+  oneof data {
+    string text = 6;
+    Process proc = 8;
+    Connection conn = 9;
+    Rule rule = 10;
+    FwRule fwrule = 11;
+  }
+  enum Type { ERROR = 0; WARNING = 1; INFO = 2; }
+  enum Action { NONE = 0; SHOW_ALERT = 1; SAVE_TO_DB = 2; }
+  enum Priority { LOW = 0; MEDIUM = 1; HIGH = 2; }
+  enum What {
+    GENERIC = 0;
+    PROC_MONITOR = 1;
+    FIREWALL = 2;
+    CONNECTION = 3;
+    RULE = 4;
+    NETLINK = 5;
+    KERNEL_EVENT = 6;
+  }
+}

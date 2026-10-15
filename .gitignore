@@ -1,0 +1,8 @@
+/target/
+/.deps/
+/.verification/
+*.sqlite3*
+*.sock
+__pycache__/
+
+/tools/protocol-generator/target/
