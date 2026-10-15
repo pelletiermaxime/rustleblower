@@ -655,6 +655,8 @@ fn headless_checksum_review() {
         }
     });
     let mut cx = context();
+    // Ubuntu release runners use DejaVu; this catches first-click layout shifts.
+    cx.update(|cx| Theme::global_mut(cx).font_family = "DejaVu Sans".into());
     let prompt =
         cx.update(|cx| super::prompt_window::open(backend.handle.clone(), 1., false, cx).unwrap());
     settle(&mut cx);
@@ -662,6 +664,11 @@ fn headless_checksum_review() {
     let before = cx.update(|cx| cx.windows());
     click(&mut cx, prompt, "prompt-checksums");
     settle(&mut cx);
+    capture(
+        &mut cx,
+        prompt,
+        &evidence.join("checksum-after-first-click.png"),
+    );
     let review = cx.update(|cx| {
         cx.windows()
             .into_iter()

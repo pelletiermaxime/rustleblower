@@ -123,3 +123,11 @@ requests; never generate real firewall traffic just to produce a prompt.
 - A decision in history records the chosen reply, not daemon enforcement.
 - Native close/minimize and restoration are source-backed entry points; the
   current automated foreground flow does not assert those compositor behaviors.
+
+## Release font regression
+
+The checksum journey explicitly uses DejaVu Sans, matching Ubuntu runners, and
+retains `checksum-after-first-click.png`. Pausing review must keep its status
+on one line so the review button does not move between pointer down/up. The
+status puts the finite request limit and fallback before the review label.
+The focused checksum and countdown journeys must pass through actual input.

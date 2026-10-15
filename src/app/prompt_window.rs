@@ -396,13 +396,36 @@ impl Render for PromptWindow {
                         .map(|session| session.name)
                         .unwrap_or_else(|| "Disconnected".into())
                 )))
-            .child(div().text_sm().text_color(muted).child(format!(
-                "{} pending · {}{} once in {}s if unanswered",
-                prompts.len(),
-                if prompt.reviewing { "Reviewing · countdown paused; request limit: " } else { "" },
-                prompt.initial.fallback.unwrap_or(self.backend.timeout_action).action(),
-                seconds
-            )))
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(muted)
+                    .truncate()
+                    .flex_shrink_0()
+                    .child(if prompt.reviewing {
+                        format!(
+                            "{} pending · request limit {}s · {} once · Reviewing (paused)",
+                            prompts.len(),
+                            seconds,
+                            prompt
+                                .initial
+                                .fallback
+                                .unwrap_or(self.backend.timeout_action)
+                                .action()
+                        )
+                    } else {
+                        format!(
+                            "{} pending · {} once in {}s if unanswered",
+                            prompts.len(),
+                            prompt
+                                .initial
+                                .fallback
+                                .unwrap_or(self.backend.timeout_action)
+                                .action(),
+                            seconds
+                        )
+                    }),
+            )
             .child(
                 div()
                     .flex()

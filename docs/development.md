@@ -683,3 +683,10 @@ daemon. These are installation/library/startup checks, separate from GPU/input
 proof. A release uses a matching Cargo version, annotated tag and
 `docs/releases/v<version>.md`, and publishes only after all checks/packages pass.
 The first release is explicitly marked as a development prerelease.
+
+The initial v0.1.0 tag failed its GPU gate and has no published release. Ubuntu's
+DejaVu font exposed a countdown-status wrap that moved a checksum button between
+pointer down/up. The status now stays on one line; the checksum journey pins
+that font and retains its first-click state. v0.1.1 is the first publication
+candidate after that correction; the original tag remains immutable. Checksum
+review also resolves the requesting session independently of the browsed node.

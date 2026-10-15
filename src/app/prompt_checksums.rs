@@ -131,9 +131,7 @@ pub(super) fn open(
         }
     }
     let node = backend
-        .status()
-        .session
-        .filter(|node| node.id == session)
+        .session(session)
         .ok_or_else(|| {
             anyhow::anyhow!("The daemon changed; this request's rules can no longer be updated")
         })?
