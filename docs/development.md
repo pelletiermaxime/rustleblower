@@ -342,7 +342,7 @@ FerryDock.
 `proto/rustleblower.proto` is the MIT-licensed Rustleblower interoperability
 contract. It preserves daemon-compatible wire tags, scalar types, enum values,
 package and RPC paths. `src/protocol.rs` is generated from that local schema with
-the pinned MIT-licensed Prost/Tonic tools; it contains no imported upstream
+the pinned Prost (Apache-2.0) and Tonic (MIT) generators; it contains no imported upstream
 implementation or explanatory comments. The initially imported bindings were
 replaced before the first published commit. The daemon itself remains a separate
 GPL-licensed program and is not bundled.

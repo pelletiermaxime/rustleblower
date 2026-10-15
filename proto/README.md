@@ -11,7 +11,7 @@ The interoperability reference is the daemon's public
 [UI interface](https://github.com/evilsocket/opensnitch/blob/v1.7.2/proto/ui.proto).
 The initial imported generated file was replaced before Rustleblower's first
 published commit/release. Current `src/protocol.rs` is generated exclusively from
-this local schema with the MIT-licensed Prost/Tonic tools.
+this local schema with the Prost (Apache-2.0) and Tonic (MIT) generators.
 
 Normal builds use the checked-in Rust file and do not need `protoc`. To regenerate
 intentionally, install `protoc`, then run from the repository root:
