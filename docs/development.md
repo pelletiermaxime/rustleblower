@@ -782,6 +782,16 @@ proof. A release uses a matching Cargo version, annotated tag and
 `docs/releases/v<version>.md`, and publishes only after all checks/packages pass.
 The first release is explicitly marked as a development prerelease.
 
+Ubuntu 24.04's AppArmor restriction on unprivileged user namespaces must be
+relaxed on the disposable GitHub runner before running the isolated HTTP
+fixtures. CI changes that runner-only sysctl and executes a namespace preflight;
+the helper still rejects shared networking, root host mappings and non-loopback
+interfaces. This does not change any developer machine or application behavior.
+See [Docker's Ubuntu namespace guidance](https://docs.docker.com/engine/security/rootless/)
+for the distribution restriction. The failed `v0.2.0` tag is retained: that run
+passed Clippy but stopped at UID mapping before core tests began. The corrected
+prerelease uses `v0.2.1`; published and failed tags are not rewritten.
+
 The initial v0.1.0 tag failed its GPU gate and has no published release. Ubuntu's
 DejaVu font exposed a countdown-status wrap that moved a checksum button between
 pointer down/up. The status now stays on one line; the checksum journey pins
