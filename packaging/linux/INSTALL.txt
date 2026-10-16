@@ -22,6 +22,10 @@ Tar archive:
   Extract the archive, open a desktop terminal in the extracted directory,
   and run: ./rustleblower
   Optional installation: install -Dm755 rustleblower ~/.local/bin/rustleblower
+  To add the application launcher and its colour mascot icons:
+    install -Dm644 dev.rustleblower.Rustleblower.desktop ~/.local/share/applications/dev.rustleblower.Rustleblower.desktop
+    mkdir -p ~/.local/share/icons
+    cp -R share/icons/hicolor ~/.local/share/icons/
 
 The archive uses system libraries. On Ubuntu/Debian, install the runtime
 libraries if they are missing:

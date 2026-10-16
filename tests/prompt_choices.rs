@@ -73,6 +73,53 @@ fn durations_actions_and_advanced_constraints_produce_complete_compatible_rules(
 }
 
 #[test]
+fn simple_destination_scopes_keep_the_app_and_never_add_a_port_or_wildcard() {
+    let con = connection();
+    for (key, field, value) in [
+        ("app-host", "dest.host", con.dst_host.as_str()),
+        ("app-address", "dest.ip", con.dst_ip.as_str()),
+    ] {
+        let rule = choice::rule(
+            &con,
+            Decision::Allow,
+            1,
+            &Choice {
+                target: key.into(),
+                duration: "12h".into(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let conditions = rule.operator.unwrap().list;
+        assert_eq!(conditions.len(), 2);
+        assert!(
+            conditions
+                .iter()
+                .any(|op| op.operand == "process.path" && op.data == con.process_path)
+        );
+        assert!(
+            conditions
+                .iter()
+                .any(|op| op.r#type == "simple" && op.operand == field && op.data == value)
+        );
+    }
+    let mut unknown = con.clone();
+    unknown.process_path.clear();
+    assert!(
+        !choice::targets(&unknown)
+            .iter()
+            .any(|target| target.key.starts_with("app-"))
+    );
+    let mut ip_host = con;
+    ip_host.dst_host = ip_host.dst_ip.clone();
+    assert!(
+        !choice::targets(&ip_host)
+            .iter()
+            .any(|target| target.key == "app-host")
+    );
+}
+
+#[test]
 fn generated_domain_network_appimage_and_checksum_targets_match_the_observed_context() {
     let mut con = connection();
     con.dst_ip = "2001:db8:1234:5678::42".into();

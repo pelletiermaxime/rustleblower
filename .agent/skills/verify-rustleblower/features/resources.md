@@ -12,9 +12,15 @@ history remains bounded and reports any loss.
   review. Input does not create tasks or retain event queues; queued requests
   expire independently. Shorter RPC deadlines retain a 100 ms reply margin.
 - `resource-ingestion`: telemetry has command-count and memory budgets.
+- `resource-icons`: two background lookup/decode workers, 128 cached 64-pixel
+  icons/misses for 60 seconds, 2048 desktop entries / 8 MiB per scan and 1 MiB
+  encoded icon input. PNG decoding has dimension/allocation limits; SVG image
+  references are disabled. The `permission-icons` GPU flow holds both workers
+  and requires an immediate permission reply with initials still available.
 - `resource-retention`: old history expires and a conservative disk target applies.
 - `resource-history-tools`: a shared 200-row page, eight 256-byte AND conditions,
-  4-KiB column settings and background 32-row legacy indexing. The command text
+  16-KiB presentation settings (nineteen finite widths, one coalesced snapshot/
+  background writer) and background 32-row legacy indexing. The command text
   is at most 8 KiB/64 arguments; metadata allocations share ingestion/retention
   accounting. Export snapshots source files up to 4 GiB, bounds the private copy
   at 8 GiB and streams at most 256 MiB with 512-KiB reader caches and a 16-KiB
@@ -102,3 +108,34 @@ Preconditions: disposable socket/database, no real firewall requests or policy c
 - Disk accounting reserves space for indexes/WAL but is not an OS quota.
 - Foreground overload-banner rendering and long-duration RSS plateau are not covered
   by the default UI flow. Report those boundaries rather than inferring them.
+
+## Alert archive
+
+Alerts share normal ingestion permits and the writer queue while permission
+choices bypass them. Each input is 64 KiB encoded / 256 KiB retained, with a
+4-MiB temporary preparation reservation shrunk to queued allocations. The disk
+archive is at most 10,000 rows / 2 MiB logical data plus existing SQLite overhead,
+and shares age/history-budget maintenance. One 200-row summary page, one selected
+bounded detail, one read/export worker and a 4-MiB captured export keep view state
+bounded. See the [alert feature](alerts.md) for exact caps and proof boundaries.
+
+## Desktop notices
+
+Eight bounded node/summary events, one pending latest notice, one known server ID
+and one pending Open action; a single worker performs all session-bus I/O. Burst
+coalescing and a 500-ms interval limit Notify traffic; connection/method timeouts
+and cancellation avoid per-notice threads. Service-owned expiry/visibility is not
+a memory or delivery guarantee. Alert archival and permission responses have no
+dependency on this worker. The desktop-notifications feature specifies exact
+bounds, private-bus failure proof and GPU toggle/restoration proof.
+
+## Live inspections
+
+Four daemon read tasks, one latest 1-MiB update each; one dashboard inspection and
+one global parse permit. Socket view retention is capped at 10,000 rows / 4 MiB
+including raw bytes and measured row allocations. Process indexes are bounded and
+paths normalized once per PID. Display pages contain 200 rows. Generic process/
+Sysinfo fields retain at most 128 names; preview is at most 2,048 lines × 512 bytes.
+Raw JSON copy preserves the admitted complete snapshot. Read tasks never consume
+the sixteen policy-confirmation slots or await SQLite. The live feature map
+defines stop retry, stale expiry, session-generation checks and exact proof.

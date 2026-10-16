@@ -46,6 +46,7 @@ pub(super) fn open(
                 ..Default::default()
             }),
             app_id: Some("dev.rustleblower.Rustleblower".into()),
+            icon: Some(super::brand_icons::window_icon()),
             ..Default::default()
         },
         cx,
@@ -215,9 +216,11 @@ impl Tools {
         self.busy = true;
         let store = self.history.settings.clone();
         let options = self.options.clone();
-        let task = cx
-            .background_executor()
-            .spawn(async move { store.save(options).map_err(|error| error.to_string()) });
+        let task = cx.background_executor().spawn(async move {
+            store
+                .save_columns(options)
+                .map_err(|error| error.to_string())
+        });
         cx.spawn_in(window, async move |this, cx| {
             let result = task.await;
             let _ = this.update_in(cx, |this, _, cx| {

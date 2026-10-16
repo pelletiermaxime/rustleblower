@@ -18,7 +18,7 @@ data lives in SQLite; changes go through the existing daemon notification stream
 - `rules-editor`: select → Edit…; or New application rule → All rule options….
   Edit metadata, action, preset/custom duration, priority, logging and a flat AND
   group of conditions. Match fields include all installed 1.7.2 operands;
-  use Equals/Regular expression/CIDR/watched-directory as appropriate. Match JSON
+  use Equals/Regular expression/CIDR/watched-directory or an inclusive source/destination port range as appropriate. Match JSON
   roundtrips the operator. Save waits for confirmation. A rename confirms the new
   rule before deleting the old one; partial failure remains visible.
 - `rules-duplicate`: select → Duplicate… → change the draft → Save rule. Cancel
@@ -31,6 +31,22 @@ data lives in SQLite; changes go through the existing daemon notification stream
   selected while paging. Clear selection, or change the filter, clears them.
   The review can include every matching rule across all pages. Stop waits for the
   current reply; retry sends only remaining rules. Delete has a review step.
+- `rules-copy-nodes`: Copy to nodes… → selected/marked or full-filter source →
+  explicit destinations/replacement → review → sequential acknowledged copy.
+  Per-node results, Stop/retry and exact source preservation have dedicated
+  [coverage and bounds](rule-distribution.md).
+- `editor-nodes`: Apply to nodes… captures the current unsaved draft, including
+  name/metadata, and reviews explicit destinations. Cancel retains parent fields.
+  Renaming confirms the new name before deleting the old one per destination;
+  Stop/continue retains the removal stage.
+- `rules-import-nodes`: Import to nodes… reads bounded file/directory/captured
+  clipboard data into the same immutable review. Explicit replacement, exact
+  source values and per-node results apply.
+- `rules-export-nodes`: Export nodes… selects cached nodes, all rules or the
+  captured filter, then captures immutable disk-backed data for count review.
+  Export reviewed folders publishes a new complete directory tree, with
+  importable node subfolders and identity manifest. Cancel and pre-publication
+  errors leave no partial destination. Offline caches are supported.
 - `rules-errors`: daemon error preserves the old catalogue value; timeouts and
   disconnects explain that confirmation is unknown and require a reload.
   A daemon ERROR can follow an in-memory change before a disk failure, so a
@@ -113,3 +129,49 @@ checksum and every field variant still need dedicated input proof. Core JSON
 tests cover timestamps, legacy list encoding, omitted protobuf flags, safe
 field/type pairs and custom duration units. The original daemon's flat AND
 serialization limitation is preserved explicitly; nested groups cannot be saved.
+
+
+## Inclusive port ranges
+
+The structured match-type picker offers **Port range (inclusive)** for Source
+port and Destination port. Enter `min-max`, e.g. `4000-4010` and `8000-8080` in
+separate AND conditions. Reversed/missing/negative/signed/overflow/nondecimal
+bounds are refused before sending. The pinned daemon removes ASCII spaces only,
+then parses unsigned 64-bit decimal bounds with `min <= max`; Rust validates the
+same grammar and retains the original text through JSON/structured switching,
+acknowledged storage, duplication/import/export and edits. It does not expand
+ranges into regular expressions. Actual ports are 0–65535; imported uint64 bounds
+outside that domain remain intact to match the daemon's wider numeric grammar.
+Other match fields are refused for this port-specific UI type.
+
+All ChangeRule/EnableRule submissions, including imports, quick actions and
+bulk actions, pass the same current-session compatibility guard. Version 1.9+
+establishes support; an existing range rule in Subscribe also establishes a
+backport. An older/unknown/ambiguous version with no reported range refuses the
+command without queueing. Disable/Delete remain available. Capabilities reset
+when a connection is replaced. The guard does not infer support merely from an
+import file, our own popup reply or protobuf/schema equality. The operator was
+introduced by e1b961ae while master still reported 1.8.0; an arbitrary 1.8 build
+cannot be identified from that string alone. Explicit compatibility selection
+for otherwise unconfirmed backports remains pending.
+
+`python scripts/cargo.py test --no-default-features --locked --test port_ranges`
+adds three cases: 21 grammar/uint64 fixtures and exact JSON roundtrip; real gRPC
+early Ping/version, held ACK/no optimistic persistence, independent AskRule and
+ERROR preservation with complete SQLite export; old/unknown/malformed versions,
+empty outbound stream, same-connection replacement and observed backports.
+Set `RUSTLEBLOWER_RANGE_EVIDENCE` to a fresh absolute directory to save immutable
+Rust fixtures, then run `python scripts/verify-port-ranges.py --fixtures /absolute/fixtures --evidence /absolute/new/proof`.
+The helper extracts only unmodified `compileRange` and `rangeCmp` bodies from the
+pinned source into ignored evidence, compares all 21 grammar cases and inclusive
+boundary matches using local Go with module networking disabled, and links no
+daemon/interception/RPC packages. This establishes parser/matcher equivalence,
+not real-daemon capability or kernel enforcement.
+
+`python scripts/verify-headless.py --feature port-ranges` drives eight GPU frames:
+invalid bounds, unknown capability refusal, Match JSON roundtrip, held ACK,
+independent permission input, confirmed range persistence, rejected-draft
+preservation and exact clipboard export/import. It uses actual Kit Select/Input,
+button and scroll events. The editor scroll body uses Kit's official test-only
+observation hook; root assertions read through Kit Root. This is background
+GPU/input/protocol/storage proof. Native compositor range editing remains pending.

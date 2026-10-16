@@ -45,6 +45,7 @@ install -m644 target/release-notices/THIRD_PARTY_NOTICES.txt "$appdir/usr/share/
 sed "s/@VERSION@/$version/g" packaging/linux/INSTALL.txt >"$appdir/usr/share/doc/rustleblower/INSTALL.txt"
 sed 's/^Icon=.*/Icon=dev.rustleblower.Rustleblower/' \
   packaging/linux/dev.rustleblower.Rustleblower.desktop >"$stage/dev.rustleblower.Rustleblower.desktop"
+bash scripts/install-icons.sh "$appdir/usr/share"
 # Let linuxdeploy collect dependencies, apply its standard exclusions, patch
 # their search paths, and install desktop assets. Graphics drivers and the
 # Wayland libraries they link must come from the same host stack.
@@ -55,7 +56,7 @@ sed 's/^Icon=.*/Icon=dev.rustleblower.Rustleblower/' \
   --executable "$appdir/usr/bin/rustleblower" \
   --library /usr/lib/x86_64-linux-gnu/libxcb.so.1 \
   --desktop-file "$stage/dev.rustleblower.Rustleblower.desktop" \
-  --icon-file packaging/linux/dev.rustleblower.Rustleblower.svg \
+  --icon-file packaging/linux/icons/hicolor/256x256/apps/dev.rustleblower.Rustleblower.png \
   --custom-apprun packaging/linux/AppRun \
   --exclude-library 'libvulkan.so*' \
   --exclude-library 'libEGL.so*' \

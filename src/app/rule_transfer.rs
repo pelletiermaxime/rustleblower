@@ -72,6 +72,7 @@ fn open_with_rules(
                 ..Default::default()
             }),
             app_id: Some("dev.rustleblower.Rustleblower".into()),
+            icon: Some(super::brand_icons::window_icon()),
             ..Default::default()
         },
         cx,

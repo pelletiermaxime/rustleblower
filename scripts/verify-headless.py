@@ -19,7 +19,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--evidence", type=Path)
     parser.add_argument("--timeout", type=int, default=600)
-    parser.add_argument("--feature", choices=("all", "popup-preferences", "countdown", "checksums", "history-tools", "statistics", "nodes", "daemon-preferences"), default="all")
+    parser.add_argument("--feature", choices=("tray", "all", "permission-actions", "permission-icons", "popup-preferences", "countdown", "checksums", "history-tools", "statistics", "nodes", "daemon-preferences", "alerts", "desktop-notifications", "live", "firewall", "firewall-forms", "firewall-files", "firewall-policy", "history-process", "history-preferences", "subscriptions", "port-ranges", "cross-node", "multi-node-drafts", "multi-node-export", "startup", "appearance", "window-state", "subscription-url", "subscription-inheritance"), default="all")
     args = parser.parse_args()
     evidence = (args.evidence or ROOT / ".verification/headless" /
                 (datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid.uuid4().hex[:8])).resolve()
@@ -28,9 +28,17 @@ def main():
     env.pop("DISPLAY", None)
     env.pop("WAYLAND_DISPLAY", None)
     env["RUSTLEBLOWER_HEADLESS_EVIDENCE"] = str(evidence)
-    test = {"all": "headless_gpu_user_flow", "popup-preferences": "headless_preferences_controls", "countdown": "headless_countdown_review", "checksums": "headless_checksum_review", "history-tools": "headless_history_tools", "statistics": "headless_statistics", "nodes": "headless_nodes", "daemon-preferences": "headless_daemon_preferences"}[args.feature]
+    if args.feature == "startup":
+        env["XDG_CONFIG_HOME"] = str(evidence / "xdg")
+        env["XDG_CONFIG_DIRS"] = str(evidence / "system-xdg")
+    if args.feature == "permission-icons":
+        env["XDG_DATA_HOME"] = str(evidence / "desktop-data")
+        env["XDG_DATA_DIRS"] = str(evidence / "empty-system-data")
+    test = {"tray": "headless_tray_lifecycle", "permission-icons": "headless_permission_icons", "permission-actions": "headless_permission_actions", "all": "headless_gpu_user_flow", "popup-preferences": "headless_preferences_controls", "countdown": "headless_countdown_review", "checksums": "headless_checksum_review", "history-tools": "headless_history_tools", "statistics": "headless_statistics", "nodes": "headless_nodes", "daemon-preferences": "headless_daemon_preferences", "alerts": "headless_alerts", "desktop-notifications": "headless_desktop_notifications", "live": "headless_live_tasks", "firewall": "headless_firewall", "firewall-forms": "headless_firewall_forms", "firewall-files": "headless_firewall_files", "firewall-policy": "headless_firewall_policy", "history-process": "headless_history_process", "history-preferences": "headless_history_preferences", "subscriptions":"headless_subscriptions", "port-ranges":"headless_port_ranges", "cross-node":"headless_cross_node_copies", "multi-node-drafts":"headless_multi_node_drafts", "multi-node-export":"headless_multi_node_export", "startup":"headless_startup", "appearance":"headless_appearance", "window-state":"headless_window_memory", "subscription-url":"headless_subscription_url_test", "subscription-inheritance":"headless_subscription_inheritance"}[args.feature]
     command = [sys.executable, str(ROOT / "scripts/cargo.py"), "test", "--lib", "--features", "headless-tests", "--locked", "--offline",
-               "app::headless_tests::" + test, "--", "--nocapture", "--test-threads=1"]
+               "app::headless_tests::" + test, "--", "--exact", "--nocapture", "--test-threads=1"]
+    if args.feature in ("subscriptions", "subscription-url", "subscription-inheritance"):
+        command = [sys.executable, str(ROOT / "scripts/owned_net.py"), "--evidence", str(evidence / "network.json"), "--", *command]
     result = {"status": "failed", "evidence": str(evidence), "command": command,
               "engine": "gpui-fast", "engine_version": "0.1.7", "kit_version": "0.7.3",
               "cargo_lock_sha256": hashlib.sha256((ROOT / "Cargo.lock").read_bytes()).hexdigest()}
@@ -47,6 +55,11 @@ def main():
                 raise RuntimeError("Missing successful GPU flow/cleanup proof")
             if not flow["screenshots"] or not all((evidence / p).is_file() for p in flow["screenshots"]):
                 raise RuntimeError("Missing screenshots")
+            if args.feature in ("subscriptions", "subscription-url", "subscription-inheritance"):
+                network=json.loads((evidence / "network.json").read_text())
+                if network["network_namespace"]==network["parent_network_namespace"] or not network["host_network_unchanged"]:
+                    raise RuntimeError("Owned HTTP network isolation was not proven")
+                result["network_isolation"]=str(evidence / "network.json")
             result.update(status="passed", flow=flow)
         except (Exception, KeyboardInterrupt) as error:
             result["error"] = str(error) or type(error).__name__

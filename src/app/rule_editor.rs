@@ -5,6 +5,8 @@ use crate::{
     rules::document,
 };
 use gpui::{prelude::*, *};
+#[cfg(feature = "headless-tests")]
+use gpui_kit::TestSupportExt;
 use gpui_kit::component::{
     ActiveTheme, Disableable, IndexPath,
     button::Button,
@@ -31,6 +33,7 @@ const KINDS: &[(&str, &str)] = &[
     ("regexp", "Regular expression"),
     ("network", "IP network / CIDR"),
     ("lists", "Watched list directory"),
+    ("range", "Port range (inclusive)"),
 ];
 const FIELDS: &[(&str, &str)] = &[
     ("process.path", "Executable path"),
@@ -215,6 +218,7 @@ pub(super) fn open(
                 ..Default::default()
             }),
             app_id: Some("dev.rustleblower.Rustleblower".into()),
+            icon: Some(super::brand_icons::window_icon()),
             ..Default::default()
         },
         cx,
@@ -244,11 +248,16 @@ pub(super) struct RuleEditor {
     priority: bool,
     logging: bool,
     busy: bool,
+    distributing: bool,
     error: Option<String>,
     focus: FocusHandle,
 }
 
 impl RuleEditor {
+    #[cfg(all(test, feature = "headless-tests"))]
+    pub(super) fn test_error(&self) -> Option<String> {
+        self.error.clone()
+    }
     pub(super) fn new(
         backend: Handle,
         session: u64,
@@ -315,6 +324,7 @@ impl RuleEditor {
             base: rule,
             original,
             busy: false,
+            distributing: false,
             error: None,
             focus,
         }
@@ -372,6 +382,47 @@ impl RuleEditor {
         rule.operator = Some(self.operator(cx)?);
         document::validate_edit(&rule)?;
         Ok(rule)
+    }
+    fn distribute(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.busy {
+            return;
+        }
+        let rule = match self.draft(cx) {
+            Ok(rule) => rule,
+            Err(error) => {
+                self.error = Some(error);
+                cx.notify();
+                return;
+            }
+        };
+        let original = self.original.as_ref().map(|rule| rule.name.clone());
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        match super::rule_distribution::open_draft(
+            self.backend.clone(),
+            rule,
+            original,
+            self.session,
+            tx,
+            cx,
+        ) {
+            Ok(_) => {
+                self.busy = true;
+                self.distributing = true;
+                self.error = None;
+                cx.spawn_in(window, async move |this, cx| {
+                    let _ = rx.await;
+                    let _ = this.update_in(cx, |this, window, cx| {
+                        this.busy = false;
+                        this.distributing = false;
+                        this.name.focus_handle(cx).focus(window, cx);
+                        cx.notify();
+                    });
+                })
+                .detach();
+            }
+            Err(error) => self.error = Some(format!("Cannot review destinations: {error:#}")),
+        }
+        cx.notify();
     }
     fn save(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.busy {
@@ -458,6 +509,7 @@ impl Render for RuleEditor {
         let border = cx.theme().border;
         let busy = self.busy;
         let metadata=div().flex().flex_col().gap_3()
+            .child(div().text_sm().child(self.backend.session(self.session).map(|s|format!("Target node: {}",s.name)).unwrap_or_else(||"Target node disconnected; reopen this editor before saving.".into())))
             .child(div().text_sm().text_color(muted).child("Name and description"))
             .child(Input::new(&self.name).id("editor-name").disabled(busy))
             .child(Input::new(&self.description).id("editor-description").disabled(busy))
@@ -482,6 +534,7 @@ impl Render for RuleEditor {
             for row in &self.conditions {
                 let id = row.id;
                 let is_env = selected(&row.field, FIELDS, cx) == "process.env.";
+                let is_range = selected(&row.kind, KINDS, cx) == "range";
                 matches = matches.child(
                     div()
                         .flex()
@@ -527,6 +580,16 @@ impl Render for RuleEditor {
                                         )),
                                 ),
                         )
+                        .when(is_range, |v| v.child(
+                            div().text_xs().text_color(muted).child(
+                                "Inclusive min-max, e.g. 8000-8080. Ports run from 0 to 65535. Use Source port or Destination port."
+                            )
+                        ))
+                        .when(is_range && !self.backend.control.range_supported(self.session), |v| v.child(
+                            div().text_xs().text_color(muted).child(
+                                "Range support is unconfirmed for this daemon. Saving requires OpenSnitch 1.9 or an existing reported range rule."
+                            )
+                        ))
                         .when(is_env, |v| {
                             v.child(
                                 Input::new(&row.environment)
@@ -574,6 +637,8 @@ impl Render for RuleEditor {
             .when(!self.raw_mode,|v|v.child(Button::new("editor-add-condition").label("Add condition").disabled(busy||self.conditions.len()>=64)
                 .on_click(cx.listener(|this,_,window,cx|{let id=this.next;this.next+=1;this.conditions.push(Condition::new(id,Operator {r#type:"simple".into(),operand:"dest.host".into(),sensitive:true,..Default::default()},window,cx));cx.notify();}))))
             .child(div().text_xs().text_color(muted).child("Network conditions use CIDR or daemon aliases such as LAN. Watched lists refer to directories on the daemon. Checksums require daemon checksum monitoring."));
+        #[cfg(feature = "headless-tests")]
+        let body = body.test_support();
         div()
             .size_full()
             .flex()
@@ -614,7 +679,9 @@ impl Render for RuleEditor {
                     .flex()
                     .justify_between()
                     .items_center()
-                    .child(if busy {
+                    .child(if self.distributing {
+                        "Reviewing destination nodes…"
+                    } else if busy {
                         "Waiting for daemon confirmation…"
                     } else {
                         "Saved only after the daemon confirms the change."
@@ -630,6 +697,14 @@ impl Render for RuleEditor {
                                     .on_click(
                                         cx.listener(|_, _, window, _| window.remove_window()),
                                     ),
+                            )
+                            .child(
+                                Button::new("editor-nodes")
+                                    .label("Apply to nodes…")
+                                    .disabled(busy)
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.distribute(window, cx)
+                                    })),
                             )
                             .child(
                                 Button::new("editor-save")

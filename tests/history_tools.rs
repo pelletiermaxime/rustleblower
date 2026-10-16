@@ -227,7 +227,7 @@ async fn migration_backfills_bounded_details_and_preserves_unknown_legacy_metada
     let db = rusqlite::Connection::open(&path)?;
     assert_eq!(
         db.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))?,
-        6
+        9
     );
     assert_eq!(
         db.query_row(
@@ -344,7 +344,20 @@ async fn history_exports_quote_data_use_columns_and_preserve_destination_on_fail
         )
         .is_err()
     );
-    for suffix in ["-wal", "-shm", ".history.json", ".preferences.json"] {
+    let appearance = rustleblower::appearance::Store::new(&path);
+    appearance.save(
+        &appearance.load()?,
+        rustleblower::appearance::ColorMode::Dark,
+    )?;
+    let saved_appearance = std::fs::read(&appearance.path)?;
+    for suffix in [
+        "-wal",
+        "-shm",
+        ".history.json",
+        ".preferences.json",
+        ".appearance.json",
+        ".window.json",
+    ] {
         let reserved = std::path::PathBuf::from(format!("{}{suffix}", path.display()));
         assert!(
             history::export::save(
@@ -359,6 +372,7 @@ async fn history_exports_quote_data_use_columns_and_preserve_destination_on_fail
             .is_err()
         );
     }
+    assert_eq!(std::fs::read(&appearance.path)?, saved_appearance);
     let options = history::settings::Options {
         table: true,
         columns: columns.to_vec(),

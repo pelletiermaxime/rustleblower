@@ -1,0 +1,16 @@
+Ferris the Rustacean — artwork reference
+
+Creator: Karen Rustad Tölva
+Source: https://rustacean.net/
+Reference: https://rustacean.net/assets/rustacean-flat-happy.png
+Dedication: CC0 1.0 Universal
+https://creativecommons.org/publicdomain/zero/1.0/
+
+The source states:
+To the extent possible under law, Karen Rustad Tölva has waived all copyright
+and related or neighboring rights to Ferris the Rustacean.
+
+Rustleblower's full, compact and tiny colour mascot drawings were generated
+with the built-in image generator using that Ferris artwork as a reference,
+adding the whistle and creating separate drawings for small icon sizes.
+The images are provided as part of Rustleblower under its root LICENSE.

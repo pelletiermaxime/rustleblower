@@ -278,6 +278,33 @@ pub fn targets(c: &Connection) -> Vec<Target> {
             );
         }
     }
+    // Simple destination scopes always keep the executable and deliberately
+    // omit ports. A reported hostname is an exact host, never a wildcard domain.
+    if !c.process_path.is_empty() && c.process_path.len() <= 4096 {
+        if !c.dst_host.is_empty()
+            && c.dst_host.len() <= 1024
+            && c.dst_host.parse::<IpAddr>().is_err()
+        {
+            add(
+                "app-host".into(),
+                "This executable to the exact hostname".into(),
+                vec![
+                    simple("process.path", c.process_path.clone()),
+                    simple("dest.host", c.dst_host.clone()),
+                ],
+            );
+        }
+        if c.dst_ip.parse::<IpAddr>().is_ok() && c.dst_ip.len() <= 64 {
+            add(
+                "app-address".into(),
+                "This executable to the exact IP address".into(),
+                vec![
+                    simple("process.path", c.process_path.clone()),
+                    simple("dest.ip", c.dst_ip.clone()),
+                ],
+            );
+        }
+    }
     result
 }
 

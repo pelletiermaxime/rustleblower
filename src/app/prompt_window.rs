@@ -7,12 +7,16 @@ use crate::{
 };
 use gpui::{prelude::*, *};
 use gpui_kit::component::{
-    ActiveTheme, Disableable, IndexPath,
+    ActiveTheme, Disableable, IndexPath, Sizable,
+    avatar::Avatar,
     button::{Button, ButtonVariants},
     checkbox::Checkbox,
+    radio::{Radio, RadioGroup},
     select::{SearchableVec, Select, SelectEvent, SelectState},
     tab::{Tab, TabBar},
 };
+#[cfg(all(test, feature = "headless-tests"))]
+use gpui_kit::test::TestSupportExt;
 use std::time::Duration;
 type Picker = Entity<SelectState<SearchableVec<SharedString>>>;
 
@@ -50,6 +54,7 @@ pub(super) fn open(
                 ..Default::default()
             }),
             app_id: Some("dev.rustleblower.Rustleblower".into()),
+            icon: Some(super::brand_icons::window_icon()),
             ..Default::default()
         },
         cx,
@@ -80,6 +85,7 @@ pub(super) struct PromptWindow {
     rows: Vec<(String, String)>,
     error: Option<String>,
     checksum: Option<super::prompt_checksums::Probe>,
+    icon: super::app_icon::Probe,
 }
 impl PromptWindow {
     pub(super) fn new(backend: Handle, window: &mut Window, cx: &mut Context<Self>) -> Self {
@@ -133,6 +139,7 @@ impl PromptWindow {
             rows: Vec::new(),
             error: None,
             checksum: None,
+            icon: super::app_icon::Probe::new(""),
         }
     }
     fn picker(
@@ -178,6 +185,7 @@ impl PromptWindow {
         self.targets.clear();
         self.rows.clear();
         self.checksum = connection.and_then(super::prompt_checksums::Probe::new);
+        self.icon = super::app_icon::Probe::new(connection.map_or("", |c| c.process_path.as_str()));
         if let Some(connection) = connection {
             if let Some(initial) = initial {
                 self.choice = initial.choice.clone();
@@ -269,14 +277,39 @@ impl PromptWindow {
         selected
     }
     fn apply(&mut self, id: u64, decision: Decision, cx: &mut Context<Self>) {
+        self.apply_choice(id, decision, self.selected(cx), cx);
+    }
+    fn select_scope(&mut self, key: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(index) = self.targets.iter().position(|target| target.key == key) else {
+            return;
+        };
+        self.choice = self.selected(cx);
+        self.choice.target = key.into();
+        // The simple choices describe the complete scope. Keeping hidden
+        // address/port constraints here would contradict their visible labels.
+        self.choice.constraints.clear();
+        self.error = None;
+        self.target.as_ref().unwrap().update(cx, |picker, cx| {
+            picker.set_selected_index(Some(IndexPath::new(index)), window, cx)
+        });
+        cx.notify();
+    }
+    fn allow_for(&mut self, id: u64, duration: &str, cx: &mut Context<Self>) {
+        let mut choice = self.selected(cx);
+        choice.duration = duration.into();
+        self.apply_choice(id, Decision::Allow, choice, cx);
+    }
+    fn apply_choice(
+        &mut self,
+        id: u64,
+        decision: Decision,
+        choice: Choice,
+        cx: &mut Context<Self>,
+    ) {
         if self.id != Some(id) {
             return;
         }
-        match self
-            .backend
-            .prompts
-            .choose(id, decision, &self.selected(cx))
-        {
+        match self.backend.prompts.choose(id, decision, &choice) {
             Ok(true) => self.error = None,
             Ok(false) => self.error = Some("This request expired or was already answered".into()),
             Err(error) => self.error = Some(error),
@@ -363,6 +396,7 @@ impl Render for PromptWindow {
             return body.child("No pending connections");
         };
         let con = &prompt.connection;
+        self.icon.poll(cx);
         let id = prompt.id;
         if let Some(probe) = self.checksum.as_mut() {
             probe.poll(&self.backend, prompt.session, cx);
@@ -377,6 +411,43 @@ impl Render for PromptWindow {
             .saturating_duration_since(std::time::Instant::now());
         let seconds = remaining.as_secs() + u64::from(remaining.subsec_nanos() != 0);
         let selected = self.selected(cx);
+        let app_name = std::path::Path::new(&con.process_path)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .filter(|name| !name.is_empty())
+            .map(|name| crate::history::bounded(name, 96))
+            .unwrap_or_else(|| "Unknown app".into());
+        let destination_key = ["app-host", "app-address"]
+            .into_iter()
+            .find(|key| self.targets.iter().any(|target| target.key == *key));
+        let destination = if destination_key == Some("app-host") {
+            format!("hostname {}", crate::history::bounded(&con.dst_host, 96))
+        } else {
+            format!("IP {}", crate::history::bounded(&con.dst_ip, 64))
+        };
+        let simple_scope = if selected.constraints.is_empty() && selected.target == "process.path" {
+            Some(0)
+        } else if selected.constraints.is_empty()
+            && destination_key == Some(selected.target.as_str())
+        {
+            Some(1)
+        } else {
+            None
+        };
+        let target_label = self
+            .targets
+            .iter()
+            .find(|target| target.key == selected.target)
+            .map(|target| target.label.as_str())
+            .unwrap_or("Executable + destination");
+        let preview = match simple_scope {
+            Some(0) => format!("Applies to {app_name} at any destination and port."),
+            Some(1) => format!("Applies to {app_name} only at {destination}, on any port."),
+            _ => format!(
+                "Custom match: {target_label} · {} extra restrictions. Review under Advanced.",
+                selected.constraints.len()
+            ),
+        };
         let suffix = if selected.duration == "always" {
             "forever"
         } else {
@@ -385,9 +456,26 @@ impl Render for PromptWindow {
         body = body
             .child(
                 div()
-                    .text_xl()
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .child("Allow this connection?"),
+                    .flex()
+                    .items_center()
+                    .gap_3()
+                    .flex_shrink_0()
+                    .child(
+                        Avatar::new()
+                            .name(app_name.clone())
+                            .with_size(px(40.))
+                            .rounded_md()
+                            .when_some(self.icon.image.clone(), |avatar, image| avatar.src(image)),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .text_xl()
+                            .truncate()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(format!("Allow {app_name} to access the network?")),
+                    ),
             )
             .child(div().text_sm().text_color(muted).child(format!(
                     "Node: {}",
@@ -432,7 +520,7 @@ impl Render for PromptWindow {
                     .flex_col()
                     .gap_2()
                     .child(detail(
-                        "Executable",
+                        "App",
                         if con.process_path.is_empty() {
                             "Unknown executable".into()
                         } else {
@@ -441,30 +529,12 @@ impl Render for PromptWindow {
                         cx,
                     ))
                     .child(detail(
-                        "Destination",
-                        crate::history::details::endpoint(
-                            &if con.dst_host.is_empty() {
-                                crate::history::bounded(&con.dst_ip, 64)
-                            } else {
-                                crate::history::bounded(&con.dst_host, 1024)
-                            },
-                            con.dst_port,
-                        ),
-                        cx,
-                    ))
-                    .child(detail(
-                        "Address",
-                        crate::history::bounded(&con.dst_ip, 64),
-                        cx,
-                    ))
-                    .child(detail(
-                        "Process",
-                        format!(
-                            "PID {} · UID {} · {}",
-                            con.process_id,
-                            con.user_id,
-                            crate::history::bounded(&con.protocol, 32)
-                        ),
+                        "To",
+                        if con.dst_host.is_empty() {
+                            crate::history::bounded(&con.dst_ip, 64)
+                        } else {
+                            crate::history::bounded(&con.dst_host, 1024)
+                        },
                         cx,
                     )),
             )
@@ -484,6 +554,65 @@ impl Render for PromptWindow {
                         cx.notify();
                     }))));
         }
+        let has_app = self
+            .targets
+            .iter()
+            .any(|target| target.key == "process.path");
+        body = body.child(
+            div()
+                .flex()
+                .flex_col()
+                .flex_shrink_0()
+                .gap_2()
+                .child("Apply this decision to")
+                .child(
+                    RadioGroup::vertical("prompt-scope")
+                        .w_full()
+                        .flex_none()
+                        .selected_index(Some(simple_scope.unwrap_or(2)))
+                        .child(
+                            Radio::new("app")
+                                .label(format!("{app_name} — any destination"))
+                                .disabled(!has_app),
+                        )
+                        .child(
+                            Radio::new("destination")
+                                .label(format!("{app_name} — only {destination} (any port)"))
+                                .disabled(destination_key.is_none()),
+                        )
+                        .when(simple_scope.is_none(), |group| {
+                            group.child(
+                                Radio::new("custom").label("Custom rule — review in Advanced"),
+                            )
+                        })
+                        .on_change(cx.listener(move |this, index: &usize, window, cx| {
+                            if this.id != Some(id) {
+                                return;
+                            }
+                            match *index {
+                                0 => this.select_scope("process.path", window, cx),
+                                1 => {
+                                    if let Some(key) = destination_key {
+                                        this.select_scope(key, window, cx);
+                                    }
+                                }
+                                _ => {
+                                    this.expanded = true;
+                                    window.resize(
+                                        super::placement::bounds(
+                                            Default::default(),
+                                            true,
+                                            window.scale_factor(),
+                                            cx,
+                                        )
+                                        .size,
+                                    );
+                                    cx.notify();
+                                }
+                            }
+                        })),
+                ),
+        );
         if self.expanded {
             body = body.child(
                 TabBar::new("prompt-tabs")
@@ -492,16 +621,25 @@ impl Render for PromptWindow {
                         this.tab = *index;
                         cx.notify();
                     }))
-                    .child(Tab::new().label("Rule options"))
+                    .child(Tab::new().label("Advanced rules"))
                     .child(Tab::new().label("Connection details")),
             );
             if self.tab == 0 {
+                #[cfg_attr(all(test, feature = "headless-tests"), allow(unused_mut))]
                 let mut options=div().id("prompt-options-body").flex_1().min_h_0().overflow_y_scroll().flex().flex_col().gap_3()
                     .child(div().text_sm().child("Apply this decision for"))
                     .child(div().h_8().flex_shrink_0().child(Select::new(self.duration.as_ref().unwrap()).id("prompt-duration").accessibility_label("Rule duration").w_full()))
-                    .child(div().text_sm().child("Match target"))
-                    .child(div().h_8().flex_shrink_0().child(Select::new(self.target.as_ref().unwrap()).id("prompt-target").accessibility_label("Match target").w_full()))
-                    .child(div().text_sm().text_color(muted).child("Additional fields are combined with AND. Broader targets can affect other applications or destinations."));
+                    .child(div().text_sm().child("Rule scope"))
+                    .child(div().h_8().flex_shrink_0().child(Select::new(self.target.as_ref().unwrap()).id("prompt-target").accessibility_label("Rule scope").w_full()))
+                    .child(div().text_sm().child("Additional restrictions"))
+                    .child(div().text_sm().text_color(muted).child("All selected conditions must match. Fields already required by the scope are omitted."));
+                // Observe geometry for bounded wheel-input verification only.
+                #[cfg(all(test, feature = "headless-tests"))]
+                let mut options = options.test_support();
+                let scope = self
+                    .targets
+                    .iter()
+                    .find(|target| target.key == selected.target);
                 for (index, target) in self
                     .targets
                     .iter()
@@ -509,10 +647,23 @@ impl Render for PromptWindow {
                     .filter(|(_, target)| target.key != "connection")
                 {
                     let key = target.key.clone();
+                    let included = scope.is_some_and(|scope| {
+                        target
+                            .operators
+                            .iter()
+                            .all(|op| scope.operators.contains(op))
+                    });
+                    if included {
+                        continue;
+                    }
                     let checked = selected.constraints.contains(&key);
                     options = options.child(
                         Checkbox::new(("prompt-constraint", index))
-                            .label(target.label.clone())
+                            .label(if target.key == "process.path" {
+                                format!("Require executable: {app_name}")
+                            } else {
+                                target.label.clone()
+                            })
                             .checked(checked)
                             .disabled(!checked && selected.constraints.len() >= 16)
                             .on_change(cx.listener(move |this, value: &bool, _, cx| {
@@ -597,72 +748,74 @@ impl Render for PromptWindow {
         } else {
             body = body.child(div().flex_1());
         }
-        let target_label = self
-            .targets
-            .iter()
-            .find(|target| target.key == selected.target)
-            .map(|target| target.label.as_str())
-            .unwrap_or("Executable + destination");
-        body.child(div().text_sm().text_color(muted).child(format!(
-            "Match: {target_label} · {} additional conditions. {}",
-            selected.constraints.len(),
-            if selected.duration == "once" {
-                "Applies once."
-            } else {
-                "Lasting reply awaits daemon confirmation; the unanswered fallback remains once."
-            }
-        )))
-        .child(
-            div()
-                .flex()
-                .flex_wrap()
-                .justify_end()
-                .gap_3()
-                .child(
-                    Button::new("deny-once")
-                        .label(format!("Deny {suffix}"))
-                        .danger()
-                        .on_click(
-                            cx.listener(move |this, _, _, cx| this.apply(id, Decision::Deny, cx)),
-                        ),
-                )
-                .child(
-                    Button::new("allow-once")
-                        .label(format!("Allow {suffix}"))
-                        .primary()
-                        .on_click(
-                            cx.listener(move |this, _, _, cx| this.apply(id, Decision::Allow, cx)),
-                        ),
-                )
-                .child(
-                    Button::new("reject-once")
-                        .label(format!("Reject {suffix}"))
-                        .on_click(
-                            cx.listener(move |this, _, _, cx| this.apply(id, Decision::Reject, cx)),
-                        ),
-                ),
-        )
-        .child(
-            Button::new("prompt-more")
-                .label(if self.expanded {
-                    "Hide options"
-                } else {
-                    "Rule options and details…"
-                })
-                .on_click(cx.listener(|this, _, window, cx| {
-                    this.expanded = !this.expanded;
-                    window.resize(
-                        super::placement::bounds(
-                            crate::prompts::placement::Position::Center,
-                            this.expanded,
-                            window.scale_factor(),
-                            cx,
+        body.child(div().text_sm().text_color(muted).child(preview))
+            .child(
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .justify_end()
+                    .gap_3()
+                    .child(
+                        Button::new("deny-once")
+                            .label(format!("Block {suffix}"))
+                            .danger()
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.apply(id, Decision::Deny, cx)
+                            })),
+                    )
+                    .child(
+                        Button::new("allow-12h")
+                            .label("Allow for 12 hours")
+                            .on_click(
+                                cx.listener(move |this, _, _, cx| this.allow_for(id, "12h", cx)),
+                            ),
+                    )
+                    .child(
+                        Button::new("allow-forever")
+                            .label("Allow forever")
+                            .primary()
+                            .on_click(
+                                cx.listener(move |this, _, _, cx| this.allow_for(id, "always", cx)),
+                            ),
+                    )
+                    .when(self.expanded, |row| {
+                        row.child(
+                            Button::new("allow-selected")
+                                .label(format!("Allow {suffix}"))
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.apply(id, Decision::Allow, cx)
+                                })),
                         )
-                        .size,
-                    );
-                    cx.notify();
-                })),
-        )
+                        .child(
+                            Button::new("reject-once")
+                                .label(format!("Reject {suffix}"))
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.apply(id, Decision::Reject, cx)
+                                })),
+                        )
+                    }),
+            )
+            .child(
+                Button::new("prompt-more")
+                    .label(if self.expanded {
+                        "Hide details"
+                    } else {
+                        "Details and advanced rules…"
+                    })
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.expanded = !this.expanded;
+                        window.resize(
+                            super::placement::bounds(
+                                crate::prompts::placement::Position::Center,
+                                this.expanded,
+                                window.scale_factor(),
+                                cx,
+                            )
+                            .size,
+                        );
+                        cx.notify();
+                    })),
+            )
     }
 }
 fn detail(label: &str, value: String, cx: &App) -> Div {

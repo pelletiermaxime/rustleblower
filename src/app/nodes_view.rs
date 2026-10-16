@@ -8,6 +8,7 @@ use gpui::{prelude::*, *};
 use gpui_kit::component::{
     ActiveTheme, Disableable,
     button::Button,
+    checkbox::Checkbox,
     input::{Input, InputEvent, InputState},
     list::ListItem,
 };
@@ -28,10 +29,13 @@ pub(super) struct NodesView {
     due: Instant,
     revision: u64,
     command: Option<oneshot::Receiver<Result<(), String>>>,
+    command_message: &'static str,
+    restoring: bool,
     confirm: Option<(Session, bool)>,
     error: Option<String>,
     message: Option<String>,
     editor: Option<AnyWindowHandle>,
+    firewall: Option<AnyWindowHandle>,
 }
 impl NodesView {
     pub fn new(window: &mut Window, cx: &mut Context<Dashboard>) -> Self {
@@ -70,16 +74,21 @@ impl NodesView {
             due: Instant::now(),
             revision: 0,
             command: None,
+            command_message: "Daemon confirmed the interception change.",
+            restoring: false,
             confirm: None,
             error: None,
             message: None,
             editor: None,
+            firewall: None,
         }
     }
     fn select(&mut self, name: String) {
         self.selected = Some(name);
         self.detail = None;
         self.confirm = None;
+        self.message = None;
+        self.error = None;
         self.generation += 1;
         self.dirty = true;
         self.due = Instant::now();
@@ -91,6 +100,18 @@ impl NodesView {
         cx: &mut Context<Dashboard>,
     ) -> bool {
         let mut changed = false;
+        let restoring = self
+            .current(backend)
+            .is_some_and(|session| backend.control.pause_restoring(session.id));
+        if self.restoring != restoring {
+            self.restoring = restoring;
+            changed = true;
+        }
+        if let Some(handle) = self.firewall
+            && handle.update(cx, |_, _, _| {}).is_err()
+        {
+            self.firewall = None;
+        }
         if let Some(handle) = self.editor
             && handle.update(cx, |_, _, _| {}).is_err()
         {
@@ -103,7 +124,7 @@ impl NodesView {
                     self.confirm = None;
                     match result {
                         Ok(()) => {
-                            self.message = Some("Daemon confirmed the interception change.".into());
+                            self.message = Some(self.command_message.into());
                             self.error = None;
                         }
                         Err(error) => self.error = Some(error),
@@ -131,6 +152,13 @@ impl NodesView {
                     if current {
                         match result {
                             Ok((page, detail)) => {
+                                if self.detail.as_ref().is_some_and(|old| {
+                                    detail
+                                        .as_ref()
+                                        .is_none_or(|new| old.row.session != new.row.session)
+                                }) {
+                                    self.message = None;
+                                }
                                 self.page = page;
                                 self.detail = detail;
                                 self.error = None;
@@ -199,13 +227,20 @@ impl Dashboard {
         let muted = cx.theme().muted_foreground;
         let border = cx.theme().border;
         let current = self.nodes.current(&self.backend);
-        let busy = self.nodes.command.is_some();
+        let busy = self.nodes.command.is_some()
+            || current
+                .as_ref()
+                .is_some_and(|s| self.backend.control.node_busy(s.id));
         let uncertain = current
             .as_ref()
             .is_some_and(|session| self.backend.history.health.catalogues.uncertain(session.id));
+        let restoring = current
+            .as_ref()
+            .is_some_and(|session| self.backend.control.pause_restoring(session.id));
         let mut body=div().flex_1().min_h_0().px_6().pb_3().flex().flex_col().gap_3().child(div().h_8().flex_shrink_0().child(Input::new(&self.nodes.input).id("nodes-search")))
    .child(div().text_sm().text_color(muted).child(format!("{} connected nodes · {} cached nodes in this search. Choose a node to manage its application rules, interception or daemon configuration.",self.backend.status().sessions.len(),self.nodes.page.len())))
-   .when_some(self.nodes.error.clone(),|body,error|body.child(super::banner(error,cx))).when_some(self.nodes.message.clone(),|body,message|body.child(div().text_sm().child(message)));
+   .when_some(self.nodes.error.clone(),|body,error|body.child(super::banner(error,cx))).when_some(self.nodes.message.clone().filter(|_|!restoring),|body,message|body.child(div().text_sm().child(message)))
+   .when(restoring,|body|body.child(div().text_sm().child("Restoring saved pause: waiting for daemon confirmation and saved local state…")));
         let rows = uniform_list(
             "nodes-rows",
             self.nodes.page.len(),
@@ -281,6 +316,44 @@ impl Dashboard {
                     chrono::DateTime::from_timestamp_nanos(detail.row.updated)
                         .format("%Y-%m-%d %H:%M:%S")
                 )));
+            let preference = self
+                .backend
+                .history
+                .health
+                .interception
+                .get(&detail.row.name);
+            body = body.child(
+                Checkbox::new("nodes-remember-pause")
+                    .label("Remember this node's paused state after reconnect or app restart")
+                    .checked(preference.is_some())
+                    .disabled(current.is_none() || busy || uncertain)
+                    .on_change(cx.listener(|this,remember:&bool,_,cx|{
+                        if let (Some(session),Some(detail))=(this.nodes.current(&this.backend),this.nodes.detail.as_ref()) {
+                            let previous=this.backend.history.health.interception.get(&session.name);
+                            match this.backend.history.remember_interception(session.id,session.name,*remember,detail.row.running,previous) {
+                                Ok(reply)=>{this.nodes.command=Some(reply);this.nodes.command_message="Saved this node's pause preference.";},
+                                Err(error)=>this.nodes.error=Some(error),
+                            }
+                        }
+                        cx.notify();
+                    })))
+                .child(div().text_xs().text_color(muted).child(match preference {
+                    Some(false)=>"Saved choice: paused. If this node reconnects running, Rustleblower will request a pause and wait for confirmation.",
+                    Some(true)=>"Saved choice: running. Confirming Stop will remember the pause. A stopped daemon is never started automatically.",
+                    None=>"Off by default. Enabling remembers the last confirmed choice. Turning this off leaves the daemon's current interception unchanged.",
+                }));
+        }
+        if let Some(error) = self
+            .backend
+            .history
+            .health
+            .interception
+            .error
+            .lock()
+            .unwrap()
+            .clone()
+        {
+            body = body.child(super::banner(error, cx));
         }
         if uncertain {
             body=body.child(super::banner("A command failed or timed out for this node. The displayed values are last confirmed; reconnect to verify its live state.".into(),cx));
@@ -317,7 +390,11 @@ impl Dashboard {
                                             session.id,
                                             nodes::Change::Interception(*running),
                                         ) {
-                                            Ok(reply) => this.nodes.command = Some(reply),
+                                            Ok(reply) => {
+                                                this.nodes.command = Some(reply);
+                                                this.nodes.command_message =
+                                                    "Daemon confirmed the interception change.";
+                                            }
                                             Err(error) => this.nodes.error = Some(error),
                                         }
                                     }
@@ -401,6 +478,27 @@ impl Dashboard {
                                     cx,
                                 ) {
                                     Ok(handle) => this.nodes.editor = Some(handle),
+                                    Err(error) => this.nodes.error = Some(error.to_string()),
+                                }
+                            }
+                            cx.notify();
+                        })),
+                )
+                .child(
+                    Button::new("nodes-firewall")
+                        .label("System firewall…")
+                        .disabled(self.nodes.detail.is_none() || busy)
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            if let Some(handle) = this.nodes.firewall {
+                                let _ = handle.update(cx, |_, window, _| window.activate_window());
+                            } else if let Some(detail) = this.nodes.detail.as_ref() {
+                                match super::firewall_view::open(
+                                    this.backend.clone(),
+                                    detail.row.session,
+                                    detail.row.name.clone(),
+                                    cx,
+                                ) {
+                                    Ok(handle) => this.nodes.firewall = Some(handle),
                                     Err(error) => this.nodes.error = Some(error.to_string()),
                                 }
                             }

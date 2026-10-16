@@ -1,11 +1,10 @@
 use anyhow::Result;
-use clap::Parser;
 use rustleblower::{backend::Backend, config::Config};
 
 fn main() -> Result<()> {
     #[cfg(feature = "desktop")]
     graphics_diagnostics();
-    let config = Config::parse();
+    let (config, storage_overrides) = Config::parse_launch();
     #[cfg(feature = "desktop")]
     if !config.headless {
         anyhow::ensure!(
@@ -20,7 +19,7 @@ fn main() -> Result<()> {
         config.headless,
         "This build requires --headless; enable the desktop feature for GPUI"
     );
-    let backend = Backend::start(config.clone())?;
+    let backend = Backend::start_with_storage(config.clone(), storage_overrides)?;
     let (popup_preferences, timeout, fallback) = backend.handle.popup_policy();
     eprintln!(
         "Rustleblower listening on {}. History: {}. Unanswered prompts: {} once {}.",

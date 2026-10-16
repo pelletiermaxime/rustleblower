@@ -58,6 +58,10 @@ pub(crate) fn validate_target(database: &Path, target: &Path, replace: bool) -> 
         target.file_name().is_some() && !target.is_dir(),
         "Choose a file path for export"
     );
+    ensure!(
+        !target.exists() || target.is_file(),
+        "Export destination must be a regular file"
+    );
     let normalized = |path: &Path| -> std::io::Result<std::path::PathBuf> {
         Ok(path
             .parent()
@@ -69,7 +73,15 @@ pub(crate) fn validate_target(database: &Path, target: &Path, replace: bool) -> 
     let target_path = normalized(target)?;
     let target_resolved = target.canonicalize().ok();
     for base in [normalized(database)?, database.canonicalize()?] {
-        for suffix in ["", "-wal", "-shm", ".history.json", ".preferences.json"] {
+        for suffix in [
+            "",
+            "-wal",
+            "-shm",
+            ".history.json",
+            ".preferences.json",
+            ".appearance.json",
+            ".window.json",
+        ] {
             let protected = std::path::PathBuf::from(format!("{}{suffix}", base.display()));
             ensure!(
                 target_path != protected

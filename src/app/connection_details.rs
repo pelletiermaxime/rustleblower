@@ -21,10 +21,25 @@ pub(super) struct OpenRule {
     pub reply: tokio::sync::oneshot::Sender<Result<(), String>>,
 }
 
+#[derive(Clone)]
+pub(super) struct ProcessTarget {
+    pub node: String,
+    pub session: u64,
+    pub pid: u32,
+    pub executable: String,
+    pub event: i64,
+    pub unixnano: i64,
+}
+pub(super) struct OpenProcess {
+    pub target: ProcessTarget,
+    pub reply: tokio::sync::oneshot::Sender<Result<(), String>>,
+}
+
 pub(super) fn open(
     backend: Handle,
     detail: Detail,
     actions: SyncSender<OpenRule>,
+    processes: SyncSender<OpenProcess>,
     cx: &mut App,
 ) -> gpui::Result<AnyWindowHandle> {
     let (window, _) = gpui_kit::open_window(
@@ -40,10 +55,13 @@ pub(super) fn open(
                 ..Default::default()
             }),
             app_id: Some("dev.rustleblower.Rustleblower".into()),
+            icon: Some(super::brand_icons::window_icon()),
             ..Default::default()
         },
         cx,
-        move |window, cx| cx.new(|cx| ConnectionDetails::new(backend, detail, actions, window, cx)),
+        move |window, cx| {
+            cx.new(|cx| ConnectionDetails::new(backend, detail, actions, processes, window, cx))
+        },
     )?;
     Ok(window)
 }
@@ -52,6 +70,7 @@ struct ConnectionDetails {
     backend: Handle,
     detail: Detail,
     actions: SyncSender<OpenRule>,
+    processes: SyncSender<OpenProcess>,
     tab: usize,
     error: Option<String>,
     message: Option<String>,
@@ -63,6 +82,7 @@ impl ConnectionDetails {
         backend: Handle,
         detail: Detail,
         actions: SyncSender<OpenRule>,
+        processes: SyncSender<OpenProcess>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -83,6 +103,7 @@ impl ConnectionDetails {
             backend,
             detail,
             actions,
+            processes,
             tab: 0,
             error: None,
             message: None,
@@ -97,6 +118,61 @@ impl ConnectionDetails {
                 session.notifications && self.backend.history.health.catalogues.ready(session.id)
             })
             .map(|session| session.id)
+    }
+
+    fn process_target(&self) -> Option<ProcessTarget> {
+        let connection = self.detail.connection()?;
+        if connection.process_id == 0 || connection.process_id > i32::MAX as u32 {
+            return None;
+        }
+        let session = self.backend.node(&self.detail.row.node)?;
+        session.notifications.then(|| ProcessTarget {
+            node: session.name,
+            session: session.id,
+            pid: connection.process_id,
+            executable: crate::history::bounded(&self.detail.row.process, 4096),
+            event: self.detail.row.id,
+            unixnano: self.detail.row.unixnano,
+        })
+    }
+
+    fn inspect_process(&mut self, cx: &mut Context<Self>) {
+        let Some(target) = self.process_target() else {
+            self.error =
+                Some("Connect this event's daemon; a recorded positive PID is required".into());
+            cx.notify();
+            return;
+        };
+        let (reply, pending) = tokio::sync::oneshot::channel();
+        match self.processes.try_send(OpenProcess { target, reply }) {
+            Ok(()) => {
+                self.busy = true;
+                self.error = None;
+                self.message = Some("Opening current process data on this event's daemon…".into());
+                cx.spawn(async move |this, cx| {
+                    let result = pending.await.unwrap_or_else(|_| {
+                        Err("Process inspection request stopped before opening".into())
+                    });
+                    let _ = this.update(cx, |this, cx| {
+                        this.busy = false;
+                        match result {
+                            Ok(()) => {
+                                this.message =
+                                    Some("Live process inspection opened in the main window".into())
+                            }
+                            Err(error) => {
+                                this.message = None;
+                                this.error = Some(error);
+                            }
+                        }
+                        cx.notify();
+                    });
+                })
+                .detach();
+            }
+            Err(_) => self.error = Some("Process inspection could not be queued; try again".into()),
+        }
+        cx.notify();
     }
 
     fn send(&mut self, rule: Rule, existing: bool, session: u64, cx: &mut Context<Self>) {
@@ -215,6 +291,7 @@ impl Render for ConnectionDetails {
         let muted = cx.theme().muted_foreground;
         let border = cx.theme().border;
         let connected = self.session().is_some();
+        let process_available = self.process_target().is_some();
         let mut content = div()
             .id("connection-detail-body")
             .flex_1()
@@ -261,6 +338,9 @@ impl Render for ConnectionDetails {
                     .item("Protocol", row.protocol.clone(), 1);
             }
             content = content.child(fields);
+            content = content.child(div().text_sm().text_color(muted).child(
+                "Inspect process requests current data from this event's daemon. The process may have exited or its PID may have been reused; live data is not a historical snapshot."
+            ));
         } else if self.tab == 1 {
             if let Some(c) = self.detail.connection() {
                 let mut fields = DescriptionList::new().columns(1).label_width(px(80.));
@@ -317,6 +397,7 @@ impl Render for ConnectionDetails {
             .child(div().px_5().py_3().border_t_1().border_color(border).flex().flex_wrap().gap_2()
                 .child(Button::new("connection-create-application").label("Application rule…").disabled(!can_create).on_click(cx.listener(|this,_,_,cx|this.create(DraftKind::Application,cx))))
                 .child(Button::new("connection-create-destination").label("Application + destination…").disabled(!can_create||self.detail.truncated&crate::history::details::DESTINATION!=0).on_click(cx.listener(|this,_,_,cx|this.create(DraftKind::Destination,cx))))
+                .child(Button::new("connection-inspect-process").label("Inspect process…").disabled(!process_available||self.busy).on_click(cx.listener(|this,_,_,cx|this.inspect_process(cx))))
                 .child(Button::new("connection-close").label("Close").on_click(cx.listener(|_,_,window,_|window.remove_window()))))
     }
 }

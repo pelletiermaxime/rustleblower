@@ -30,6 +30,7 @@ pub(super) fn open(backend: Handle, cx: &mut App) -> gpui::Result<AnyWindowHandl
                 ..Default::default()
             }),
             app_id: Some("dev.rustleblower.Rustleblower".into()),
+            icon: Some(super::brand_icons::window_icon()),
             ..Default::default()
         },
         cx,
@@ -229,7 +230,7 @@ impl Preferences {
             let _ = this.update_in(cx, |this, _, cx| {
                 this.busy = false;
                 this.message = Some(match result {
-                    Ok(()) => "Saved. Applies to new permission requests.".into(),
+                    Ok(()) => "Saved. Permission defaults apply to new requests; desktop notification settings apply immediately.".into(),
                     Err(error) => error,
                 });
                 cx.notify();
@@ -246,6 +247,7 @@ impl Render for Preferences {
             .child(div().text_sm().child("These UI defaults apply to new requests. They do not change daemon configuration or existing rules."))
             .child(Checkbox::new("preferences-popups").label("Show permission popups").checked(self.draft.popups).disabled(self.busy).on_change(cx.listener(|this,value:&bool,_,cx|{this.draft.popups = *value;cx.notify();})))
             .child(div().text_sm().text_color(cx.theme().muted_foreground).child("Disabled popups immediately use the configured one-time fallback. Pending requests keep their captured settings."))
+            .child(Checkbox::new("preferences-notifications").label("Desktop notifications for daemon alerts").checked(self.draft.desktop_notifications).disabled(self.busy).on_change(cx.listener(|this,value:&bool,_,cx|{this.draft.desktop_notifications = *value;cx.notify();})))
             .child(div().text_sm().child("Default duration"))
             .child(div().h_8().flex_shrink_0().child(Select::new(&self.duration).id("preferences-duration").w_full().disabled(self.busy)))
             .child(div().text_sm().child("Default match target"))

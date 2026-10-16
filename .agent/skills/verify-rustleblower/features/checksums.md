@@ -21,7 +21,7 @@ a separate native window. Permission actions and deadlines remain independent.
 Use `python scripts/verify-headless.py --feature checksums` in the background.
 It creates 35 confirmed rules with MD5/SHA1 and unrelated conditions, opens the
 production warning/review, pages, cancels and confirms selected replacement,
-holds an ACK and requires unchanged cache plus immediate Allow once, stops all
+holds an ACK and requires unchanged cache plus immediate Allow forever, stops all
 after one sent command, exercises a daemon ERROR, then resubscribes with a fresh
 inventory and updates the remaining 33 rules across pages. It checks every saved
 rule against the metadata-preserving expected replacement and clears the warning.

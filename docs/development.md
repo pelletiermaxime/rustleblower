@@ -6,8 +6,64 @@ keep I/O off the UI thread.
 
 `app.rs` composes the dashboard; `app/history_view.rs` owns search, bounded pages,
 stale-query rejection, and virtualized rendering. `app/prompt_window.rs` owns the
-separate permission window. The window close action minimizes rather than
-stopping the server. Quit is explicit.
+separate permission window. `app/tray.rs` registers a StatusNotifierItem with a
+bounded four-action channel and a separate session-bus worker. X destroys the
+dashboard surface only when tray registration succeeded. A retained dashboard
+entity preserves its selected page and state; a GPUI task independent of any
+window keeps opening permission popups and handles tray Open/Quit. Reopening
+creates a new Kit Root around the same entity. The cached scale/placement
+capability is refreshed while the dashboard is visible. No hidden window is
+required to keep the permission loop alive. GPUI uses explicit quit mode.
+
+Without a tray host, X minimizes. Losing the host while hidden automatically
+reopens the dashboard; registration retries when a host becomes available.
+Clicking the tray icon or its Open entry activates/recreates the dashboard.
+Both tray Quit and the dashboard Quit button cancel the backend. Permission
+window close continues to minimize that popup.
+
+`python scripts/verify-headless.py --feature tray` checks actual GPU/input,
+close-handler state retention, independent permission input, repeated reopen,
+host-loss recovery and dashboard Quit. Tray callbacks are synthetic in this
+flow. `python scripts/verify-native.py run --feature tray` uses an owned app,
+real compositor Alt+F4, owned StatusNotifier activation/menu RPCs, a synthetic
+gRPC request while the dashboard is absent, and clean tray Quit. It verifies
+D-Bus ownership against the app PID, leaves the desktop's tray host untouched,
+and keeps evidence. This does not prove a physical pointer click on the panel
+icon or system-daemon enforcement.
+
+The colour Ferris-with-whistle artwork is under `packaging/linux/icons/`.
+`app/brand_icons.rs` embeds the checked-in PNG exports: tiny artwork at 16/22/24
+px, compact artwork at 32 px, and the full mascot at 48 px and above. All native
+X11 windows receive the full 256 px icon. Wayland uses the matching desktop ID
+and installed hicolor assets; a development binary cannot update a compositor's
+installed launcher icon. The tray leaves IconName empty and publishes all four
+small ARGB payloads, letting the host select a size without an overriding theme
+lookup. No monochrome asset is used.
+
+Regenerate exports and their pixel/hash manifest with
+`python3 scripts/generate-icons.py` (ImageMagick required only for regeneration).
+`scripts/install-icons.sh` is shared by Debian, AppImage and tar staging, so all
+nine sizes are installed consistently. The native tray journey verifies each
+D-Bus payload against the manifest and preserves `tray-icons.json`.
+`scripts/verify-packages.py` checks the actual packaged PNG hashes in all three
+formats. Those checks prove contents and protocol pixels; panel rendering and
+the host's chosen icon size remain desktop decisions.
+
+`app/app_icon.rs` resolves permission icons from local XDG desktop entries and
+icon themes. It matches canonical executable paths, with a narrow private-folder
+launcher/desktop-class match, and falls back for ambiguous shared runtimes. It
+never executes launchers or reads process-supplied environment values. The pinned
+Kit Avatar receives a predecoded image; its initials remain visible during lookup.
+Each request resets its probe so a late result cannot label another app.
+
+Two try-acquired background workers bound lookup/decode concurrency. A 128-entry,
+60-second cache holds 64-pixel images or misses. Desktop scans cap entries at 2048,
+metadata at 128 KiB/file and 8 MiB total, with a 500 ms scan deadline. Icons cap
+encoded input at 1 MiB; raster decoding caps dimensions at 2048 and allocation at
+16 MiB. SVG rendering uses the existing resvg version with image references
+disabled. Permission controls and RPC deadlines never await icon work. The
+`permission-icons` background GPU journey checks both formats, fallback/reset,
+and an actual Allow reply while both workers are occupied.
 
 `backend.rs` owns the small Tokio runtime and Unix-socket gRPC server. Each
 accepted transport gets a connection ID. Subscribe installs a local daemon
@@ -415,11 +471,20 @@ arrival ID for older pages. Latest releases the cursor/ceiling and follows new
 reports. Retention may remove old rows while browsing. Sort changes and conditions
 reset the cursor. The Kit cycle is default → descending → ascending → default.
 Table selection still opens the existing on-demand details/rule workflow.
-`history/settings.rs` stores compact/table mode and selected column order in a
-4-KiB version-1 `<database>.history.json` document. Saves validate unique known
-columns and atomically publish from a private file without holding the snapshot
-lock during I/O. Resized widths and header/filter state are not persisted yet;
-column order can be changed by removing/re-adding columns, not by dragging.
+`history/settings.rs` stores compact/table mode, selected columns, display
+refresh and history presentation in a 16-KiB version-3 `<database>.history.json`
+document; versions 1/2 load with defaults. Search/action, eight bounded typed
+conditions, header sort and nineteen finite column widths restore without
+persisting keyset cursors, ceilings or row selection. A single latest-value watch
+slot and background writer debounce changes for 500 ms. Close/Quit flush; the
+existing 500-ms Quit budget covers history and window state after immediate
+backend shutdown. Column/refresh/presentation writers merge their own fields
+under one writer lock, check the raw file hash and publish via a private file
+plus file/directory fsync. Invalid startup files use defaults with warning and
+disabled saves, keeping RPC startup independent; stale/oversized/symlink files
+are preserved. Recovery requires fixing the selected settings file and restarting.
+Hashes are not a filesystem compare-and-swap against arbitrary writers. Column
+order can be changed by removing/re-adding columns, not by dragging.
 
 `app/history_tools.rs` keeps staged conditions/columns and captured search/action/
 sort/page scope in one native window. All database/settings/encoding/file I/O runs
@@ -665,6 +730,39 @@ Apply-to-all-nodes, exhaustive native field variants, actual TLS handshakes,
 cap-sized interactive stress and real-daemon enforcement remain pending. Evidence
 and commands are in the daemon-preferences feature map and aggregate report.
 
+## Daemon alert archive
+
+`src/alerts.rs` owns canonical typed documents, schema, bounded keyset queries,
+local mutations and atomic CSV/JSON Lines export. `src/app/alerts_view.rs` owns
+its Kit controls, virtual list, selected detail, review and worker state. The
+backend attributes PostAlert to its sending session and acknowledges without
+waiting for SQLite. Permission state and delivery remain independent of the
+shared bounded ingestion writer.
+
+Schema 7 retains up to 10,000 alerts / 2 MiB logical data and applies the configured
+history age. Typed payloads preserve unknown enum numbers and exact u64 source
+IDs; full protobuf bytes accompany canonical JSON. Preparation reserves temporary
+memory before building documents; the queue retains a measured allocation and
+rejects excess without blocking. Alert skipped/error feedback is separate from
+connection-history loss. Export releases the live reader before file I/O, checks
+stop before atomic publication and refuses database/settings paths and existing
+nonregular files, including active sockets.
+
+The Alerts feature map records source contracts and exact bounds. Evidence lives
+in `.verification/alerts-result.json` and the port plan. Native opening/search
+and persistence proof is separate from GPU read/delete/export input proof.
+Desktop notices use `src/desktop_notifications.rs` for the bounded backend
+mailbox and `src/app/desktop_notifications.rs` for one freedesktop D-Bus worker.
+The resolved zbus version is reused; the pinned GPUI API was inspected but its
+per-notice waiting threads and missing urgency do not meet this app's bounds.
+Only SHOW_ALERT with saved notifications enabled publishes. A single latest
+pending notice replaces the active ID at most twice per second; service timeout,
+errors and a one-slot Open action remain independent of SQLite and permissions.
+Popup preferences version 4 adds the toggle and migrates older files as enabled.
+Private-bus transport and background GPU restoration are separate from actual
+host banner/pointer proof. See the desktop-notifications feature map. Per-rule
+alert configuration and permission notification actions remain pending.
+
 ## Linux releases
 
 Only Linux x86-64 is packaged. `rust-toolchain.toml` pins Rust 1.99.0. The Linux
@@ -690,3 +788,261 @@ pointer down/up. The status now stays on one line; the checksum journey pins
 that font and retains its first-click state. v0.1.1 is the first publication
 candidate after that correction; the original tag remains immutable. Checksum
 review also resolves the requesting session independently of the browsed node.
+
+## Daemon live tasks
+
+`src/live.rs` owns the four-task streaming lifecycle, separate from one-shot
+policy commands. Task IDs use the shared allocator; repeated replies replace a
+bounded watch slot and only matching live session generations may update it.
+TASK_STOP success is unacknowledged in the pinned daemon. UI feedback distinguishes
+queued stop requests, queue-full retry, stale/disconnected data and actual updates.
+Read errors do not invalidate the policy catalogue. Backend maintenance retries
+owned stops and expires tasks that stop reporting.
+
+`src/live/model.rs` uses bounded borrowed raw visitors and one PID-summary decode
+per snapshot. Socket rows retain original raw ranges and a measured 4-MiB cache;
+unknown fields/numbers remain available in full copy. Process fields and Sysinfo
+resources use bounded readable previews with original complete field/raw copy.
+Sysinfo load is scaled by 65536 and memory by Unit; no unsupported CPU-utilization
+or per-app bandwidth values are invented. `src/app/live_view.rs` owns pinned Kit
+controls, 200-row pages, one parse worker and generation guards. Parsing stays off the UI thread. Neither SQLite nor a task reply participates in
+permission delivery. Leaving/closing a dashboard
+requests stop, and mode changes restore focus rather than retaining a removed
+Select's handle. Source node identity stays with retained snapshots.
+
+The feature map documents source links, tests, bounds and remaining native/real
+kernel proof. `.verification/live-result.json` records source hashes and evidence.
+Python task fixtures require explicit `--allow-live-tasks`, generate data in memory
+and never read /proc, enumerate actual sockets or change system policy.
+
+## History preferences and idle maintenance
+
+Schema 8 adds a single retention-preference row. `src/history/storage.rs` validates
+and previews scalar settings, guards the reviewed revision and commits pruning
+plus settings atomically. Runtime state publishes only after commit. Post-commit
+physical cleanup/cap errors return saved-with-warning feedback; allocation and
+requested logical target are distinct. Scalar config reads never touch disk on
+GPUI or the permission path. Startup preserves edited UI values unless explicit
+CLI flags override them; the CLI parser tracks clap value source without adding
+flags to every programmatic Config literal.
+
+The existing writer periodically cleans expired events/alerts/statistics even
+with no incoming reports. Normal writes retain their existing size enforcement.
+Incremental vacuum and WAL checkpoint remain bounded maintenance; lowering the
+target can leave physical allocation above it until reusable pages compact, or
+while other caches remain needed. Actual page size determines the page cap.
+Core tests include transactional rollback, a held writer with independent replies,
+CLI process shutdown, schema-7 migration and a real one-minute idle observation.
+
+The view-preference document migrates version 1 to 2 with default one-second
+refresh. Column and refresh writes merge their own fields rather than overwriting
+another open editor's changes. Manual mode suppresses automatic latest-page
+queries while recording continues; explicit search/paging/Latest/Refresh now still
+query. Automatic refresh uses real elapsed time. The separate native Kit preference
+window owns validation/review/busy state; I/O and deletes run off GPUI. Source and
+proof boundaries are in the history-preferences feature map and aggregate report.
+
+## System firewall foundation (partial port)
+
+Use Nodes → System firewall for the bounded cached chain/rule browser and full
+document editor. The verification contract and remaining typed/profile/enable-disable
+scope are in `.agent/skills/verify-rustleblower/features/firewall.md` and
+`docs/system-firewall-plan.md`. `python scripts/verify-headless.py --feature firewall`
+drives the eight-frame GPU journey with real clipboard paste; typing the entire
+configuration through TestWindowExt renders every character and is inappropriate
+for this document workflow. The journey also rejects an oversized real paste.
+
+Schema 9 adds `firewall_accepted`, referencing `node_info` with cascading cleanup.
+Fresh Subscribe removes accepted provenance. A matching successful reload saves
+the bounded blob and provenance atomically, and a cache-save failure rolls both
+back while marking that generation uncertain. The controller tracks supported
+backend/version and a SHA-256 fingerprint per session, rejects stale editors and
+invalidates old firewall authorization after daemon configuration changes.
+Unknown backends and iptables are read only; writes require reported nftables
+and format 1. The protocol uses action 5 plus Notification.sysFirewall, not data.
+
+Node reads share one semaphore. One globally admitted firewall read job may await
+that permit asynchronously, including after ACK; simply trying once caused an
+old loaded snapshot to remain after a busy read. The focused fixture deliberately
+holds/releases the reader across ACK to cover the correction. All reads, parsing
+and serialization stay off the UI thread, with bounded wire, decoded, JSON and
+container sizes. Complete-document editing currently preserves Enabled until
+the policy-transition workflow is implemented. Native firewall input, actual
+enforcement and cap-sized RSS remain unverified.
+
+## Firewall field forms and keyboard proof
+
+The field editor lives with its feature in `src/app/firewall_view/forms.rs` and
+uses native Kit Inputs, Checkbox, TabBar and virtualized ListItem pages. It keeps
+chain, rule, statement and value edits local until the existing whole-snapshot
+review/ACK path. Only one selected statement/value creates input controls.
+Intermediate statement/value keeps check bounded encoded/decoded allocation,
+and final document mutation/serialization runs on the background executor.
+A form opened on a valid generation can still keep/copy its local values after
+replacement; review/apply remains disabled for that old generation.
+
+Alt+E edits the selected chain, Ctrl+N creates one, Ctrl+Enter keeps the active
+value/statement/form or reviews a whole draft, Ctrl+Shift+Enter applies a prepared
+review, and Escape cancels a local step. Nested keyboard keeps must not bypass
+uncommitted subforms. `--feature firewall-forms` provides thirteen background
+frames; `verify-native.py run --feature firewall-forms` proves a four-frame native
+chain edit/review/ACK path with exact independent protobuf and cache assertions.
+The native fixture opt-in is `--allow-system-firewall`; it updates only its own
+in-memory configuration and never invokes any host firewall.
+
+Rule array order is distinct from the daemon's nftables insertion Position.
+Reordering preserves that metadata, new rules default to zero, and duplicates
+retain their source value. Enabled form commands require a statement because
+the pinned daemon otherwise skips installation. The tests exercise uint64 wire
+roundtrips and a near-cap synthetic value, not actual kernel validity or long-run
+RSS. Remaining profile/file/enable-disable/native-condition work is tracked in
+the firewall feature contract. Headless selection uses --exact to keep the
+firewall and firewall-forms reports in separate evidence directories.
+
+For system-firewall file/profile interchange, run
+`python scripts/verify-headless.py --feature firewall-files`. All fixture files
+and exported JSON remain under that run's evidence directory; paths are entered
+through the Kit Input. The journey tests 200-row profile paging and never opens
+an OS picker or touches the default system profile directory. Independent core
+file bounds/dedup/removal tests live in `tests/firewall.rs`. Built-in policy
+presets and enable/disable sequencing remain separate work.
+
+For policy/state transitions, use `--feature firewall-policy` with the background
+or native verification helper. Background input covers presets/checkbox, exact
+step payloads, held ACK, independent permission, editor close/reopen and rejected
+local drafts. Native uses Alt+P, Ctrl+Shift+E, Ctrl+Enter and Ctrl+Shift+Enter with
+an owned in-memory drop-policy fixture. Rebuild desktop after core tests before
+native input. The shared operation lease is independent of the originating view;
+no native helper touches `/tmp/osui.sock` or runs a host firewall command.
+
+
+## UI-side blocklist subscriptions
+
+`subscriptions/` owns its bounded catalogue and downloads on a separate worker
+thread/current-thread Tokio runtime. `app/subscriptions_view.rs` owns the main
+Blocklists tab (Ctrl+7), bounded form/page state and actual Kit controls. Ctrl+N
+focuses the new form's name; Ctrl+S validates and saves. No history, gRPC or
+permission worker waits for list I/O. A subscription-store startup error is
+reported on this page while the server and prompts remain available.
+
+The worker owns `<history-parent>/subscriptions/manager.lock`, a separate WAL
+SQLite database, `tmp/download-*` and published `sources/<id>/download-<filename>`.
+A second manager refuses that directory. Removed subscriptions keep data and
+count toward the retained limit/budget. Path decoding is bounded and rejects
+files outside their item directory and nonregular/symlink files. Preview is
+limited to 64 KiB; it does not execute data. A publish uses fsync and rename
+before metadata; filesystem/database crash recovery and retired-data cleanup
+still need implementation/proof. Do not claim a transaction spanning both.
+
+The command queue holds 32 requests, refresh queue at most 128 IDs, catalogue
+128 active / 256 retained records, pages 64 rows, logs 1024 total / 100 displayed.
+Downloads stream one at a time with explicit time/byte/line bounds and up to five
+redirects. The reqwest TLS client initializes only on the first download.
+Scheduling is saved but automatic updates default to paused and require a live
+local notification session; explicit refresh works without a daemon. Revision
+checks discard obsolete downloads after edits/removal. Cancellation also wins
+when a completed task has not yet been published. Data never enters the history
+ingestion queue or permission path.
+
+HTTP fixtures must run inside an owned user/network namespace, containing only
+its own loopback. Host-network loopback requests stalled in this environment;
+the same tests passed immediately in isolation. The wrapper refuses to configure
+loopback in the parent namespace or one with other interfaces. It requires
+`unshare` (util-linux), `ip` (iproute2) and permitted unprivileged user namespaces;
+there is no fallback that changes host networking or firewall policy.
+
+```sh
+python scripts/owned_net.py --evidence .verification/core-network.json -- python scripts/cargo.py test --no-default-features --locked
+python scripts/verify-headless.py --feature subscriptions
+python scripts/cargo.py build --locked
+python scripts/verify-native.py run --feature subscriptions
+```
+
+The GPU wrapper applies network isolation itself for this feature and records
+`network.json`. The native journey creates metadata while automatic updates are
+paused, so it never contacts the entered loopback URL. Core/GPU HTTP fixtures are
+local plain HTTP; successful public HTTPS, certificate failures, redirects and
+compression need additional specific proof. CI is configured to use the same
+wrapper; local results do not prove a hosted CI run. Canonical data and associated-rule review are now implemented by the next slice
+documented below; group/all-list workflows and other full-parity requirements
+remain open.
+
+
+The native URL helper (`NativeDesktop.type_url`) reads KWin's active layout. The
+verified Wayland layouts are default US and Canadian French: the latter needs
+Shift+3 for `/`. It refuses other layouts rather than claiming faithful URL
+entry, and records `input-layout.json`. It does not switch layout or use/change
+the user's clipboard. The three helper guard tests cover Canadian French key
+mapping, unknown-layout refusal and the existing X11 text path.
+
+
+## Canonical list publications and rule attachment
+
+`subscriptions/format.rs` incrementally converts the incoming stream to actual
+Go-reader input. Input and output have independent configured byte caps; the
+worker writes only canonical bytes to its temporary/published file. `Row.bytes`
+and the disk budget now measure canonical on-disk data, while progress counts
+received bytes. `subscription_publications` records up to five canonical reader
+kinds per retained subscription; old kinds remain available for existing rules
+and are included in the published-data budget. Legacy rows without that registry
+remain readable but force a fresh download before rule attachment/HTTP validators.
+A filename without an extension gains `.txt` for the daemon's `*.*` glob.
+
+`subscriptions/attachment.rs` builds validated watched-directory drafts and reads
+confirmed associated rules through the existing bounded snapshot visitor. The
+visitor remains off the UI/history-writer thread. `app/subscriptions_view/rules.rs`
+captures the chosen local session and resolves the row asynchronously before
+opening the ordinary acknowledged editor; inspection scans all pages but retains
+only sixteen matching rules and 512 KiB. The generic editor displays its captured
+target node. Associated-rule pages are snapshots and must be reopened after edits.
+The core suite checks 221 inventory rules, matching beyond the first page,
+node/directory/type exclusion and unobserved proposals. The GPU flow holds a
+CHANGE_RULE reply while a separate permission is answered, then checks exact
+confirmed data, second-page nested editing and rejected-cache preservation.
+
+`scripts/verify-list-matching.py` supplies production-normalized HTTP fixture files
+to the pinned Go readers, selected matching methods and monitor. It extracts
+upstream code into ignored evidence only. Its logging adapter is inert, and its
+module contains no daemon main/interception/RPC packages or network dependencies.
+Go's build cache is temporary and cleaned; source, output fixtures, hashes and
+logs remain. This proof does not start the system daemon. See the subscription
+feature map for exact coverage and remaining formats/workflows.
+
+
+## Native collection controls and reviewed membership
+
+`app/subscriptions_view/collections.rs` owns its query, bounded page and separate
+Kit search input. Dashboard Ctrl+F routes to the visible collection input; review
+and inspection transitions restore valid focus. `Request::Collection` resolves
+an exact normalized group/kind directly instead of searching a potentially
+truncated page. Global sorts use a bounded index into the complete admitted
+catalogue, deterministic group/kind tie-breaks and 64-row output.
+
+`subscriptions/attachment.rs::page_for_directory` supports explicit typed targets.
+The UI captures single-subscription revision or collection identity, plus the
+original node session. Inspection paging keeps that target even if another row
+or node becomes selected. A clicked rule is reread on a background executor and
+compared with the displayed snapshot; changes/deletion are refused until an
+explicit snapshot refresh. One completion receiver clears busy state after an
+interrupted window-bound task. Dedicated in-flight close/reopen proof remains
+separate from the passing ordinary input paths.
+
+Forms retain the original row, staged values and a bounded membership review.
+Enabled/group/type edits and restoration of existing entries are reviewed even
+when their initial snapshot had no file, covering a download completing during
+editing. Back retains the form; Cancel discards only its draft; confirmation
+uses the original revision and the existing worker mutation path. Removal text
+now explains its group/all effect and retained direct-list files. No membership
+operation sends an implicit CHANGE_RULE for existing definitions.
+
+Use `python scripts/verify-headless.py --feature subscriptions` for the 32-frame
+combined workflow. The fixture confirms a concurrent control change while an
+associated-rule snapshot is open; ordinary telemetry does not overwrite existing
+confirmed rules, so a Ping-only synthetic change is not a valid stale-cache
+fixture. The test requires actual refused stale edit and successful explicit
+refresh, then unchanged confirmed definitions after membership changes.
+`python scripts/verify-native.py run --feature subscription-collections` opens
+empty collections, reviews UID and exact all-domains directory, activates the
+owned editor’s Cancel button by keyboard and searches after focus restoration. Long
+evidence paths require Tab/End to inspect the full single-line directory input.
+It sends no policy command or HTTP request and does not bootstrap subscriptions.

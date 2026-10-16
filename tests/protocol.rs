@@ -659,6 +659,7 @@ async fn wire_protocol_decision_and_persistence() -> Result<()> {
     client
         .post_alert(protocol::Alert {
             id: 7,
+            action: protocol::alert::Action::ShowAlert as i32,
             data: Some(protocol::alert::Data::Text("fixture warning".into())),
             ..Default::default()
         })

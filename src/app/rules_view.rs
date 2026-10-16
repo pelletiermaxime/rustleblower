@@ -272,6 +272,27 @@ impl Dashboard {
         }
         cx.notify();
     }
+    fn copy_rules_to_nodes(&mut self, cx: &mut Context<Self>) {
+        let names = if !self.rules.marked.is_empty() {
+            Some(self.rules.marked.clone())
+        } else {
+            self.rules
+                .selected
+                .as_ref()
+                .map(|rule| std::collections::BTreeSet::from([rule.name.clone()]))
+        };
+        let scope = crate::rules::transfer::ExportScope {
+            query: self.rules.query.clone(),
+            names,
+        };
+        match super::rule_distribution::open(self.backend.clone(), scope, cx) {
+            Ok(window) => self.rules.editor_window = Some(window),
+            Err(error) => {
+                self.rules.error = Some(format!("Cannot open cross-node copy: {error:#}"))
+            }
+        }
+        cx.notify();
+    }
     fn open_rule_transfer(&mut self, import: bool, selected: bool, cx: &mut Context<Self>) {
         if let Some(window) = self.rules.editor_window
             && window
@@ -790,6 +811,9 @@ impl Dashboard {
                         cx.listener(|this, _, _, cx| this.open_rule_transfer(true, false, cx)),
                     ),
             )
+            .child(Button::new("rules-import-nodes").label("Import to nodes…").disabled(self.rules.editor_window.is_some()||self.rules.pending_change.is_some()||self.backend.status().sessions.is_empty()).on_click(cx.listener(|this,_,_,cx|{
+                match super::rule_distribution::open_import(this.backend.clone(),cx){Ok(window)=>this.rules.editor_window=Some(window),Err(error)=>this.rules.error=Some(format!("Cannot open multi-node import: {error:#}"))}cx.notify();
+            })))
             .child(
                 Button::new("rules-export")
                     .label("Export filter…")
@@ -802,6 +826,9 @@ impl Dashboard {
                         cx.listener(|this, _, _, cx| this.open_rule_transfer(false, false, cx)),
                     ),
             )
+            .child(Button::new("rules-export-nodes").label("Export nodes…").disabled(self.rules.editor_window.is_some()||self.rules.pending_change.is_some()).on_click(cx.listener(|this,_,_,cx|{
+                match super::rule_exports::open(this.backend.clone(),this.rules.query.clone(),cx){Ok(window)=>this.rules.editor_window=Some(window),Err(error)=>this.rules.error=Some(format!("Cannot open multi-node export: {error:#}"))}cx.notify();
+            })))
             .child(
                 Button::new("rules-export-selected")
                     .label("Export selected…")
@@ -814,6 +841,7 @@ impl Dashboard {
                         cx.listener(|this, _, _, cx| this.open_rule_transfer(false, true, cx)),
                     ),
             )
+            .child(Button::new("rules-copy-nodes").label("Copy to nodes…").disabled(self.rules.query.node.is_empty()||self.rules.editor_window.is_some()||self.rules.pending_change.is_some()||self.rules.page.rules.is_empty()).on_click(cx.listener(|this,_,_,cx|this.copy_rules_to_nodes(cx))))
             .child(
                 Button::new("rules-select-page")
                     .label("Select page")

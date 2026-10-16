@@ -233,9 +233,9 @@ fn move_when_mapped(request: MoveRequest) -> anyhow::Result<bool> {
 }
 pub(super) fn bounds(position: Position, expanded: bool, scale: f32, cx: &App) -> Bounds<Pixels> {
     let desired = if expanded {
-        size(px(860.), px(780.))
+        size(px(860.), px(860.))
     } else {
-        size(px(650.), px(490.))
+        size(px(650.), px(540.))
     };
     let display = cx.primary_display();
     let scale = if scale.is_finite() && scale > 0. {

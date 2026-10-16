@@ -28,7 +28,7 @@ jobs:
           path: dist
       - name: Verify package checksums
         run: cd dist && sha256sum --check SHA256SUMS
-      - name: Publish first development release
+      - name: Publish development prerelease
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |

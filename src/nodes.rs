@@ -1,4 +1,5 @@
 //! Bounded node metadata and acknowledged daemon control; policy stays daemon-owned.
+pub mod interception;
 pub mod preferences;
 use crate::{history, protocol};
 use anyhow::{Result, ensure};
@@ -17,11 +18,15 @@ pub const FIREWALL_BYTES: usize = 256 * 1024;
 pub enum Change {
     Interception(bool),
     Configuration(String),
+    Firewall(crate::firewall::Change),
 }
 impl Change {
     pub fn validate(&self) -> Result<(), String> {
         if let Self::Configuration(text) = self {
             validate_config(text)?;
+        }
+        if let Self::Firewall(change) = self {
+            crate::firewall::validate(&change.config)?;
         }
         Ok(())
     }
@@ -30,6 +35,13 @@ impl Change {
             Self::Interception(true) => protocol::Action::EnableInterception,
             Self::Interception(false) => protocol::Action::DisableInterception,
             Self::Configuration(_) => protocol::Action::ChangeConfig,
+            Self::Firewall(_) => protocol::Action::ReloadFwRules,
+        }
+    }
+    pub(crate) fn bytes(&self) -> usize {
+        match self {
+            Self::Firewall(change) => change.bytes(),
+            _ => self.data().len() + 512,
         }
     }
     pub(crate) fn data(&self) -> &str {
@@ -63,7 +75,7 @@ impl Saved {
             || config
                 .system_firewall
                 .as_ref()
-                .is_some_and(|firewall| firewall.encoded_len() > FIREWALL_BYTES)
+                .is_some_and(|firewall| crate::firewall::admit(firewall).is_err())
         {
             return Err(
                 "Node configuration exceeds the 64 KiB JSON / 256 KiB firewall cache limits".into(),
@@ -86,7 +98,9 @@ impl Saved {
     }
 }
 pub(crate) fn schema(db: &Connection) -> rusqlite::Result<()> {
-    db.execute_batch("CREATE TABLE IF NOT EXISTS node_info(name TEXT PRIMARY KEY,session INTEGER NOT NULL,updated INTEGER NOT NULL,kernel TEXT NOT NULL,config TEXT NOT NULL,running INTEGER NOT NULL,log_level INTEGER NOT NULL,firewall BLOB NOT NULL);")
+    db.execute_batch("CREATE TABLE IF NOT EXISTS node_info(name TEXT PRIMARY KEY,session INTEGER NOT NULL,updated INTEGER NOT NULL,kernel TEXT NOT NULL,config TEXT NOT NULL,running INTEGER NOT NULL,log_level INTEGER NOT NULL,firewall BLOB NOT NULL);")?;
+    interception::schema(db)?;
+    crate::firewall::schema(db)
 }
 pub(crate) fn save(
     db: &mut Connection,
@@ -96,6 +110,7 @@ pub(crate) fn save(
     active: &[String],
 ) -> Result<()> {
     let tx = db.transaction()?;
+    tx.execute("DELETE FROM firewall_accepted WHERE node=?", [node])?;
     tx.execute("INSERT INTO node_info VALUES(?1,?2,?3,?4,?5,?6,?7,?8) ON CONFLICT(name) DO UPDATE SET session=excluded.session,updated=excluded.updated,kernel=excluded.kernel,config=excluded.config,running=excluded.running,log_level=excluded.log_level,firewall=excluded.firewall",params![node,session,history::now_nanos(),saved.kernel,saved.config,saved.running,saved.log_level,saved.firewall])?;
     let names = {
         let mut query = tx.prepare("SELECT name FROM node_info ORDER BY updated,name")?;
@@ -112,6 +127,7 @@ pub(crate) fn save(
             continue;
         }
         tx.execute("DELETE FROM node_info WHERE name=?", [&name])?;
+        tx.execute("DELETE FROM node_pause WHERE name=?", [&name])?;
         tx.execute("DELETE FROM application_rules WHERE node=?", [&name])?;
         tx.execute("DELETE FROM prompt_rules WHERE node=?", [&name])?;
         excess -= 1;
@@ -127,15 +143,32 @@ pub(crate) fn save(
     Ok(())
 }
 pub(crate) fn apply(db: &mut Connection, node: &str, change: &Change) -> Result<()> {
-    let affected = match change {
-        Change::Interception(running) => db.execute(
+    if let Change::Firewall(change) = change {
+        return crate::firewall::apply(db, node, change);
+    }
+    if let Change::Interception(running) = change {
+        let tx = db.transaction()?;
+        let affected = tx.execute(
             "UPDATE node_info SET running=?,updated=? WHERE name=?",
             params![running, history::now_nanos(), node],
-        )?,
+        )?;
+        ensure!(
+            affected == 1,
+            "The node cache is unavailable; reconnect to reload confirmed state"
+        );
+        tx.execute(
+            "UPDATE node_pause SET running=? WHERE name=?",
+            params![running, node],
+        )?;
+        tx.commit()?;
+        return Ok(());
+    }
+    let affected = match change {
         Change::Configuration(config) => db.execute(
             "UPDATE node_info SET config=?,updated=? WHERE name=?",
             params![config, history::now_nanos(), node],
         )?,
+        Change::Firewall(_) | Change::Interception(_) => unreachable!(),
     };
     ensure!(
         affected == 1,
@@ -198,11 +231,17 @@ pub fn detail(path: &Path, name: &str) -> Result<Detail> {
     )?)
 }
 pub fn read_permit() -> Option<OwnedSemaphorePermit> {
+    read_slots().try_acquire_owned().ok()
+}
+fn read_slots() -> Arc<Semaphore> {
     static READ: OnceLock<Arc<Semaphore>> = OnceLock::new();
-    READ.get_or_init(|| Arc::new(Semaphore::new(1)))
-        .clone()
-        .try_acquire_owned()
-        .ok()
+    READ.get_or_init(|| Arc::new(Semaphore::new(1))).clone()
+}
+pub async fn wait_read_permit() -> Result<OwnedSemaphorePermit, String> {
+    read_slots()
+        .acquire_owned()
+        .await
+        .map_err(|_| "Node reader stopped".into())
 }
 
 #[cfg(test)]

@@ -1,0 +1,59 @@
+{
+  "icon": "dev.rustleblower.Rustleblower",
+  "sizes": [
+    {
+      "size": 16,
+      "drawing": "tiny",
+      "png_sha256": "83455bb7f4598d8fd73070042a6f5aeae4a296744de8e49c69180cdf595bb41c",
+      "argb_sha256": "b1fef559acae02fed9d9fd1a732133c9f6c4619523ddc6cfc9684693994e28bc"
+    },
+    {
+      "size": 22,
+      "drawing": "tiny",
+      "png_sha256": "c636253627436da1c5e0b7adb61be25b45cbaa99b90f2a24ed81948245134171",
+      "argb_sha256": "5ba426a8814a7ac4cd6597ca4a148d7bf733e20a3c85c00c6ea26e5c5f843598"
+    },
+    {
+      "size": 24,
+      "drawing": "tiny",
+      "png_sha256": "8e7dd9a47b110d6f8fe4dfcbd6fa54d29ca61e2232ae8b40d22cdd876c09b405",
+      "argb_sha256": "86499978835d1a7407ab97c92b006198eb3438b02dc0ea7e9ef7330731f04eb5"
+    },
+    {
+      "size": 32,
+      "drawing": "compact",
+      "png_sha256": "12b968585b5e411a404e5acf31053ccf6b6010253168183ec612c2a023d5e6bd",
+      "argb_sha256": "6f9707904c660121e2cded8d14ce511d148864e68b1909cb2c38c9e4e14d8cee"
+    },
+    {
+      "size": 48,
+      "drawing": "full",
+      "png_sha256": "2e8ad31028c2ce6a48a6b3ede457e12db6088431e281cd50c2b724b3a017ba17",
+      "argb_sha256": "01e7dcf4a9cfc0cde6954d285775a042f7de41865fb36f52d939b3e03a90fc2c"
+    },
+    {
+      "size": 64,
+      "drawing": "full",
+      "png_sha256": "976d1afcd3828149271003f78455e38ad2cf0750c40b4de79d3670568451d7c6",
+      "argb_sha256": "8efb9bb5871a191a50fe444211c107cc6dcafaaa640127363fa9c4461a0a6346"
+    },
+    {
+      "size": 128,
+      "drawing": "full",
+      "png_sha256": "e7b5b091a61106ad5229d38f0d8702866b2961641481547c486f5e71fcc53ab2",
+      "argb_sha256": "1dc779ac66f0a85c9450bcb9f6b3757cf3a41ba289afd21c98352fccd5ca66e8"
+    },
+    {
+      "size": 256,
+      "drawing": "full",
+      "png_sha256": "9c78544a7146ef9a58097c3738e9b7fda63c2b1181011fb00106fc9acb2925b8",
+      "argb_sha256": "10727b51182d335b556fa32098d9c0171a080c65860d3dbb2c93209ca3352736"
+    },
+    {
+      "size": 512,
+      "drawing": "full",
+      "png_sha256": "a5b80e6ba127b90eb8fceffd63807087b1d850f2b131cb4ca4f12126afca7477",
+      "argb_sha256": "7261ce114ce4a0835b5d6d96b09211d692964c7816740f4a01d8cd1083ea4917"
+    }
+  ]
+}

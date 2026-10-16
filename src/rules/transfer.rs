@@ -141,21 +141,31 @@ impl Import {
     }
 }
 
-fn visit(
+pub(crate) fn visit(
     database: &Path,
     scope: &ExportScope,
-    mut output: impl FnMut(&Rule, bool) -> Result<()>,
+    output: impl FnMut(&Rule, bool) -> Result<()>,
 ) -> Result<usize> {
     let mut db = Connection::open_with_flags(database, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
     db.busy_timeout(Duration::from_millis(250))?;
     db.execute_batch("PRAGMA query_only=ON; PRAGMA cache_size=-2048; PRAGMA mmap_size=0;")?;
     let snapshot = db.transaction()?;
+    let count = visit_snapshot(&snapshot, scope, output)?;
+    snapshot.commit()?;
+    Ok(count)
+}
+
+pub(crate) fn visit_snapshot(
+    snapshot: &Connection,
+    scope: &ExportScope,
+    mut output: impl FnMut(&Rule, bool) -> Result<()>,
+) -> Result<usize> {
     let mut query = scope.query.clone();
     query.after.clear();
     let mut count = 0;
     let mut bytes = 0;
     loop {
-        let page = super::query(&snapshot, &query)?;
+        let page = super::query(snapshot, &query)?;
         for rule in &page.rules {
             if scope
                 .names
@@ -187,7 +197,6 @@ fn visit(
             "Some selected rules changed or disappeared; refresh the catalogue and retry"
         );
     }
-    snapshot.commit()?;
     Ok(count)
 }
 

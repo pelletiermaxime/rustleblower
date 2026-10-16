@@ -29,9 +29,14 @@ pub(super) struct HistoryView {
     pub(super) detail_window: Option<AnyWindowHandle>,
     actions_tx: std::sync::mpsc::SyncSender<super::connection_details::OpenRule>,
     pub(super) actions_rx: std::sync::mpsc::Receiver<super::connection_details::OpenRule>,
+    processes_tx: std::sync::mpsc::SyncSender<super::connection_details::OpenProcess>,
+    pub(super) processes_rx: std::sync::mpsc::Receiver<super::connection_details::OpenProcess>,
     table: Entity<TableState<super::history_table::Rows>>,
     options: crate::history::settings::Options,
+    pub(super) memory: super::history_memory::Client,
+    widths: Vec<(crate::history::query::Field, f32)>,
     tools_window: Option<AnyWindowHandle>,
+    pub(super) preferences_window: Option<AnyWindowHandle>,
     tools_tx: std::sync::mpsc::SyncSender<super::history_tools::Message>,
     tools_rx: std::sync::mpsc::Receiver<super::history_tools::Message>,
     indexing: bool,
@@ -39,10 +44,13 @@ pub(super) struct HistoryView {
 
 impl HistoryView {
     pub fn new(history: &History, window: &mut Window, cx: &mut Context<Dashboard>) -> Self {
+        let options = history.settings.snapshot();
         let input = cx.new(|cx| {
-            InputState::new(window, cx)
+            let mut input = InputState::new(window, cx)
                 .placeholder("Filter executable or destination…")
-                .validate(|text, _| text.len() <= 256)
+                .validate(|text, _| text.len() <= 256);
+            input.set_value(options.presentation.search.clone(), window, cx);
+            input
         });
         cx.subscribe(&input, |this, input, event, cx| {
             if matches!(event, InputEvent::Change) {
@@ -53,15 +61,19 @@ impl HistoryView {
         })
         .detach();
         let (actions_tx, actions_rx) = std::sync::mpsc::sync_channel(4);
+        let (processes_tx, processes_rx) = std::sync::mpsc::sync_channel(4);
         let (tools_tx, tools_rx) = std::sync::mpsc::sync_channel(4);
-        let options = history.settings.snapshot();
+        let widths = options.presentation.widths.clone();
         let table = cx.new(|cx| {
             TableState::new(
                 super::history_table::Rows {
                     rows: Default::default(),
                     columns: options.columns.clone(),
-                    sort: None,
-                    widths: Vec::new(),
+                    sort: options.presentation.sort,
+                    widths: widths
+                        .iter()
+                        .map(|(field, width)| (*field, px(*width)))
+                        .collect(),
                     sender: tools_tx.clone(),
                 },
                 window,
@@ -88,14 +100,24 @@ impl HistoryView {
                                 .map(|width| width.clamp(px(40.), px(2000.))),
                         )
                         .collect();
+                    for (field, width) in &delegate.widths {
+                        let width = (*field, (*width).into());
+                        if let Some(old) = this.history.widths.iter_mut().find(|(f, _)| f == field)
+                        {
+                            *old = width;
+                        } else {
+                            this.history.widths.push(width);
+                        }
+                    }
                 });
+                this.history.remember(false);
             }
         })
         .detach();
         Self {
             input,
             page: Page::default(),
-            query: Query::default(),
+            query: options.presentation.query(),
             pending: None,
             generation: 0,
             dirty: true,
@@ -109,9 +131,14 @@ impl HistoryView {
             detail_window: None,
             actions_tx,
             actions_rx,
+            processes_tx,
+            processes_rx,
             table,
+            memory: super::history_memory::Client::start(history.settings.clone(), cx),
+            widths,
             options,
             tools_window: None,
+            preferences_window: None,
             tools_tx,
             tools_rx,
             indexing: history.health.indexing.load(Ordering::Acquire),
@@ -142,6 +169,19 @@ impl HistoryView {
         self.loading = true;
         self.due = Instant::now() + Duration::from_millis(200);
         self.scroll.scroll_to_item(0, ScrollStrategy::Top);
+        self.remember(false);
+    }
+    pub(super) fn remember(&mut self, flush: bool) {
+        self.memory.record(
+            crate::history::settings::Presentation {
+                search: self.query.search.clone(),
+                action: self.query.action.clone(),
+                filters: self.query.filters.clone(),
+                sort: self.query.sort,
+                widths: self.widths.clone(),
+            },
+            flush,
+        );
     }
     pub fn poll(
         &mut self,
@@ -182,7 +222,19 @@ impl HistoryView {
         {
             self.tools_window = None;
         }
+        if let Some(handle) = self.preferences_window
+            && handle.update(cx, |_, _, _| {}).is_err()
+        {
+            self.preferences_window = None;
+        }
         let options = history.settings.snapshot();
+        if options.refresh_seconds != self.options.refresh_seconds {
+            self.generation += 1;
+            self.pending = None;
+            self.loading = false;
+            self.dirty = options.refresh_seconds > 0;
+            self.due = Instant::now();
+        }
         if options != self.options {
             self.options = options;
             changed = true;
@@ -215,6 +267,7 @@ impl HistoryView {
         let revision = history.health.revision.load(Ordering::Acquire);
         if self.query.before.is_none()
             && self.query.cursor.is_none()
+            && self.options.refresh_seconds > 0
             && revision != self.revision
             && Instant::now() >= self.due
         {
@@ -228,17 +281,24 @@ impl HistoryView {
             self.pending = Some((self.generation, rx));
             self.dirty = false;
             self.revision = revision;
-            self.due = Instant::now() + Duration::from_secs(1);
+            self.due =
+                Instant::now() + Duration::from_secs(u64::from(self.options.refresh_seconds));
         }
         if changed {
             let rows = self.page.rows.clone();
             let columns = self.options.columns.clone();
             let sort = self.query.sort;
+            let widths = self
+                .widths
+                .iter()
+                .map(|(field, width)| (*field, px(*width)))
+                .collect();
             self.table.update(cx, |table, cx| {
                 let delegate = table.delegate_mut();
                 delegate.rows = rows;
                 delegate.columns = columns;
                 delegate.sort = sort;
+                delegate.widths = widths;
                 table.refresh(cx);
                 cx.notify();
             });
@@ -276,6 +336,7 @@ impl Dashboard {
                             this.backend.clone(),
                             detail,
                             this.history.actions_tx.clone(),
+                            this.history.processes_tx.clone(),
                             cx,
                         ) {
                             Ok(window) => this.history.detail_window = Some(window),
@@ -393,14 +454,22 @@ impl Dashboard {
                 .child(Button::new("history-tools").label("Filters, columns & export…").on_click(cx.listener(|this,_,_,cx|{
                     if let Some(handle)=this.history.tools_window {let _=handle.update(cx,|_,window,_|window.activate_window());return;}
                     match super::history_tools::open(this.backend.history.clone(),this.history.query.clone(),this.history.tools_tx.clone(),cx){Ok(handle)=>this.history.tools_window=Some(handle),Err(error)=>this.history.error=Some(error.to_string())}cx.notify();
-                }))))
+                })))
+                .child(Button::new("history-preferences").label("History preferences…").on_click(cx.listener(|this,_,_,cx|{
+                    if let Some(handle)=this.history.preferences_window{let _=handle.update(cx,|_,window,_|window.activate_window());return;}
+                    match super::history_preferences::open(this.backend.history.clone(),cx){Ok(handle)=>this.history.preferences_window=Some(handle),Err(error)=>this.history.error=Some(error.to_string())}cx.notify();
+                })))
+                .child(Button::new("history-refresh").label("Refresh now").disabled(self.history.pending.is_some()).on_click(cx.listener(|this,_,_,cx|{this.history.generation+=1;this.history.dirty=true;this.history.due=Instant::now();cx.notify();})))
+            )
             .child(div().flex().items_center().gap_2()
                 .children([("all","All",""),("allow","Allowed","allow"),("deny","Denied","deny"),("reject","Rejected","reject")].into_iter().map(|(id,label,action)| {
                     Button::new(id).label(label).selected(self.history.query.action==action)
                         .on_click(cx.listener(move |this,_,_,cx|{this.history.query.action=action.into();this.history.reset();cx.notify();}))
                 })).child(div().text_xs().text_color(muted).child(format!("{} advanced condition(s)",self.history.query.filters.len()))))
+            .child(div().text_xs().text_color(muted).child(if self.history.options.refresh_seconds==0{"Manual refresh. History continues to be recorded.".into()}else{format!("Display refresh: every {} second(s)",self.history.options.refresh_seconds)}))
             .when_some(self.backend.history.health.metadata_warning(),|v,e|v.child(super::banner(e,cx)))
             .when_some(self.history.error.clone(),|v,e|v.child(super::banner(e,cx)))
+            .when_some(self.history.memory.error(),|v,e|v.child(super::banner(e,cx)))
             .child(div().flex_1().min_h_0().flex().flex_col().border_1().border_color(border).rounded_lg().overflow_hidden()
                 .child(div().px_4().py_2().text_sm().font_weight(FontWeight::MEDIUM).child("Connection history"))
                 .when(self.history.page.rows.is_empty(),|v|v.child(div().p_6().text_color(muted).child(if self.history.loading {"Loading history…"}else{"No matching events. History appears when the daemon reports traffic."})))

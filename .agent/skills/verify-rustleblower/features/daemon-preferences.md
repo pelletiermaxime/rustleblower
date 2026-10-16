@@ -45,7 +45,7 @@ their exact decimal representation through serde_json arbitrary precision.
   real input; reject a negative statistics limit without sending. Switch review/
   JSON/settings modes and confirm. Inspect actual CHANGE_CONFIG payload for
   edited fields, preserved unknown exact numbers, and absent untouched fields.
-  Hold ACK, require unchanged cache, answer Allow once through an independent
+  Hold ACK, require unchanged cache, answer Allow forever through an independent
   permission window, release ACK and independently read persisted configuration.
   A second ERROR must retain the first confirmed document and uncertainty.
 - Native: build desktop after core tests, then

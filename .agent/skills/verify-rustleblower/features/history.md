@@ -13,7 +13,9 @@ and page backward without loading the entire database into memory.
   Apply alongside the quick search/action filter; invalid values stay staged.
 - `history-table`: Columns → Use table view → choose columns → Save history view.
   Pinned Kit DataTable virtualizes the shared 200-row page; headers sort all matches.
-  Widths survive page refresh within the current view, but are not persisted.
+  Column widths, header sort and applied search/action/conditions survive restart.
+- `history-preferences`: reviewed days/disk-target/idle cleanup and persisted display refresh;
+  [retention preferences](history-preferences.md) has the full proof contract.
 - `history-export`: Export → absolute destination → CSV/JSON Lines → Export all
   matching events. Confirm replacement explicitly. Clipboard copies one matching
   page as CSV. Search/action/sort/page are captured on opening; staged conditions
@@ -50,18 +52,27 @@ Preconditions: the synthetic fixture supplies 430 events on an isolated database
   and expire old rows. The large-record check verifies retained data/files fit
   its 16 MiB test target.
 - **Filters/columns/export.** Run `python scripts/verify-headless.py --feature history-tools`.
-  Require ten PNGs and actual filtered rows/files/clipboard assertions. The flow
+  Require sixteen PNGs and actual filtered rows/files/clipboard assertions. The flow
   checks 144 Rejected rows, combines UID=1001 and command Contains blue1 for 108
   matches, rejects port 65536, saves/reopens table/UID/command columns, clicks the
   actual header through descending then ascending, exports all 108 rows as CSV
   and JSON Lines, refuses an existing file, copies CSV and pages sorted history.
   Output files remain alongside evidence. The full default flow is separate.
+  Frames 11–16 add actual search/action/condition input, a real Kit pointer drag
+  of the time-column edge, immediate Quit flush, a fresh backend/GPUI restoration
+  of painted controls/widths and exact 72 matches, stopped writes after an external
+  edit, an independent real AskRule/Deny once, and explicit owned-file repair
+  followed by another cold restoration. Old cursors/ceilings are not persisted.
 - **Native conditions.** Run `python scripts/verify-native.py run --feature history-tools`.
   Ctrl+F/Tab/Space opens tools. Enter opens the pinned Select; choose UID and
   Equals, type 9999, Add then Apply. Require main-window No matching events OCR,
   retained 430 fixture rows and all cleanup booleans. Allow rendered frames between
   focus/commit keys. Native pickers, column/export buttons, width dragging and
   horizontal scrolling remain outside this proof.
+  The latest native run also independently reopens its version-3 settings JSON
+  and requires exactly UID Equals 9999, 430 retained rows, zero policy commands
+  and complete cleanup. This proves native input plus durable filter saving;
+  cold restoration and width dragging remain GPU proof.
 - **Details and rule creation.** The background flow inspects Overview, Arguments
   and Matched rule, copies metadata/command line, opens the current rule without
   saving, then confirms a permanent application+destination draft. Inspect
@@ -96,8 +107,18 @@ Preconditions: the synthetic fixture supplies 430 events on an isolated database
   metadata columns wait for indexing. Mid-backfill interruption/restart has a
   source-backed entry point; automated migration proof covers completed backfill.
 - Sorted pages use value/ID cursors and a fixed arrival ceiling; retention may
-  remove rows while browsing. Latest releases the ceiling. Column selection/mode
-  persist in a 4-KiB file; widths, header sort and conditions are not persisted yet.
+  remove rows while browsing. Latest releases the ceiling. Column selection/mode and display refresh
+  persist in a version-3 16-KiB file with search/action/conditions/sort/widths.
+  Versions 1/2 migrate in memory without dropping column/refresh choices. One
+  background writer and one pending snapshot coalesce changes after 500 ms;
+  close/Quit request an immediate flush. Quit's existing 500-ms limit covers both
+  window and history writers after backend/permission shutdown. There are at most
+  eight 256-byte conditions and nineteen finite, unique 40–2000 px column widths.
+  UI-side save errors are session-only and stop automatic writes. Invalid startup
+  settings use defaults with a warning, preserve the file and never prevent RPC
+  startup. Repair/remove only the owned settings file and restart to recover.
+  All column/refresh/presentation writers merge their own fields under one lock
+  and refuse stale/oversized/symlink settings. Hash checks are not filesystem CAS.
 - File export uses a private backup (15-second acquisition limit), finishes any
   legacy metadata there, then streams selected displayed values. Source cap is
   4 GiB, private snapshot cap 8 GiB, output cap 256 MiB, clipboard cap 4 MiB.
@@ -108,3 +129,15 @@ Preconditions: the synthetic fixture supplies 430 events on an isolated database
 - Search-field pointer focus, Allowed/All variants, and the incomplete-history
   banner currently have source-backed entry points beyond the named UI flow.
 - Error counters are per run; this history is not a lossless audit log.
+
+The connection-details Inspect process action opens current daemon process data
+for the recorded PID. It keeps the event's node, rejects a queued stale session
+and warns about PID reuse; see [Live inspection](live.md#history-to-process-inspection)
+and `--feature history-process` for focused input/protocol proof and its boundaries.
+
+The presentation slice has four focused core cases (164 full-core tests), strict
+Clippy, sixteen history-tools GPU frames, 48 general/four tray/eleven window-state
+regression frames and the native filter run. Its exact reports, hashes and bounds
+are in `.verification/history-presentation-result.json`. Other pages' saved
+filters/columns, splitters, native resize/cold-restore controls, current packages,
+broad resource measurement and the final whole-app UI/UX pass remain separate.

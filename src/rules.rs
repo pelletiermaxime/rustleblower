@@ -1,6 +1,8 @@
 //! Disk-backed rule pages and bounded, acknowledged daemon commands.
 pub mod checksums;
+pub mod distribute;
 pub mod document;
+pub mod export_nodes;
 pub mod transfer;
 use crate::{
     history::History,
@@ -315,12 +317,100 @@ struct Pending {
 struct Channel {
     node: String,
     sender: Option<mpsc::Sender<Result<Notification, tonic::Status>>>,
+    firewall: Option<(u32, [u8; 32])>,
+    range_version: bool,
+    range_observed: bool,
+    restore_pause: bool,
+    restoring_pause: bool,
 }
 #[derive(Default)]
 struct State {
     sessions: BTreeMap<u64, Channel>,
     pending: BTreeMap<u64, Pending>,
+    firewall_operation: Option<(u64, u64)>,
+    rule_operations: BTreeMap<u64, u64>,
 }
+/// A reviewed copy owns this node's UI command path while each ACK is saved.
+/// Permission replies and telemetry do not use this reservation.
+pub(crate) struct RulesLease {
+    control: Arc<Control>,
+    session: u64,
+    token: u64,
+}
+impl RulesLease {
+    pub(crate) fn submit(
+        &self,
+        rule: Rule,
+    ) -> Result<oneshot::Receiver<Result<(), String>>, String> {
+        valid(&rule)?;
+        if rule.operator.is_none() {
+            return Err("A copied rule needs a match operator".into());
+        }
+        self.control.queue_reserved(
+            self.session,
+            Change::Rule(Action::ChangeRule, rule),
+            None,
+            None,
+            Some(self.token),
+        )
+    }
+    pub(crate) fn delete(
+        &self,
+        name: String,
+    ) -> Result<oneshot::Receiver<Result<(), String>>, String> {
+        let rule = Rule {
+            name,
+            ..Default::default()
+        };
+        valid(&rule)?;
+        self.control.queue_reserved(
+            self.session,
+            Change::Rule(Action::DeleteRule, rule),
+            None,
+            None,
+            Some(self.token),
+        )
+    }
+}
+impl Drop for RulesLease {
+    fn drop(&mut self) {
+        let mut state = self.control.state.lock().unwrap();
+        if state.rule_operations.get(&self.session) == Some(&self.token) {
+            state.rule_operations.remove(&self.session);
+        }
+    }
+}
+/// One bounded multi-step firewall operation, independent of its originating window.
+pub(crate) struct FirewallLease {
+    control: Arc<Control>,
+    session: u64,
+    token: u64,
+}
+impl FirewallLease {
+    pub(crate) fn submit(
+        &self,
+        change: crate::firewall::Change,
+    ) -> Result<oneshot::Receiver<Result<(), String>>, String> {
+        crate::firewall::validate(&change.config)?;
+        self.control.queue_reserved(
+            self.session,
+            Change::Node(crate::nodes::Change::Firewall(change)),
+            Some(self.token),
+            None,
+            None,
+        )
+    }
+}
+impl Drop for FirewallLease {
+    fn drop(&mut self) {
+        let mut state = self.control.state.lock().unwrap();
+        if state.firewall_operation == Some((self.session, self.token)) {
+            state.firewall_operation = None;
+        }
+    }
+}
+pub(crate) type PauseRestore = (u64, String, oneshot::Receiver<Result<(), String>>);
+
 pub struct Control {
     next: AtomicU64,
     state: Mutex<State>,
@@ -349,12 +439,145 @@ impl Control {
             );
             self.catalogues.finish(id);
         }
-        state
+        state.sessions.insert(
+            session,
+            Channel {
+                node,
+                sender: None,
+                firewall: None,
+                range_version: false,
+                range_observed: false,
+                restore_pause: false,
+                restoring_pause: false,
+            },
+        );
+    }
+    /// Range was added after the 1.8 release while master still reported 1.8.0.
+    /// A 1.8 version string alone cannot distinguish the older operator set.
+    /// Existing reported range rules establish support for a backport/build.
+    pub(crate) fn report_range_version(&self, session: u64, version: &str) {
+        let version = version.strip_prefix('v').unwrap_or(version);
+        let release = version.split([' ', '-', '+']).next().unwrap_or("");
+        let parts = release.split('.').collect::<Vec<_>>();
+        let supported = if parts.len() == 3 {
+            let parsed = parts
+                .iter()
+                .map(|part| {
+                    (!part.is_empty() && part.bytes().all(|b| b.is_ascii_digit()))
+                        .then(|| part.parse::<u32>().ok())
+                        .flatten()
+                })
+                .collect::<Option<Vec<_>>>();
+            parsed.is_some_and(|v| v[0] > 1 || v[0] == 1 && v[1] >= 9)
+        } else {
+            false
+        };
+        if let Some(channel) = self.state.lock().unwrap().sessions.get_mut(&session) {
+            channel.range_version = supported;
+        }
+    }
+    pub(crate) fn report_range_inventory(&self, session: u64, rules: &[Rule]) {
+        if let Some(channel) = self.state.lock().unwrap().sessions.get_mut(&session) {
+            channel.range_observed = rules.iter().any(document::has_range);
+        }
+    }
+    pub fn range_supported(&self, session: u64) -> bool {
+        self.state
+            .lock()
+            .unwrap()
             .sessions
-            .insert(session, Channel { node, sender: None });
+            .get(&session)
+            .is_some_and(|channel| channel.range_version || channel.range_observed)
+    }
+    pub(crate) fn report_interception(&self, session: u64, running: bool) {
+        if let Some(channel) = self.state.lock().unwrap().sessions.get_mut(&session) {
+            channel.restore_pause = running;
+        }
+    }
+    pub fn node_busy(&self, session: u64) -> bool {
+        let state = self.state.lock().unwrap();
+        state.rule_operations.contains_key(&session)
+            || state
+                .sessions
+                .get(&session)
+                .is_some_and(|c| c.restoring_pause)
+            || state
+                .pending
+                .values()
+                .any(|p| p.session == session && matches!(p.change, Change::Node(_)))
+    }
+    pub fn pause_restoring(&self, session: u64) -> bool {
+        self.state
+            .lock()
+            .unwrap()
+            .sessions
+            .get(&session)
+            .is_some_and(|c| c.restoring_pause)
+    }
+    pub(crate) fn finish_pause_restore(&self, session: u64) {
+        if let Some(channel) = self.state.lock().unwrap().sessions.get_mut(&session) {
+            channel.restoring_pause = false;
+        }
+    }
+    pub(crate) fn restore_pauses(&self, history: &History, capacity: usize) -> Vec<PauseRestore> {
+        let sessions = {
+            let state = self.state.lock().unwrap();
+            state
+                .sessions
+                .iter()
+                .filter_map(|(id, c)| {
+                    (c.restore_pause
+                        && c.sender.is_some()
+                        && history.health.interception.may_restore(&c.node, *id)
+                        && self.catalogues.ready(*id)
+                        && !self.catalogues.uncertain(*id)
+                        && !state.pending.values().any(|p| p.session == *id))
+                    .then_some((*id, c.node.clone()))
+                })
+                .take(capacity)
+                .collect::<Vec<_>>()
+        };
+        sessions
+            .into_iter()
+            .filter_map(|(session, node)| {
+                self.queue_reserved(
+                    session,
+                    Change::Node(crate::nodes::Change::Interception(false)),
+                    None,
+                    Some(&history.health.interception),
+                    None,
+                )
+                .ok()
+                .map(|reply| (session, node, reply))
+            })
+            .collect()
+    }
+    pub(crate) fn report_firewall(
+        &self,
+        session: u64,
+        config: Option<&protocol::SysFirewall>,
+        settings: &str,
+    ) {
+        if let Some(channel) = self.state.lock().unwrap().sessions.get_mut(&session) {
+            channel.firewall = config
+                .filter(|_| crate::firewall::backend_name(settings) == "nftables")
+                .map(|config| {
+                    (
+                        config.version,
+                        crate::firewall::fingerprint(&prost::Message::encode_to_vec(config)),
+                    )
+                });
+        }
     }
     fn finish(state: &mut State, session: u64, error: &str) {
+        if state
+            .firewall_operation
+            .is_some_and(|(id, _)| id == session)
+        {
+            state.firewall_operation = None;
+        }
         state.sessions.remove(&session);
+        state.rule_operations.remove(&session);
         let ids = state
             .pending
             .iter()
@@ -388,6 +611,15 @@ impl Control {
     }
     pub fn refresh(&self, session: u64) -> Result<(), String> {
         let state = self.state.lock().unwrap();
+        if state.rule_operations.contains_key(&session) {
+            return Err("Stop this node's rule copy before refreshing".into());
+        }
+        if state
+            .firewall_operation
+            .is_some_and(|(id, _)| id == session)
+        {
+            return Err("Wait for this node's system-firewall operation before refreshing".into());
+        }
         let channel = state
             .sessions
             .get(&session)
@@ -409,6 +641,33 @@ impl Control {
             .map_err(|_| "The notification stream is busy; try refreshing again".to_string())?;
         self.catalogues.invalidate(session);
         Ok(())
+    }
+    pub(crate) fn task_command(
+        &self,
+        session: u64,
+        action: Action,
+        data: String,
+    ) -> Result<u64, String> {
+        let state = self.state.lock().unwrap();
+        let channel = state
+            .sessions
+            .get(&session)
+            .ok_or("This daemon is disconnected")?;
+        let id = self.next.fetch_add(1, Ordering::Relaxed) + 1;
+        channel
+            .sender
+            .as_ref()
+            .ok_or("Connect this daemon's notification stream first")?
+            .try_send(Ok(Notification {
+                id,
+                r#type: action as i32,
+                data,
+                client_name: channel.node.clone(),
+                server_name: "Rustleblower".into(),
+                ..Default::default()
+            }))
+            .map_err(|_| "The daemon stream is busy; task command was not queued".to_string())?;
+        Ok(id)
     }
     pub fn submit(
         &self,
@@ -436,16 +695,157 @@ impl Control {
         change.validate()?;
         self.queue(session, Change::Node(change))
     }
+    pub fn firewall_current(&self, session: u64, expected: [u8; 32]) -> bool {
+        self.state
+            .lock()
+            .unwrap()
+            .sessions
+            .get(&session)
+            .is_some_and(|channel| channel.firewall == Some((1, expected)))
+    }
+    pub fn firewall_busy(&self, session: u64) -> bool {
+        self.state
+            .lock()
+            .unwrap()
+            .firewall_operation
+            .is_some_and(|(id, _)| id == session)
+    }
+    pub(crate) fn reserve_firewall(
+        self: &Arc<Self>,
+        session: u64,
+        expected: [u8; 32],
+    ) -> Result<FirewallLease, String> {
+        let mut state = self.state.lock().unwrap();
+        if state.rule_operations.contains_key(&session) {
+            return Err("Wait for this node's reviewed rule copy to finish".into());
+        }
+        if state.firewall_operation.is_some() {
+            return Err("Wait for the current system-firewall operation to finish".into());
+        }
+        let channel = state
+            .sessions
+            .get(&session)
+            .ok_or("Daemon changed; select the node again")?;
+        if channel.firewall != Some((1, expected))
+            || channel.sender.is_none()
+            || self.catalogues.uncertain(session)
+        {
+            return Err(
+                "A fresh connected nftables format-1 report matching this review is required"
+                    .into(),
+            );
+        }
+        if state.pending.values().any(|p| p.session == session) {
+            return Err(
+                "Wait for this node's pending commands before starting the firewall operation"
+                    .into(),
+            );
+        }
+        let token = self.next.fetch_add(1, Ordering::Relaxed) + 1;
+        state.firewall_operation = Some((session, token));
+        Ok(FirewallLease {
+            control: self.clone(),
+            session,
+            token,
+        })
+    }
     fn queue(
         &self,
         session: u64,
         change: Change,
     ) -> Result<oneshot::Receiver<Result<(), String>>, String> {
+        self.queue_reserved(session, change, None, None, None)
+    }
+    pub(crate) fn reserve_rules(self: &Arc<Self>, session: u64) -> Result<RulesLease, String> {
         let mut state = self.state.lock().unwrap();
         let channel = state
             .sessions
             .get(&session)
+            .ok_or("Destination disconnected")?;
+        if channel.sender.is_none()
+            || channel.restoring_pause
+            || !self.catalogues.ready(session)
+            || self.catalogues.uncertain(session)
+        {
+            return Err("Destination needs a ready confirmed connection".into());
+        }
+        if state.rule_operations.contains_key(&session)
+            || state
+                .firewall_operation
+                .is_some_and(|(id, _)| id == session)
+            || state.pending.values().any(|p| p.session == session)
+        {
+            return Err("Wait for this node's pending operation before copying rules".into());
+        }
+        let token = self.next.fetch_add(1, Ordering::Relaxed) + 1;
+        state.rule_operations.insert(session, token);
+        Ok(RulesLease {
+            control: self.clone(),
+            session,
+            token,
+        })
+    }
+    fn queue_reserved(
+        &self,
+        session: u64,
+        change: Change,
+        token: Option<u64>,
+        restore: Option<&crate::nodes::interception::State>,
+        rule_token: Option<u64>,
+    ) -> Result<oneshot::Receiver<Result<(), String>>, String> {
+        let mut state = self.state.lock().unwrap();
+        match (state.rule_operations.get(&session), rule_token) {
+            (Some(active), Some(token)) if *active == token => {}
+            (_, Some(_)) => {
+                return Err("The rule copy's captured connection ended; rebuild its review".into());
+            }
+            (Some(_), None) => {
+                return Err("Wait for this node's reviewed rule copy to finish".into());
+            }
+            _ => {}
+        }
+        match (state.firewall_operation,token) {
+            (Some((id,active)),Some(token)) if id==session&&active==token=>{},
+            (_,Some(_))=>return Err("The firewall operation's captured connection ended; reconnect to verify its last accepted stage".into()),
+            (Some((id,_)),None) if id==session=>return Err("Wait for this node's system-firewall operation to finish".into()),
+            _=>{},
+        }
+        let channel = state
+            .sessions
+            .get(&session)
             .ok_or("Daemon changed; select the node again")?;
+        if let Some(preference) = restore
+            && (!channel.restore_pause || !preference.may_restore(&channel.node, session))
+        {
+            return Err("Saved pause restoration was superseded".into());
+        }
+        if restore.is_none() && channel.restoring_pause && matches!(change, Change::Node(_)) {
+            return Err("Wait for the saved pause restoration to be confirmed and saved".into());
+        }
+        if let Change::Rule(Action::ChangeRule | Action::EnableRule, rule) = &change
+            && document::has_range(rule)
+        {
+            document::validate_edit(rule)?;
+            if !channel.range_version && !channel.range_observed {
+                return Err("This daemon has not established port-range support. OpenSnitch 1.9 or a reported existing range rule is required; 1.8 builds are ambiguous. The rule was not sent.".into());
+            }
+        }
+        if let Change::Node(crate::nodes::Change::Firewall(change)) = &change {
+            match channel.firewall {
+                Some((1, fingerprint)) if fingerprint == change.expected => {}
+                Some((1, _)) => {
+                    return Err(
+                        "The firewall changed since review; reload it before applying".into(),
+                    );
+                }
+                _ => {
+                    return Err(
+                        "A fresh nftables format-1 firewall report is required before changing it"
+                            .into(),
+                    );
+                }
+            }
+        }
         if matches!(change, Change::Rule(..)) && !self.catalogues.ready(session) {
             return Err(
                 "Waiting for the daemon's rule inventory to be saved; reconnect if loading failed"
@@ -485,12 +885,20 @@ impl Control {
             Change::Node(change) => {
                 notification.r#type = change.action() as i32;
                 notification.data = change.data().into();
+                if let crate::nodes::Change::Firewall(change) = change {
+                    notification.sys_firewall = Some(*change.config.clone());
+                }
             }
         }
         sender
             .try_send(Ok(notification))
             .map_err(|_| "Daemon command channel is busy or disconnected")?;
         let node = channel.node.clone();
+        if matches!(change, Change::Node(crate::nodes::Change::Interception(_))) {
+            let channel = state.sessions.get_mut(&session).unwrap();
+            channel.restore_pause = false;
+            channel.restoring_pause = restore.is_some();
+        }
         let (reply, rx) = oneshot::channel();
         state.pending.insert(
             id,
@@ -533,6 +941,23 @@ impl Control {
                 history.apply_rule(session, pending.node, action, rule, pending.reply)
             }
             Change::Node(change) => {
+                // Configuration reload can replace the firewall backend/path.
+                // Its prior firewall report must not authorize a later overwrite.
+                if matches!(change, crate::nodes::Change::Configuration(_))
+                    && let Some(channel) = state.sessions.get_mut(&session)
+                {
+                    channel.firewall = None;
+                }
+                if let crate::nodes::Change::Firewall(change) = &change
+                    && let Some(channel) = state.sessions.get_mut(&session)
+                {
+                    channel.firewall = Some((
+                        change.config.version,
+                        crate::firewall::fingerprint(&prost::Message::encode_to_vec(
+                            change.config.as_ref(),
+                        )),
+                    ));
+                }
                 history.apply_node(session, pending.node, change, pending.reply)
             }
         }

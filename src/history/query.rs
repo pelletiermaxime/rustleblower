@@ -172,7 +172,8 @@ impl Field {
         }
     }
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Comparison {
     Contains,
     Equals,
@@ -193,7 +194,8 @@ pub const COMPARISONS: &[(Comparison, &str)] = &[
     (Comparison::Missing, "Not reported"),
     (Comparison::Present, "Reported"),
 ];
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Filter {
     pub field: Field,
     pub comparison: Comparison,

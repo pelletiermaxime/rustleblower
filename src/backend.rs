@@ -73,6 +73,9 @@ pub struct Handle {
     pub timeout_action: Decision,
     pub prompt_timeout: u64,
     pub preferences: Arc<crate::preferences::Store>,
+    pub desktop_notices: Arc<crate::desktop_notifications::Mailbox>,
+    pub live: Arc<crate::live::Tasks>,
+    pub subscriptions: crate::subscriptions::Handle,
 }
 
 impl Handle {
@@ -110,6 +113,7 @@ impl Handle {
         self.prompts.decide(id, decision)
     }
     pub fn shutdown(&self) {
+        self.subscriptions.shutdown();
         self.cancel.cancel();
     }
     pub fn session(&self, id: u64) -> Option<Session> {
@@ -142,6 +146,7 @@ impl Handle {
         self.prompts
             .finish_session(id, self.timeout_action, "disconnected");
         self.control.disconnect(id);
+        self.live.disconnect(id);
     }
 }
 
@@ -149,10 +154,17 @@ pub struct Backend {
     pub handle: Handle,
     server: thread::JoinHandle<()>,
     history: Worker,
+    subscriptions: crate::subscriptions::Worker,
 }
 
 impl Backend {
     pub fn start(config: Config) -> Result<Self> {
+        Self::start_with_storage(config, Default::default())
+    }
+    pub fn start_with_storage(
+        config: Config,
+        overrides: crate::history::storage::Overrides,
+    ) -> Result<Self> {
         anyhow::ensure!(config.socket.is_absolute(), "Socket path must be absolute");
         let preferences = Arc::new(crate::preferences::Store::open(&config.database)?);
         // Bind without unlinking: never steal opensnitch-ui's endpoint.
@@ -165,16 +177,33 @@ impl Backend {
         let guard = SocketGuard::new(config.socket.clone())?;
         std::fs::set_permissions(&config.socket, std::fs::Permissions::from_mode(0o600))?;
         listener.set_nonblocking(true)?;
-        let history = Worker::start(&config.database, config.history_days, config.history_mib)?;
+        let history = Worker::start_with_overrides(
+            &config.database,
+            config.history_days,
+            config.history_mib,
+            overrides,
+        )?;
+        let subscriptions = crate::subscriptions::Worker::start(
+            &config
+                .database
+                .parent()
+                .unwrap_or(std::path::Path::new("."))
+                .join("subscriptions"),
+        );
+        let control = Arc::new(Control::new(history.history.health.catalogues.clone()));
+        let live = Arc::new(crate::live::Tasks::new(control.clone()));
         let handle = Handle {
             prompts: Arc::new(Prompts::default()),
-            control: Arc::new(Control::new(history.history.health.catalogues.clone())),
+            control,
+            live,
             history: history.history.clone(),
             status: Arc::new(Mutex::new(Status::default())),
             cancel: CancellationToken::new(),
             timeout_action: config.timeout_action,
             prompt_timeout: config.prompt_timeout,
             preferences,
+            desktop_notices: Arc::new(crate::desktop_notifications::Mailbox::default()),
+            subscriptions: subscriptions.handle(),
         };
         let service = Service {
             handle: handle.clone(),
@@ -191,12 +220,27 @@ impl Backend {
                         .build()?;
                     runtime.block_on(async {
                         let control = server_handle.control.clone();
+                        let live = server_handle.live.clone();
                         let command_cancel = server_handle.cancel.clone();
+                        let subscription_handle=server_handle.subscriptions.clone();
+                        let subscription_status=server_handle.status.clone();
+                        let pause_history=server_handle.history.clone();
                         tokio::spawn(async move {
+                            let mut restoring: Vec<crate::rules::PauseRestore> = Vec::new();
                             loop {
                                 tokio::select! {
                                     _ = command_cancel.cancelled() => break,
-                                    _ = tokio::time::sleep(Duration::from_secs(1)) => control.expire(Instant::now()),
+                                    _ = tokio::time::sleep(Duration::from_secs(1)) => {
+                                        control.expire(Instant::now()); live.maintain(Instant::now());
+                                        restoring.retain_mut(|(session,node,reply)|match reply.try_recv(){
+                                            Ok(Ok(()))=>{control.finish_pause_restore(*session);false},
+                                            Ok(Err(error))=>{control.finish_pause_restore(*session);subscription_status.lock().unwrap().last_alert=Some(format!("Could not restore saved pause for {node}: {error}"));false},
+                                            Err(tokio::sync::oneshot::error::TryRecvError::Closed)=>{control.finish_pause_restore(*session);subscription_status.lock().unwrap().last_alert=Some(format!("Saved pause for {node} was not confirmed; reconnect to verify its state"));false},
+                                            Err(tokio::sync::oneshot::error::TryRecvError::Empty)=>true,
+                                        });
+                                        if restoring.len()<crate::nodes::MAX_NODES {restoring.extend(control.restore_pauses(&pause_history,crate::nodes::MAX_NODES-restoring.len()));}
+                                        subscription_handle.local_ready(subscription_status.lock().unwrap().sessions.values().any(|s|s.notifications));
+                                    },
                                 }
                             }
                         });
@@ -263,12 +307,14 @@ impl Backend {
             handle,
             server,
             history,
+            subscriptions,
         })
     }
 
     pub fn join(self) {
         self.handle.shutdown();
         let _ = self.server.join();
+        self.subscriptions.join();
         drop(self.handle);
         self.history.join();
     }
@@ -408,6 +454,9 @@ impl Ui for Service {
                 .map_or(session_id, |info| info.session.load(Ordering::Acquire));
             if let Some(session) = state.sessions.get_mut(&session_id) {
                 session.last_seen = Instant::now();
+                self.handle
+                    .control
+                    .report_range_version(session_id, &version);
                 session.version = version;
                 if let Some(sample) = statistics {
                     self.handle
@@ -503,6 +552,7 @@ impl Ui for Service {
         }
         for old in replaced {
             state.sessions.remove(&old);
+            self.handle.live.disconnect(old);
             self.handle
                 .prompts
                 .finish_session(old, self.handle.timeout_action, "reconnected");
@@ -523,6 +573,12 @@ impl Ui for Service {
         }
         self.handle.control.start_session(id, name.clone());
         self.handle
+            .control
+            .report_interception(id, config.is_firewall_running);
+        self.handle
+            .control
+            .report_firewall(id, config.system_firewall.as_ref(), &config.config);
+        self.handle
             .history
             .health
             .catalogues
@@ -540,6 +596,12 @@ impl Ui for Service {
             pending.subscribed = true;
             let session = state.sessions.get_mut(&id).unwrap();
             session.version = std::mem::take(&mut pending.version);
+            self.handle
+                .control
+                .report_range_version(id, &session.version);
+            self.handle
+                .control
+                .report_range_inventory(id, &config.rules);
             if let Some(sample) = pending.statistics.take() {
                 self.handle
                     .history
@@ -704,7 +766,9 @@ impl Ui for Service {
                             if reply.code!=protocol::NotificationReplyCode::Ok as i32 {
                                 handle.status.lock().unwrap().last_alert=Some(format!("Daemon notification {} failed: {}",reply.id,history::bounded(&reply.data,512)));
                             }
-                            handle.control.complete(id, reply, &handle.history);
+                            if let Some(reply)=handle.live.complete(id, reply) {
+                                handle.control.complete(id, reply, &handle.history);
+                            }
                         },
                         _=>break,
                     }
@@ -719,16 +783,38 @@ impl Ui for Service {
         &self,
         request: Request<protocol::Alert>,
     ) -> Result<Response<protocol::MsgResponse>, RpcStatus> {
+        let session = connection_id(&request);
+        let node = self
+            .handle
+            .session(session)
+            .map(|node| node.name)
+            .unwrap_or_else(|| "Unidentified Unix peer".into());
         let alert = request.into_inner();
-        let summary = match alert.data {
-            Some(protocol::alert::Data::Text(text)) => history::bounded(&text, 512),
-            _ => format!(
-                "Daemon alert (type {}, priority {})",
-                alert.r#type, alert.priority
-            ),
-        };
-        self.handle.status.lock().unwrap().last_alert = Some(summary);
-        Ok(Response::new(protocol::MsgResponse { id: alert.id }))
+        let id = alert.id;
+        match protocol::alert::Action::try_from(alert.action) {
+            Ok(protocol::alert::Action::ShowAlert) => {
+                if self.handle.preferences.snapshot().desktop_notifications {
+                    self.handle.desktop_notices.post(&node, &alert);
+                }
+                self.handle.status.lock().unwrap().last_alert =
+                    Some(crate::alerts::summary(&alert));
+                self.handle.history.alert(node, alert);
+            }
+            Ok(protocol::alert::Action::SaveToDb) => self.handle.history.alert(node, alert),
+            Ok(protocol::alert::Action::None) => {}
+            Err(_) => {
+                self.handle
+                    .history
+                    .health
+                    .alerts_skipped
+                    .fetch_add(1, Ordering::Relaxed);
+                *self.handle.history.health.alerts_error.lock().unwrap() = Some(format!(
+                    "Unsupported daemon alert action {}; not recorded",
+                    alert.action
+                ));
+            }
+        }
+        Ok(Response::new(protocol::MsgResponse { id }))
     }
 }
 

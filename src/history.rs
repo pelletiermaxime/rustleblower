@@ -5,6 +5,7 @@ pub mod export;
 pub mod metadata;
 pub mod query;
 pub mod settings;
+pub mod storage;
 use crate::{
     protocol::{Action, Event, Rule},
     rules,
@@ -74,6 +75,11 @@ pub struct Health {
     pub revision: AtomicU64,
     pub catalogues: Arc<rules::Catalogues>,
     pub nodes_revision: AtomicU64,
+    pub interception: crate::nodes::interception::State,
+    pub alerts_revision: AtomicU64,
+    pub alerts_skipped: AtomicU64,
+    pub alerts_evicted: AtomicU64,
+    pub alerts_error: Mutex<Option<String>>,
     pub error: Mutex<Option<String>>,
     pub indexing: AtomicBool,
     pub metadata_error: Mutex<Option<String>>,
@@ -246,6 +252,24 @@ impl Batch {
 }
 
 enum Command {
+    Fence(oneshot::Sender<()>),
+    PausePreference {
+        session: u64,
+        node: String,
+        remember: bool,
+        running: bool,
+        expected: Option<bool>,
+        reply: oneshot::Sender<std::result::Result<(), String>>,
+    },
+    Alert {
+        node: String,
+        record: Box<crate::alerts::Prepared>,
+        _permit: OwnedSemaphorePermit,
+    },
+    AlertChange(
+        crate::alerts::Change,
+        oneshot::Sender<std::result::Result<usize, String>>,
+    ),
     SaveNode {
         session: u64,
         node: String,
@@ -300,6 +324,16 @@ enum Command {
         crate::statistics::Reset,
         oneshot::Sender<std::result::Result<crate::statistics::ResetResult, String>>,
     ),
+    StoragePreview(
+        storage::Config,
+        u64,
+        oneshot::Sender<Result<storage::Preview, String>>,
+    ),
+    StorageApply(
+        storage::Config,
+        u64,
+        oneshot::Sender<Result<storage::Applied, String>>,
+    ),
     Barrier(oneshot::Sender<()>),
 }
 
@@ -309,6 +343,7 @@ pub struct History {
     budget: Arc<Semaphore>,
     pub health: Arc<Health>,
     pub settings: Arc<settings::Store>,
+    pub storage: Arc<storage::State>,
     statistics: Arc<Mutex<std::collections::VecDeque<(String, crate::statistics::Prepared)>>>,
     pub(crate) database: std::path::PathBuf,
 }
@@ -320,13 +355,27 @@ pub struct Worker {
 
 impl Worker {
     pub fn start(path: &Path, days: u32, mib: u32) -> Result<Self> {
+        Self::start_with_overrides(path, days, mib, Default::default())
+    }
+    pub fn start_with_overrides(
+        path: &Path,
+        days: u32,
+        mib: u32,
+        overrides: storage::Overrides,
+    ) -> Result<Self> {
         if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
             std::fs::create_dir_all(parent)?;
         }
         let mut db = open(path, mib)?;
+        let saved = storage::initialize(&db, days, mib, overrides)?;
+        let (mut days, mut mib) = (saved.config.days, saved.config.mib);
         maintain(&mut db, days, mib)?;
+        storage::cap(&db, mib)?;
+        let storage = Arc::new(storage::State::new(saved));
+        let storage_worker = storage.clone();
         let (tx, rx) = mpsc::sync_channel(32);
         let health = Arc::new(Health::default());
+        health.interception.synchronize(&db);
         health.indexing.store(true, Ordering::Release);
         let statistics = Arc::new(Mutex::new(std::collections::VecDeque::with_capacity(
             crate::nodes::MAX_NODES,
@@ -335,7 +384,8 @@ impl Worker {
             tx,
             budget: Arc::new(Semaphore::new(QUEUE_BYTES)),
             health: health.clone(),
-            settings: Arc::new(settings::Store::open(path)?),
+            settings: Arc::new(settings::Store::open_for_app(path)),
+            storage,
             statistics: statistics.clone(),
             database: path.to_owned(),
         };
@@ -343,6 +393,7 @@ impl Worker {
             .name("rustleblower-history".into())
             .spawn(move || {
                 let mut indexed_after=0;
+                let mut next_cleanup=std::time::Instant::now()+std::time::Duration::from_secs(u64::from(storage_worker.snapshot().config.cleanup_minutes)*60);
                 loop {
                     let command=match rx.recv_timeout(std::time::Duration::from_millis(10)) {Ok(command)=>Some(command),Err(mpsc::RecvTimeoutError::Timeout)=>None,Err(mpsc::RecvTimeoutError::Disconnected)=>break};
                     let samples={let mut queue=statistics.lock().unwrap();if matches!(command.as_ref(),Some(Command::Barrier(_))|Some(Command::StatisticsReset(..))){queue.drain(..).collect::<Vec<_>>()}else{queue.pop_front().into_iter().collect::<Vec<_>>()}};
@@ -351,6 +402,12 @@ impl Worker {
                         match result {Ok(evicted)=>{health.statistics_evicted.fetch_add(evicted as u64,Ordering::Relaxed);health.statistics_revision.fetch_add(1,Ordering::Release);*health.statistics_error.lock().unwrap()=None;},Err(error)=>{*health.statistics_error.lock().unwrap()=Some(format!("Statistics report could not be cached: {error:#}"));}}
                     }
                     if let Some(command)=command { match command {
+                        Command::Alert{node,record,_permit}=>{
+                            let result=(||->Result<usize>{let changes=db.total_changes();let current=crate::alerts::storage_bytes(&db)?;let anticipated=(current+record.storage_bytes(&node) as u64).min(crate::alerts::MAX_STORAGE);maintain_reserved(&mut db,days,mib,anticipated.saturating_sub(current))?;if db.total_changes()!=changes{health.revision.fetch_add(1,Ordering::Release);}crate::alerts::insert(&mut db,&node,*record,days)})();
+                            match result{Ok(evicted)=>{health.alerts_evicted.fetch_add(evicted as u64,Ordering::Relaxed);health.alerts_revision.fetch_add(1,Ordering::Release);*health.alerts_error.lock().unwrap()=None;},Err(error)=>{health.alerts_skipped.fetch_add(1,Ordering::Relaxed);*health.alerts_error.lock().unwrap()=Some(format!("Alert could not be saved: {error:#}"));}}
+                        }
+                        Command::AlertChange(change,reply)=>{let result=crate::alerts::change(&db,change).map_err(|error|format!("{error:#}"));if result.is_ok(){health.alerts_revision.fetch_add(1,Ordering::Release);}let _=reply.send(result);}
+
                         Command::Events { node, batch } => {
                             let mut written = 0;
                             for chunk in batch.events.chunks(128) {
@@ -402,12 +459,19 @@ impl Worker {
                                 match rules::propose(&mut db,&node,&rule){Ok(())=>{health.revision.fetch_add(1,Ordering::Release);},Err(error)=>{*health.error.lock().unwrap()=Some(format!("Popup reply was sent, but its pending rule could not be cached: {error:#}"));}}
                             }
                         }
+                        Command::PausePreference{session,node,remember,running,expected,reply}=>{
+                            let result=if health.catalogues.current(session,&node) && health.catalogues.ready(session) && !health.catalogues.uncertain(session) {
+                                crate::nodes::interception::set(&mut db,session,&node,remember,running,expected).map_err(|error|format!("{error:#}"))
+                            }else{Err("A fresh confirmed node connection is required to save pause preferences".into())};
+                            if result.is_ok(){health.interception.synchronize(&db);health.nodes_revision.fetch_add(1,Ordering::Release);}
+                            let _=reply.send(result);
+                        }
                         Command::SaveNode{session,node,saved,_permit}=>{
-                            if health.catalogues.current(session,&node){match crate::nodes::save(&mut db,session,&node,*saved,&health.catalogues.names()){Ok(())=>{health.nodes_revision.fetch_add(1,Ordering::Release);},Err(error)=>{*health.error.lock().unwrap()=Some(format!("Node metadata could not be saved: {error:#}"));}}}
+                            if health.catalogues.current(session,&node){match crate::nodes::save(&mut db,session,&node,*saved,&health.catalogues.names()){Ok(())=>{health.interception.synchronize(&db);health.nodes_revision.fetch_add(1,Ordering::Release);},Err(error)=>{*health.error.lock().unwrap()=Some(format!("Node metadata could not be saved: {error:#}"));}}}
                         }
                         Command::ApplyNode{session,node,change,reply,_permit}=>{
                             let result=if health.catalogues.current(session,&node){crate::nodes::apply(&mut db,&node,&change).map_err(|error|format!("Daemon confirmed the command but its local node cache failed: {error:#}"))}else{Err("Daemon changed before the confirmed node state could be saved; reconnect".into())};
-                            if result.is_ok(){health.nodes_revision.fetch_add(1,Ordering::Release);}else{health.catalogues.mark_uncertain(session);}
+                            if result.is_ok(){health.interception.synchronize(&db);health.nodes_revision.fetch_add(1,Ordering::Release);}else{health.catalogues.mark_uncertain(session);}
                             let _=reply.send(result);
                         }
                         Command::StatisticsReset(scope,reply)=>{
@@ -415,11 +479,24 @@ impl Worker {
                             if result.is_ok(){health.statistics_revision.fetch_add(1,Ordering::Release);health.revision.fetch_add(1,Ordering::Release);}
                             let _=reply.send(result);
                         }
+                        Command::StoragePreview(candidate,expected,reply)=>{let _=reply.send(storage::preview(&db,candidate,expected).map_err(|e|format!("{e:#}")));}
+                        Command::StorageApply(candidate,expected,reply)=>{
+                            let result=storage::apply(&mut db,candidate,expected).map_err(|e|format!("{e:#}"));
+                            if let Ok(applied)=&result {days=applied.snapshot.config.days;mib=applied.snapshot.config.mib;storage_worker.publish(applied.snapshot);health.revision.fetch_add(1,Ordering::Release);health.alerts_revision.fetch_add(1,Ordering::Release);health.statistics_revision.fetch_add(1,Ordering::Release);next_cleanup=std::time::Instant::now()+std::time::Duration::from_secs(u64::from(applied.snapshot.config.cleanup_minutes)*60);}
+                            let _=reply.send(result);
+                        }
+                        Command::Fence(reply) => {let _=reply.send(());}
                         Command::Barrier(reply) => {
                             let _ = db.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)");
                             let _ = reply.send(());
                         }
                     } }
+                    if std::time::Instant::now()>=next_cleanup {
+                        let changes=db.total_changes();
+                        if let Err(e)=maintain(&mut db,days,mib).and_then(|_|storage::cap(&db,mib).map(|_|())) {*health.error.lock().unwrap()=Some(format!("Scheduled history cleanup failed: {e:#}"));}
+                        if changes!=db.total_changes(){health.revision.fetch_add(1,Ordering::Release);health.alerts_revision.fetch_add(1,Ordering::Release);health.statistics_revision.fetch_add(1,Ordering::Release);}
+                        next_cleanup=std::time::Instant::now()+std::time::Duration::from_secs(u64::from(storage_worker.snapshot().config.cleanup_minutes)*60);
+                    }
                     if health.indexing.load(Ordering::Acquire) {
                         match backfill_chunk(&mut db,&mut indexed_after).and_then(|more| {if more {maintain(&mut db,days,mib)?;} Ok(more)}) {
                             Ok(true)=>{health.revision.fetch_add(1,Ordering::Release);},
@@ -446,6 +523,46 @@ impl Worker {
 }
 
 impl History {
+    pub(crate) fn alert(&self, node: String, alert: crate::protocol::Alert) {
+        let result = (|| -> Result<()> {
+            let mut permit = self
+                .budget
+                .clone()
+                .try_acquire_many_owned(crate::alerts::PREPARE_BYTES as u32)
+                .map_err(|_| anyhow::anyhow!("Shared ingestion budget is full"))?;
+            let record = crate::alerts::prepare(alert)?;
+            let needed = record.memory_bytes() + node.capacity();
+            anyhow::ensure!(
+                needed <= crate::alerts::PREPARE_BYTES,
+                "Alert allocations exceed preparation budget"
+            );
+            drop(permit.split(permit.num_permits() - needed));
+            self.tx
+                .try_send(Command::Alert {
+                    node,
+                    record: Box::new(record),
+                    _permit: permit,
+                })
+                .map_err(|_| anyhow::anyhow!("Alert writer queue is full or stopped"))?;
+            Ok(())
+        })();
+        if let Err(error) = result {
+            self.health.alerts_skipped.fetch_add(1, Ordering::Relaxed);
+            *self.health.alerts_error.lock().unwrap() =
+                Some(format!("Alert not recorded: {error:#}"));
+        }
+    }
+    pub fn change_alert(
+        &self,
+        change: crate::alerts::Change,
+    ) -> Result<oneshot::Receiver<std::result::Result<usize, String>>, String> {
+        let (tx, rx) = oneshot::channel();
+        self.tx
+            .try_send(Command::AlertChange(change, tx))
+            .map_err(|_| "Alert writer queue is full; retry".to_string())?;
+        Ok(rx)
+    }
+
     pub(crate) fn prepare_statistics(
         &self,
         stats: crate::protocol::Statistics,
@@ -533,7 +650,7 @@ impl History {
         change: crate::nodes::Change,
         reply: oneshot::Sender<std::result::Result<(), String>>,
     ) {
-        let bytes = change.data().len() + 512;
+        let bytes = change.bytes();
         let Ok(permit) = self.budget.clone().try_acquire_many_owned(bytes as u32) else {
             self.health.catalogues.mark_uncertain(session);
             let _ = reply.send(Err(
@@ -561,6 +678,30 @@ impl History {
                 ));
             }
         }
+    }
+    pub fn remember_interception(
+        &self,
+        session: u64,
+        node: String,
+        remember: bool,
+        running: bool,
+        expected: Option<bool>,
+    ) -> Result<oneshot::Receiver<std::result::Result<(), String>>, String> {
+        if node.is_empty() || node.len() > 128 {
+            return Err("Invalid node name".into());
+        }
+        let (tx, rx) = oneshot::channel();
+        self.tx
+            .try_send(Command::PausePreference {
+                session,
+                node,
+                remember,
+                running,
+                expected,
+                reply: tx,
+            })
+            .map_err(|_| "Pause preference worker is busy; try again".to_string())?;
+        Ok(rx)
     }
     pub fn database_path(&self) -> &Path {
         &self.database
@@ -749,6 +890,28 @@ impl History {
         Some(rx)
     }
 
+    pub fn preview_storage(
+        &self,
+        candidate: storage::Config,
+        expected: u64,
+    ) -> Option<oneshot::Receiver<Result<storage::Preview, String>>> {
+        let (tx, rx) = oneshot::channel();
+        self.tx
+            .try_send(Command::StoragePreview(candidate, expected, tx))
+            .ok()?;
+        Some(rx)
+    }
+    pub fn apply_storage(
+        &self,
+        candidate: storage::Config,
+        expected: u64,
+    ) -> Option<oneshot::Receiver<Result<storage::Applied, String>>> {
+        let (tx, rx) = oneshot::channel();
+        self.tx
+            .try_send(Command::StorageApply(candidate, expected, tx))
+            .ok()?;
+        Some(rx)
+    }
     pub async fn flush(&self) -> Result<()> {
         let (tx, rx) = oneshot::channel();
         // Used for shutdown/tests, never in an RPC or UI callback.
@@ -756,6 +919,13 @@ impl History {
         tokio::task::spawn_blocking(move || sender.send(Command::Barrier(tx))).await??;
         rx.await?;
         Ok(())
+    }
+    pub(crate) fn fence(&self) -> Result<oneshot::Receiver<()>, String> {
+        let (tx, rx) = oneshot::channel();
+        self.tx
+            .try_send(Command::Fence(tx))
+            .map_err(|_| "Rule cache worker is busy; retry the copy".to_string())?;
+        Ok(rx)
     }
 }
 
@@ -769,7 +939,7 @@ fn open(path: &Path, mib: u32) -> Result<Connection> {
     drop(file);
     let mut db = Connection::open(path).context("open history database")?;
     db.busy_timeout(std::time::Duration::from_millis(500))?;
-    // Reserve half the disk target for index overhead, free pages, WAL, and a write batch.
+    // Reserve one quarter of the disk target for WAL and a write batch.
     db.execute_batch(&format!(
         "PRAGMA foreign_keys=ON; PRAGMA auto_vacuum=INCREMENTAL; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;
         PRAGMA cache_size=-2048; PRAGMA mmap_size=0; PRAGMA temp_store=FILE;
@@ -778,7 +948,7 @@ fn open(path: &Path, mib: u32) -> Result<Connection> {
     ))?;
     let version: i64 = db.query_row("PRAGMA user_version", [], |r| r.get(0))?;
     anyhow::ensure!(
-        version <= 6,
+        version <= 9,
         "History schema {version} is newer than this application supports"
     );
     let tx = db.transaction()?;
@@ -812,7 +982,9 @@ fn open(path: &Path, mib: u32) -> Result<Connection> {
         tx.execute_batch("ALTER TABLE events ADD COLUMN metadata TEXT;")?;
     }
     crate::statistics::schema(&tx)?;
-    tx.pragma_update(None, "user_version", 6)?;
+    crate::alerts::schema(&tx)?;
+    storage::schema(&tx)?;
+    tx.pragma_update(None, "user_version", 9)?;
     tx.commit()?;
     Ok(db)
 }
@@ -883,10 +1055,27 @@ fn maintain(db: &mut Connection, days: u32, mib: u32) -> Result<()> {
     maintain_reserved(db, days, mib, 0)
 }
 fn maintain_reserved(db: &mut Connection, days: u32, mib: u32, reserved: u64) -> Result<()> {
+    prune_reserved(db, days, mib, reserved)?;
+    db.execute_batch("PRAGMA incremental_vacuum(64); PRAGMA wal_checkpoint(TRUNCATE);")?;
+    Ok(())
+}
+fn prune_reserved(db: &Connection, days: u32, mib: u32, reserved: u64) -> Result<()> {
+    let cutoff_nanos = now_nanos() - i64::from(days) * 86400 * 1_000_000_000;
+    db.execute(
+        "DELETE FROM statistics_counts WHERE updated<?",
+        [cutoff_nanos],
+    )?;
+    db.execute(
+        "DELETE FROM statistics_nodes WHERE updated<?",
+        [cutoff_nanos],
+    )?;
+    crate::alerts::prune(db, days)?;
     let cutoff = now_seconds() - i64::from(days) * 86400;
-    let limit = (u64::from(mib) * 1024 * 1024 / 4)
-        .saturating_sub(crate::statistics::storage_bytes(db)?.saturating_add(reserved))
-        as i64;
+    let limit = (u64::from(mib) * 1024 * 1024 / 4).saturating_sub(
+        crate::statistics::storage_bytes(db)?
+            .saturating_add(crate::alerts::storage_bytes(db)?)
+            .saturating_add(reserved),
+    ) as i64;
     loop {
         let deleted = db.execute(
             "DELETE FROM events WHERE id IN (SELECT id FROM events WHERE received < ? LIMIT 512)",
@@ -920,8 +1109,6 @@ fn maintain_reserved(db: &mut Connection, days: u32, mib: u32, reserved: u64) ->
             break;
         }
     }
-    // Normal pages are materialized here; independent export snapshots are bounded.
-    db.execute_batch("PRAGMA incremental_vacuum(64); PRAGMA wal_checkpoint(TRUNCATE);")?;
     Ok(())
 }
 
@@ -1248,7 +1435,7 @@ mod tests {
         let mut db = open(&path, 16)?;
         assert_eq!(
             db.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))?,
-            6
+            9
         );
         let old = query_detail(&db, 1)?.unwrap();
         assert!(old.event.is_none());

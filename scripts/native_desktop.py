@@ -41,12 +41,26 @@ class NativeDesktop:
     WAYLAND_KEYS = {
         'ctrl+f': ['29:1', '33:1', '33:0', '29:0'],
         'ctrl+a': ['29:1', '30:1', '30:0', '29:0'],
+        'alt+e': ['56:1', '18:1', '18:0', '56:0'],
+                'alt+p': ['56:1', '25:1', '25:0', '56:0'],
+                'ctrl+shift+e': ['29:1', '42:1', '18:1', '18:0', '42:0', '29:0'],
         'ctrl+3': ['29:1', '4:1', '4:0', '29:0'],
         'ctrl+Return': ['29:1', '28:1', '28:0', '29:0'],
         'ctrl+shift+Return': ['29:1', '42:1', '28:1', '28:0', '42:0', '29:0'],
         'ctrl+4': ['29:1', '5:1', '5:0', '29:0'],
+        'ctrl+6': ['29:1', '7:1', '7:0', '29:0'],
+        'ctrl+7': ['29:1', '8:1', '8:0', '29:0'],
+        'ctrl+shift+t': ['29:1', '42:1', '20:1', '20:0', '42:0', '29:0'],
+        'ctrl+shift+b': ['29:1', '42:1', '48:1', '48:0', '42:0', '29:0'],
+        'ctrl+shift+l': ['29:1', '42:1', '38:1', '38:0', '42:0', '29:0'],
+        'ctrl+n': ['29:1', '49:1', '49:0', '29:0'],
+        'ctrl+s': ['29:1', '31:1', '31:0', '29:0'],
+        'ctrl+1': ['29:1', '2:1', '2:0', '29:0'],
+        'ctrl+5': ['29:1', '6:1', '6:0', '29:0'],
+        'alt+F4': ['56:1', '62:1', '62:0', '56:0'],
         'Escape': ['1:1', '1:0'],
         'Down': ['108:1', '108:0'],
+        'End': ['107:1', '107:0'],
         'Tab': ['15:1', '15:0'],
         'space': ['57:1', '57:0'],
         'Return': ['28:1', '28:0'],
@@ -187,6 +201,36 @@ class NativeDesktop:
                    if self.backend == 'wayland' else
                    ['xdotool', 'type', '--window', self.window, '--clearmodifiers', '--delay', '20', text])
         self.run(command)
+
+    def type_url(self, text):
+        """Enter fixture URL punctuation without changing the desktop layout."""
+        if self.backend != 'wayland':
+            self.type(text)
+            return
+        self.assert_focus()
+        index = int(self.run(['qdbus6', 'org.kde.keyboard', '/Layouts',
+                              'org.kde.KeyboardLayouts.getLayout']).stdout.strip())
+        layouts = self.run(['qdbus6', '--literal', 'org.kde.keyboard', '/Layouts',
+                            'org.kde.KeyboardLayouts.getLayoutsList']).stdout
+        entries = re.findall(r'\[Argument: \(sss\) "([^"]*)", "([^"]*)", "([^"]*)"\]', layouts)
+        if index >= len(entries) or index < 0:
+            raise RuntimeError('Cannot establish the active native keyboard layout')
+        layout, variant, label = entries[index]
+        if (layout, variant) not in [('ca', ''), ('us', '')]:
+            raise RuntimeError(f'URL input is not verified for layout {layout}/{variant}')
+        if not re.fullmatch(r'[A-Za-z0-9:/._-]+', text):
+            raise RuntimeError('Fixture URL contains punctuation not covered by native input')
+        (self.evidence / 'input-layout.json').write_text(json.dumps({
+            'layout': layout, 'variant': variant, 'label': label,
+            'desktop_layout_changed': False, 'slash': 'Shift+3' if layout == 'ca' else '/'
+        }, indent=2) + '\n')
+        parts = text.split('/') if layout == 'ca' else [text]
+        for position, part in enumerate(parts):
+            if position:
+                self.assert_focus()
+                self.run(['ydotool', 'key', '42:1', '4:1', '4:0', '42:0'])
+            if part:
+                self.type(part)
 
     def capture(self, path):
         self.assert_focus()

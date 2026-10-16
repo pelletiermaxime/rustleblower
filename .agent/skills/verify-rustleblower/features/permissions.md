@@ -1,16 +1,36 @@
 # Connection permissions
 
-An unknown connection opens a separate permission window with the executable,
-destination, PID/UID, protocol, countdown, and Allow / Deny / Reject buttons.
-It starts with a once-only decision; Rule options and details… expands durations,
-match targets, AND constraints, priority/logging and live request details.
+An unknown connection opens a separate permission window naming the app and
+reported destination. Two Kit radio choices apply to the whole app or that app
+at the exact reported hostname/IP, with any port. A plain-language preview sits
+above Block (with its selected duration), Allow for 12 hours and Allow forever.
+Fresh preferences default to whole-app scope. Saved scopes/conditions stay intact
+and appear as Custom when they do not match a simple choice. Selecting a simple
+choice explicitly clears additional conditions for that request. Missing executable
+identity disables both simple choices.
+
+Details and advanced rules… expands durations, full scopes, additional conditions,
+priority/logging, Reject, selected-duration Allow and live request details. Conditions
+already required by the selected scope are omitted from the checkboxes. Both
+lasting Allow buttons remain available while expanded.
 
 ## Sub-features
 
-- `permission-allow`: click Allow once and receive an allow/once rule.
-- `permission-deny`: activate Deny once by pointer or keyboard.
+- `permission-icons`: show a matching local desktop app icon beside its name,
+  with initials while loading or when lookup fails. Background work never gates
+  permission input. Run `python scripts/verify-headless.py --feature permission-icons`;
+  require four PNGs, actual PNG/SVG color assertions, cleared prior-request icons,
+  an Allow reply while both icon workers are held, and owned cleanup. This proves
+  fixture metadata and GPU/protocol behavior, not system-daemon app identification.
+- `permission-allow`: click Allow forever or Allow for 12 hours and receive an
+  allow/always or allow/12h rule in one click, regardless of the saved duration.
+- `permission-deny`: activate Block with its displayed duration by pointer or keyboard.
 - `permission-options`: choose a preset duration and target; combine up to 16
   additional conditions, including available checksums, with AND.
+  The compact scopes are mutually exclusive. The destination choice retains the
+  executable and matches an exact hostname, falling back visibly to an IP. It adds
+  no port or protocol restriction. Advanced rule scopes retain the complete set
+  of predicates; the connection scope still includes address, port, user and protocol.
 - `permission-reject`: receive a reject rule with the chosen duration.
 - `permission-details`: view/copy live arguments, environment, checksums and ancestry.
 - `permission-checksums`: mismatch warning → Review saved checksums… → separate
@@ -52,11 +72,11 @@ requests; never generate real firewall traffic just to produce a prompt.
 
 - **Background click and keyboard.** Run `python scripts/verify-headless.py`.
   Require `05-permission.png`, `06-permissions-complete.png`, and a passing flow.
-  It clicks `allow-once`, then uses Tab/Space on the next request and checks the
+  It clicks `allow-forever`, then uses Tab/Space on the next request and checks the
   backend replies. This is UI input with fixture requests, not daemon enforcement.
   Frames 35–40 exercise Forever + command/user/port/checksum + priority/no logging,
   Reject over the real gRPC server, live-detail copying, pending-to-observed rule
-  promotion, reset to once/default options, and a five-minute network Allow.
+  promotion, reset to saved duration/default options, and a five-minute network Allow.
   Require all six images and the successful wire/cache assertions. Wheel events
   reach lower conditions; the fixture never sets the choice directly.
   Frames 41–43 save a 12-hour executable default with priority/no logging, verify
@@ -69,8 +89,14 @@ requests; never generate real firewall traffic just to produce a prompt.
   Frames 44–48 save four conditions and Reject fallback, verify the actual
   resulting RPC rule, display unavailable default fields, and expire a one-second
   request to Reject once despite a lasting duration selection.
+- **Simple scopes and direct actions.** Run `python scripts/verify-headless.py --feature permission-actions`.
+  Require six PNGs, actual allow/always and allow/12h replies, app-only scope,
+  explicit clearing of saved address/port restrictions, exact hostname and IP
+  scopes without port/wildcard, keyboard radio selection, preserved custom
+  conditions/metadata, disabled simple choices for unknown executable, unchanged
+  saved preferences, six SQLite decisions and scoped cleanup.
 - **Foreground reply.** Run `python scripts/verify-native.py run --feature prompts`.
-  Add `--decision allow` for the Allow path. Require the selected action/once
+  Add `--decision allow` for the Allow path. Require deny/once or allow/always
   fixture reply before ten seconds, screenshots, and all
   cleanup booleans true. The 30-second fallback cannot satisfy this proof.
 - **Native X11 placement.** Run `python scripts/verify-native.py run --feature placement --backend x11 --position bottom-right`.

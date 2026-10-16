@@ -11,8 +11,11 @@ or temporary rules, change allow/deny/reject, enable/disable, delete, or create 
 permanent rule for an executable. The full editor adds conditions, durations,
 priority, logging, renaming and duplication. Changes are marked applied only
 after the daemon confirms them. You can also import/export OpenSnitch JSON and
-apply bulk actions to selected or filtered rules. Remote daemons/TLS, advanced
-firewall controls, and a tray icon are still being ported.
+apply bulk actions to selected or filtered rules, including reviewed multi-node
+operations. Alerts, live process/socket inspection, blocklist subscriptions and
+reviewed system-firewall configuration are also available. Remote TCP/TLS
+connections and full opensnitch-ui parity are still being ported. A system tray
+icon keeps the app available while its main window is closed.
 
 ## Install and run
 
@@ -26,15 +29,15 @@ separately; Rustleblower contains only its frontend.
 For the AppImage:
 
 ```sh
-chmod +x rustleblower-0.1.1-linux-x86_64.AppImage
-./rustleblower-0.1.1-linux-x86_64.AppImage
+chmod +x rustleblower-0.2.0-linux-x86_64.AppImage
+./rustleblower-0.2.0-linux-x86_64.AppImage
 ```
 
 Without FUSE, add `--appimage-extract-and-run`. On Ubuntu/Debian, the `.deb`
 installs library dependencies and adds the application to your launcher:
 
 ```sh
-sudo apt install ./rustleblower_0.1.1_amd64.deb
+sudo apt install ./rustleblower_0.2.0_amd64.deb
 rustleblower
 ```
 
@@ -52,7 +55,44 @@ socket or file. To switch from opensnitch-ui, quit that UI first and verify that
 it has released the socket. The daemon can then reconnect to Rustleblower.
 Rustleblower never edits the daemon configuration during subscription.
 
-Closing either window minimizes it. **Quit Rustleblower** stops the server;
+Use **Appearance…** to choose **System**, **Light** or **Dark**. The choice applies
+immediately and is saved beside this history database. System follows the
+desktop's color appearance. Open pages, rule drafts and pending permission
+requests stay open when switching colors. If saving fails, the choice remains
+active for this session and the appearance window explains the failure.
+**Reload saved appearance** discards that session choice; **Use System appearance**
+restores the default. Density, custom themes and language settings are still
+being ported.
+
+The main window remembers its size, maximized/fullscreen state and last page
+for the next launch. Its saved bounds are fitted to connected displays when it
+reopens; on Wayland, the compositor controls its position. Changes are saved in
+the background after resizing settles, and on close or Quit. Loading or saving
+this layout does not hold permission requests. Splitter positions and column/filter
+restoration outside History are separate features still being ported.
+
+History remembers its search text, action filter, applied advanced conditions,
+table sort and column widths alongside the selected columns and refresh interval.
+It reopens on the first matching page so an old page cursor cannot hide new
+traffic. These choices save automatically in the background. If the settings
+file cannot be read or changes externally, Rustleblower preserves it, uses
+defaults or session-only changes and shows an explanation in History.
+
+To launch Rustleblower when you log in, open **Startup…** in the main window or
+**Startup preferences…** in the tray menu. Select **Start Rustleblower when I log
+in**, then **Save startup preference**. The entry uses this installed binary or
+AppImage and the current socket, history location and permission fallback.
+Keep an enabled AppImage at that location; save the preference again after
+moving it. Uncheck and save to disable automatic startup. Closing without saving
+keeps the previous setting; **Reload** discards the staged selection. This
+controls Rustleblower's own entry and preserves OpenSnitch's startup files.
+
+Closing the main window hides it to the system tray beside the clock. Click its
+icon or choose **Open Rustleblower** from its menu to reopen it. Permission
+popups still appear while the main window is hidden. If the desktop has no
+compatible system tray, closing the main window minimizes it instead. Closing
+a permission popup also minimizes it. **Quit Rustleblower**, in the dashboard
+or tray menu, stops the server;
 unanswered in-flight requests receive the configured one-time fallback where
 the RPC is still alive. A disconnected daemon follows its own configured policy.
 Prompts expire after 30 seconds by default, applying **deny once**. Launch defaults
@@ -60,12 +100,27 @@ come from `--prompt-timeout SECONDS` and `--timeout-action allow|deny|reject`.
 Saved overrides in **Popup preferences… → Conditions & timeout** take precedence.
 The fallback also applies when the pending-prompt limit is reached.
 
-By default, the permission window starts with **Once** and an executable/destination match.
-Choose **Rule options and details…** for a timed decision, Until restart, or Forever. Select
-an executable, command, user, destination, domain, network, or other available
-target, then add conditions with AND. Priority, logging, and reported checksums
-are also available. Broader targets can affect other applications or destinations;
-review them before answering. **Connection details** shows live arguments,
+The permission window asks whether an app may access the network, with
+**Allow forever** and **Allow for 12 hours** directly available. Choose between
+**any destination** and **only the shown destination** using the two radio choices.
+A new installation defaults to the whole app; existing saved scopes are preserved.
+The destination-only choice matches the exact reported hostname, or explicitly
+shows an IP address when no hostname is available. It covers any port and never
+silently creates a wildcard domain rule. The sentence above the buttons previews
+the selected scope. Block keeps the selected duration and displays it on its button.
+
+The app's icon appears when it can be matched to an installed desktop app.
+Otherwise, the window shows initials beside the app name. Its executable path
+stays visible, and you can answer immediately while the icon loads.
+
+**Details and advanced rules…** contains other durations, command/user/domain/network
+scopes, additional conditions, priority and logging. All additional conditions must
+match; fields already required by the scope are omitted from the checkboxes.
+Saved custom conditions are shown as a Custom rule until explicitly changed.
+Choosing either simple scope replaces those conditions for this request, including
+any old address or port restriction. It does not overwrite saved preferences.
+Both simple choices are unavailable when the executable was not reported.
+**Connection details** shows live arguments,
 environment, checksums and process ancestry. Those live values are not saved in
 history. Each request starts from your saved defaults; extra conditions do not
 carry over from the previous request. Clicking or typing in the permission popup
@@ -76,7 +131,7 @@ Unanswered requests use the captured once-only fallback before that limit.
 Each queued request keeps its own timer; interaction does not pause the others.
 
 Choose **Popup preferences…** in the main window to save a default duration,
-match target, priority and logging. An unavailable target falls back to an
+rule scope, priority and logging. An unavailable target falls back to an
 executable and destination match. Defaults are captured when a request arrives, so changing them
 does not alter requests already queued. Disabling **Show permission popups**
 answers new requests immediately with the configured one-time fallback. Existing
@@ -144,6 +199,14 @@ queue and statistics limits, and connection/certificate options. Paths refer to
 the daemon's machine. Changing its connection options can disconnect it from
 this UI; Rustleblower currently serves the local Unix socket.
 
+For a selected node, **Remember this node's paused state after reconnect or app
+restart** is off by default. Enable it to keep that node's last confirmed state.
+After a confirmed Stop, Rustleblower requests a pause if the same node reconnects
+running. It waits for the daemon's reply; permission popups remain usable. It
+never starts a stopped daemon automatically. Turning the option off leaves the
+current interception state alone. Each node has its own choice; the setting is
+local to Rustleblower and follows the bounded node cache.
+
 Choose **Review changes** to see the changed values, then **Confirm apply** to
 send them to that daemon. Ctrl+Enter reviews; Ctrl+Shift+Enter confirms after
 review. **Complete JSON** provides a multiline editor for the whole reported
@@ -162,8 +225,97 @@ Up to 32 distinct node names can be active over the local Unix socket. A new
 subscription with the same name replaces that node's previous session. The
 metadata cache retains at most 32 nodes; offline entries can be evicted as new
 nodes arrive. Controls require the matching live session and notification stream.
-TCP/TLS connections, address-based remote identity, live resource monitors and
-cross-node bulk copying are still being ported.
+TCP/TLS connections and address-based remote identity are still being ported.
+Use **Live** for reported resources and **Copy to nodes…** for reviewed rule copies.
+
+## Alerts
+
+Open **Alerts** or Ctrl+5 for daemon messages and typed process, connection, rule
+or firewall alerts. Search their text and payloads, enter an exact node name,
+filter severity or unread status, and select a row for details. **Copy complete
+JSON** includes the supplied payload; the preview explicitly labels shortening.
+Typed alerts can include the process metadata the daemon sent.
+
+**Older/Previous** browse a captured view; **Latest** follows new arrivals.
+Marking read or confirming deletion changes only the local archive. **Delete
+matching…** covers all current filter matches through the captured arrival
+boundary, preserving new alerts that arrive during confirmation.
+
+Enter an absolute path to export all matches to CSV or JSON Lines. Existing files
+require **Replace**; **Stop** cancels before the completed export is published.
+The archive retains at most 10,000 alerts / 2 MiB of logical data and uses the
+configured history age. Oldest alerts may be evicted. Skipped alerts have their
+own warning and do not inflate connection-history loss. Per-rule alert settings
+are still being ported.
+
+Daemon alerts can also appear as desktop notifications. Each notice identifies
+its node and urgency; **Open alerts** restores the Alerts page even when the
+main window is closed to the tray. Turn these off in **Popup preferences** while
+continuing to retain alerts and receive permission popups. Desktop notification
+visibility follows your system settings, including Do Not Disturb. Bursts replace
+the current desktop notice; individual retained records remain in Alerts.
+
+## System firewall configuration
+
+Select a node in **Nodes**, then open **System firewall** to browse its reported
+chains and rules. Search within a chain and page through its rules. **Complete
+JSON** lets you review and apply a complete configuration while retaining rule
+order and expressions. The daemon must acknowledge a reload before the local
+snapshot changes; the window distinguishes its reported configuration from an
+accepted reload awaiting a fresh report. An acknowledgement alone does not prove
+that every rule is enforced.
+
+Use **New/Edit chain** and **New/Edit rule** for field-based editing. Rule forms
+include ordered expressions and key/value pairs, duplication, enabled state and
+legacy fields. Move controls change array order while preserving the separate
+insertion-position metadata. New rules default to position zero and need an
+expression before they can be enabled. **Keep in draft** stages each edit; the daemon changes only after
+the complete draft is reviewed and applied. An open form can still keep its local
+values after a reconnect, so you can copy them before reopening the current node.
+
+**Alt+E** edits the selected chain. **Ctrl+Enter** keeps the current form step or
+reviews the complete draft; **Ctrl+Shift+Enter** applies a prepared review.
+
+**Files and profiles** imports a full configuration into the local draft, merges
+OpenSnitch `.profile` files into matching chains, and exports complete configurations
+or the selected chain. It also lists profiles from a chosen folder (or OpenSnitch's
+standard profile folder). Export creates a new file and preserves existing files.
+Removing a profile's rule IDs preserves the chain policy; review that policy before
+applying.
+
+**Policies and state** provides built-in Accept/Drop presets for supported
+input, output and forward chains. **Enable system firewall** stages a state
+change. Disabling prepares accept policies while active before saving Disabled;
+the review shows each step, and the app waits for its confirmation before moving
+on. Closing this editor lets the reviewed operation continue in the background.
+**Alt+P** opens this page; **Ctrl+Shift+E** toggles its draft state.
+Editing requires a reported nftables backend and supported format; offline or
+unsupported configurations stay read only. Application rules and
+permission prompts continue through their separate workflows.
+
+## Live sockets and process details
+
+Open **Live** (**Ctrl+6**) and start monitoring the node selected through **Nodes**.
+Choose a refresh interval and, for sockets, protocol, address family and state.
+**Ctrl+Enter** starts and **Ctrl+Shift+Enter** pauses. Pause freezes the current
+snapshot for searching, paging and copying. Selecting a socket with a known PID
+lets you inspect that process; you can also enter a PID in **Process details**.
+You can also select a connection in **History**, open **Details**, then choose
+**Inspect process**. This uses that connection's daemon even if another node is
+selected. It reads the PID now: the process may have exited or its PID may have
+been reused. The original event and executable remain visible for comparison.
+
+Process fields include status, open descriptors, I/O counters, memory maps, stack,
+environment, arguments, parent tree and reported checksums. **Node resources**
+shows uptime, load, process count and memory/swap from the daemon. You can copy
+individual socket JSON, complete process fields or the entire admitted snapshot.
+
+Leaving Live or closing its dashboard requests task stop. A disconnected node's
+last data stays visible as stale and monitoring must be restarted explicitly.
+OpenSnitch 1.7.2 does not acknowledge successful task stops, so the app reports
+**Stop requested**. Live snapshots are bounded and volatile; connection history
+continues to be stored separately on disk. Large snapshots show explicit
+shortening feedback. Live inspection does not change firewall policy.
 
 ## Statistics
 
@@ -227,6 +379,20 @@ historical values stay blank; they are not treated as UID/PID zero. Metadata
 sorting waits for indexing to finish. Environments, process checksums and live
 process trees remain outside stored connection history.
 
+History → **History preferences…** controls retained days, the database size target
+and cleanup while traffic is quiet. Review the settings and expired-record counts
+before applying; Back leaves data unchanged. Smaller limits can remove older
+history, daemon alerts and cached counters. Cached application rules and node
+settings remain intact. Existing files may take time to compact, so the target is
+not a filesystem quota.
+
+**Display refresh** can update every 1–60 seconds or run manually with 0. Manual
+mode keeps recording in the background; use **Refresh now**, search, paging or
+Latest to load data explicitly. These preferences survive restart. Explicit
+`--history-days` and `--history-mib` flags override and save retention values;
+otherwise saved UI choices take precedence over launch defaults. The database
+path is shown and can be copied from the preference window.
+
 ## Test fresh traffic with the real daemon
 
 After switching UIs, Rustleblower's header should show the daemon name/version.
@@ -241,7 +407,8 @@ Look for a new curl entry. Existing rules can allow or deny the request without
 showing a permission prompt; rules with logging disabled may suppress its event.
 A dashboard stuck waiting for the daemon is a connection problem, not evidence
 that no traffic occurred. After rebuilding, use **Quit Rustleblower** before
-relaunching; closing the window only minimizes the old process.
+relaunching; closing the window keeps the old process running in the tray (or
+minimized when a tray is unavailable).
 
 ## Try it without changing the daemon
 
@@ -293,6 +460,108 @@ failure explicitly. Custom durations use daemon units, for example `90s` or
 `2h30m`. Checksums and watched lists require the corresponding daemon settings
 and files; paths are interpreted on the daemon's machine.
 
+Port rules can use inclusive source/destination ranges such as `4000-4010` through
+the application rule editor's match-type picker. Rustleblower checks daemon
+compatibility before applying a range rule; unconfirmed older builds show an
+explanation and keep the draft.
+
+## Blocklist subscriptions
+
+Open **Blocklists** (Ctrl+7) and choose **Add subscription…** (Ctrl+N). Enter a
+name and an HTTP(S) URL, choose the text format and save (Ctrl+S). Interval,
+timeout and size each have a count and a unit. An empty count inherits the saved
+default count; **Inherit default** in the unit picker inherits its unit separately.
+The form shows the effective limits before saving. **Defaults…** changes the
+global count/unit pairs, and dependent subscriptions follow those choices.
+Configuration is created by the app;
+no configuration file needs to be prepared manually.
+
+Before saving, **Test URL** checks whether the address is reachable. For hosts
+format it also inspects a short sample; the result is indicative and a very short
+sample is marked inconclusive. The test follows redirects, can be cancelled, and
+does not save or activate the list. Editing the URL or format discards the previous
+result. **Save** remains a separate action.
+
+Default changes are checked against every saved subscription before they are
+committed. If a dependent limit becomes invalid, the previous settings remain
+active and the editor explains the error. Reopen a subscription editor if defaults
+changed while it was open. Older numeric limits retain their absolute meaning;
+reimport an original OpenSnitch file to recover inheritance that an earlier
+Rustleblower import had already converted into fixed values.
+
+Automatic updates initially remain paused. **Refresh selected** checks one list
+now; **Force refresh** skips its HTTP cache validators. **Start automatic updates**
+enables the saved schedule when a local daemon is connected. You can pause or
+cancel a running download without closing the app. Previous valid data remains
+available after failed, invalid or oversized downloads. The page shows status,
+errors and a bounded preview/history, and searches and sorts across all matching
+subscriptions. Removing a subscription stops its updates and keeps downloaded
+data; **Show removed** and **Edit / restore…** can restore it.
+
+After refreshing a list, select it and choose **Review new list rule…**. The
+application-rule editor opens a permanent Deny draft combining your user ID and
+its watched directory;
+check the displayed target node, action and conditions before **Save rule**.
+Nothing is sent if you cancel. The change is saved only after the daemon confirms
+it. **Inspect associated rules…** lists confirmed rules for that directory on the
+selected node, including rules with additional conditions; select one to review
+or edit it. Choose a different local target from **Nodes**.
+
+Downloaded data is converted to the format expected by the daemon. Domain names
+become hosts entries; hosts aliases are expanded, and IP lists can contain both
+addresses and CIDR prefixes. Changing list type publishes into its own directory
+and retains the old type's data for existing rules. Both count toward the disk
+budget. A downloaded list alone does not block traffic: the daemon needs a rule
+that references its directory and access to those files. Subscription configuration
+and files are stored in a `subscriptions` folder beside the history database.
+Choose **Rule collections…** (Ctrl+Shift+L while on Blocklists) to browse groups
+and **All enabled subscriptions**, separated by list type. Search and the Group,
+Type and Active sources sorts cover every matching collection. Each entry shows
+its active source count and offers rule review and associated-rule inspection.
+An empty installation already has five all-list collections; they match no data
+until subscriptions are added and refreshed.
+
+Changing a saved subscription’s enabled state, groups or input type, or restoring
+it, opens a membership review before saving. **Back to form** retains the draft;
+Cancel leaves the saved membership intact. Existing collection rules follow
+confirmed membership changes and refreshed data. Pausing automatic updates keeps
+using the last valid data. Retained direct-list rules continue to use their source
+files independently of group/all membership.
+
+For several lists, mark rows across pages and choose **Bulk edit…** (Ctrl+Shift+B).
+You can also target every active subscription matching the current filter.
+Enable or disable lists, add/remove/replace/clear groups, change input format, or
+change interval, timeout and size overrides. Check a limit to change it; leave
+its checked field empty to inherit the global default. **Review changes**
+(Ctrl+Enter) lists the exact before/after values across all selected pages.
+Back keeps the fields; Cancel leaves saved values intact. **Apply reviewed
+changes** (Ctrl+Shift+Enter) saves the whole reviewed batch together. If any
+reviewed list changed meanwhile, rebuild the review before applying it.
+Use **Import / export…** (Ctrl+Shift+T) to transfer subscription configuration.
+Import accepts a Rustleblower configuration, an OpenSnitch subscription action
+file, or its configuration object. Choose the JSON file and **Review import…**
+(Ctrl+Enter). The review shows new lists, matching identities, replacements and restored
+entries, with normalized groups and limits. Display names can be shared by
+several subscriptions; imported extra fields remain attached to their internal
+identities through renaming and restoration. Replacement and importing
+global defaults are separate choices; current defaults and automatic-update
+state are kept unless you select that option. **Replace complete active
+catalogue** also reviews entries absent from the file: they stop updating and
+leave collections, while their downloaded files remain available to existing
+rules. Matching entries are replaced in that mode. **Import reviewed configuration**
+(Ctrl+Shift+Enter) applies the complete reviewed change. Back preserves options;
+Cancel changes nothing. Rebuild the review if the catalogue changed meanwhile.
+
+Export can include marked rows or all active matches across pages, in native
+Rustleblower or OpenSnitch action format. Choose a new destination filename;
+existing files are preserved. Configuration transfer keeps downloaded data and
+daemon rules separate. Imported action metadata is retained for export; other
+plugin actions and imported notification settings are not executed. OpenSnitch exports normalize typed filenames and make duplicates distinct;
+native configuration preserves exact names and filenames. When upgrading older
+imported metadata, uncertain matches stay archived rather than being attached to
+an arbitrary row. Reimporting the original file can bind those fields again.
+Archive inspection/cleanup and some subscription options remain under development.
+
 ## Inspect a connection or create its rule
 
 Select a history row and choose **Details…**. The Overview shows the recorded
@@ -316,11 +585,36 @@ to change it explicitly.
 
 ## Import, export and bulk changes
 
+In the rule editor, **Apply to nodes…** reviews the current unsaved draft for
+selected connected nodes, including the current one. Cancelling that window
+keeps the editor fields. Editing the same name enables replacement by default;
+new-name conflicts require explicit replacement. For a rename, each destination
+first confirms the new rule, then removes its old name if present. Stop waits
+for the current reply; continuing skips confirmed work. If removal fails, the
+new rule can already be saved while the old name remains: reconnect and rebuild
+the review to finish only the outstanding work. Results show both counts.
+
+**Import to nodes…** reads a file, a directory of rules, or an explicitly captured
+clipboard into the same destination review. It applies exactly those reviewed
+values, even if the original input changes later. Invalid captured clipboard
+data reports an error; **Use file path** explicitly selects the file instead.
+The ordinary **Import…** below targets the current node.
+
+
 Use **Import…** to read a JSON file, a directory containing OpenSnitch JSON rule
 files, or JSON from the clipboard. Review the rules, then choose **Apply reviewed
 rules**. Existing names are skipped unless **Replace rules that have the same
 names** is checked. Single objects, JSON arrays, and OpenSnitch's adjacent-object
 clipboard format are supported.
+
+**Export nodes…** saves rules from several cached nodes, including offline ones.
+Choose nodes and a parent directory, then **Review export**. All rules are
+included by default; the captured search/duration filter can be applied to every
+selected node. The review freezes the contents and shows rule and unconfirmed
+proposal counts. **Export reviewed folders** creates a new folder with one
+subfolder per node and a manifest identifying them. To restore rules, import a
+node subfolder. Existing exports are preserved; cancelling or an error before
+completion leaves no partial export folder.
 
 **Export filter…** includes every matching rule across all pages. **Export
 selected…** includes checked rules, or the highlighted rule when none are checked.
@@ -336,6 +630,18 @@ filter, across all pages**. Bulk actions include allow/deny/reject, enable/disab
 and deletion. Each rule waits for its daemon reply. **Stop after current rule**
 leaves confirmed changes applied and retains remaining rules for review or retry.
 An error stops the batch and reports its confirmed and remaining counts.
+
+To copy existing rules to other connected nodes, use **Application rules → Copy
+to nodes…**. Marked rules across pages are used first; the scope checkbox can
+include every rule matching the current filter. Choose destinations, review the
+counts and source rules, then apply. Existing names skip by default; replacing
+them is explicit. Identical rules and names awaiting daemon observation skip.
+Paths, user IDs and match conditions are copied exactly, so check their meaning
+on each destination. Each node has its own confirmed/failed result. Stop waits
+for the current reply, and continuing does not repeat confirmed work. After a
+reconnect or uncertain error, rebuild the review; completed copies remain in
+place. **Copy results** keeps the complete per-node result text. The source
+node's rules stay unchanged.
 
 ## Resource limits
 

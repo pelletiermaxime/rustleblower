@@ -1,4 +1,4 @@
-use clap::{Parser, ValueEnum};
+use clap::{CommandFactory, FromArgMatches, Parser, ValueEnum};
 use std::{path::PathBuf, time::Duration};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
@@ -45,6 +45,22 @@ pub struct Config {
 }
 
 impl Config {
+    pub fn parse_launch() -> (Self, crate::history::storage::Overrides) {
+        let matches = Self::command().get_matches();
+        let overrides = crate::history::storage::Overrides {
+            days: (matches.value_source("history_days")
+                == Some(clap::parser::ValueSource::CommandLine))
+            .then(|| *matches.get_one::<u32>("history_days").unwrap()),
+            mib: (matches.value_source("history_mib")
+                == Some(clap::parser::ValueSource::CommandLine))
+            .then(|| *matches.get_one::<u32>("history_mib").unwrap()),
+        };
+        (
+            Self::from_arg_matches(&matches).unwrap_or_else(|e| e.exit()),
+            overrides,
+        )
+    }
+
     pub fn prompt_duration(&self) -> Duration {
         Duration::from_secs(self.prompt_timeout)
     }

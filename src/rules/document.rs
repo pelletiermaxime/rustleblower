@@ -184,6 +184,12 @@ fn validate_operator(op: &Operator, depth: usize) -> Result<(), String> {
         "lists.domains" | "lists.domains_regexp" | "lists.ips" | "lists.nets" | "lists.hash.md5"
     );
     match op.r#type.as_str() {
+        "range" => {
+            if !matches!(op.operand.as_str(), "source.port" | "dest.port") {
+                return Err("Port ranges require the Source port or Destination port field".into());
+            }
+            port_range(&op.data)?;
+        }
         "list" => {
             if depth > 0 {
                 return Err("This daemon protocol supports a flat AND group; flatten nested groups before saving".into());
@@ -225,6 +231,36 @@ fn validate_operator(op: &Operator, depth: usize) -> Result<(), String> {
         _ => return Err(format!("Unsupported match type: {}", op.r#type)),
     }
     Ok(())
+}
+
+/// Exact compileRange grammar at the pinned daemon: remove ASCII spaces only,
+/// parse unsigned decimal uint64 bounds and include both endpoints. Keep the
+/// original spelling in the wire document; no regexp expansion or truncation.
+pub fn port_range(data: &str) -> Result<(u64, u64), String> {
+    let compact = data.replace(' ', "");
+    let error = || {
+        "Enter an inclusive port range as min-max with unsigned decimal bounds and min <= max"
+            .to_string()
+    };
+    let (min, max) = compact.split_once('-').ok_or_else(error)?;
+    let number = |value: &str| {
+        if value.is_empty() || !value.bytes().all(|b| b.is_ascii_digit()) {
+            return Err(error());
+        }
+        value.parse::<u64>().map_err(|_| error())
+    };
+    let (min, max) = (number(min)?, number(max)?);
+    if min > max {
+        return Err(error());
+    }
+    Ok((min, max))
+}
+
+pub fn has_range(rule: &Rule) -> bool {
+    fn contains(op: &Operator) -> bool {
+        op.r#type == "range" || op.list.iter().any(contains)
+    }
+    rule.operator.as_ref().is_some_and(contains)
 }
 
 pub fn parse_document(text: &str) -> Result<Vec<Rule>, String> {

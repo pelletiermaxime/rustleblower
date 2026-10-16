@@ -17,6 +17,8 @@ use std::{
 pub const TARGETS: &[(&str, &str)] = &[
     ("connection", "Executable + destination"),
     ("process.path", "This executable"),
+    ("app-host", "This executable to the exact hostname"),
+    ("app-address", "This executable to the exact IP address"),
     ("process.command", "This command line"),
     ("process.id", "Process ID"),
     ("user.id", "User ID"),
@@ -42,6 +44,7 @@ pub struct Popup {
     pub duration: String,
     pub target: String,
     pub popups: bool,
+    pub desktop_notifications: bool,
     pub priority: bool,
     pub logging: bool,
     pub show_advanced: bool,
@@ -54,8 +57,9 @@ impl Default for Popup {
     fn default() -> Self {
         Self {
             duration: "once".into(),
-            target: "connection".into(),
+            target: "process.path".into(),
             popups: true,
+            desktop_notifications: true,
             priority: false,
             logging: true,
             show_advanced: false,
@@ -148,12 +152,12 @@ impl Popup {
         }
     }
     fn json(&self) -> serde_json::Value {
-        serde_json::json!({"version":3,"duration":self.duration,"target":self.target,"popups":self.popups,"priority":self.priority,"logging":self.logging,"show_advanced":self.show_advanced,"constraints":self.constraints,"timeout":self.timeout,"fallback":self.fallback.map(Decision::action),"position":self.position.key()})
+        serde_json::json!({"version":4,"duration":self.duration,"target":self.target,"popups":self.popups,"desktop_notifications":self.desktop_notifications,"priority":self.priority,"logging":self.logging,"show_advanced":self.show_advanced,"constraints":self.constraints,"timeout":self.timeout,"fallback":self.fallback.map(Decision::action),"position":self.position.key()})
     }
     fn parse(bytes: &[u8]) -> Result<Self> {
         let value: serde_json::Value = serde_json::from_slice(bytes)?;
         ensure!(
-            matches!(value["version"].as_u64(), Some(1..=3)),
+            matches!(value["version"].as_u64(), Some(1..=4)),
             "Unsupported UI preferences version"
         );
         let text = |key| {
@@ -171,6 +175,15 @@ impl Popup {
             duration: text("duration")?,
             target: text("target")?,
             popups: flag("popups")?,
+            desktop_notifications: value
+                .get("desktop_notifications")
+                .map(|value| {
+                    value
+                        .as_bool()
+                        .context("Invalid desktop notifications preference")
+                })
+                .transpose()?
+                .unwrap_or(true),
             priority: flag("priority")?,
             logging: flag("logging")?,
             position: match value.get("position") {
