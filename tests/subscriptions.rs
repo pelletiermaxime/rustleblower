@@ -48,7 +48,15 @@ async fn bulk_review(
     }
 }
 async fn status(h: &Handle, id: u64, value: &str) -> Result<Row> {
-    tokio::time::timeout(Duration::from_secs(5), async {
+    status_with_timeout(h, id, value, Duration::from_secs(5)).await
+}
+async fn status_with_timeout(
+    h: &Handle,
+    id: u64,
+    value: &str,
+    timeout: Duration,
+) -> Result<Row> {
+    tokio::time::timeout(timeout, async {
         loop {
             let r = get(h, id).await?;
             if r.status == value {
@@ -608,7 +616,9 @@ async fn published_disk_budget_rejects_candidate_and_preserves_last_good_file() 
     config.timeout = Some(rustleblower::subscriptions::limits::Override::Absolute(30));
     save(&h, Some((id, old.revision)), config).await?;
     request(&h, Request::Refresh { id, force: true }).await?;
-    let failed = status(&h, id, "error").await?;
+    // This case streams and normalizes 20 MiB before rejecting publication.
+    // Its completion allowance is separate from the strict prompt/Ping limits.
+    let failed = status_with_timeout(&h, id, "error", Duration::from_secs(60)).await?;
     assert!(failed.error.contains("disk budget"), "{}", failed.error);
     assert_eq!(failed.bytes, good.len() as u64);
     assert_eq!(std::fs::read(file)?, good);

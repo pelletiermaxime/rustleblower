@@ -29,15 +29,15 @@ separately; Rustleblower contains only its frontend.
 For the AppImage:
 
 ```sh
-chmod +x rustleblower-0.2.2-linux-x86_64.AppImage
-./rustleblower-0.2.2-linux-x86_64.AppImage
+chmod +x rustleblower-0.2.3-linux-x86_64.AppImage
+./rustleblower-0.2.3-linux-x86_64.AppImage
 ```
 
 Without FUSE, add `--appimage-extract-and-run`. On Ubuntu/Debian, the `.deb`
 installs library dependencies and adds the application to your launcher:
 
 ```sh
-sudo apt install ./rustleblower_0.2.2_amd64.deb
+sudo apt install ./rustleblower_0.2.3_amd64.deb
 rustleblower
 ```
 

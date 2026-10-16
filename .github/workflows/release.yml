@@ -3,6 +3,12 @@ name: Release
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: New prerelease tag matching Cargo.toml (created after checks)
+        type: string
+        required: true
 
 permissions:
   contents: read
@@ -12,6 +18,7 @@ jobs:
     uses: ./.github/workflows/ci.yml
     with:
       packages: true
+      release_tag: ${{ inputs.tag || github.ref_name }}
 
   publish:
     needs: checks-and-packages
@@ -31,7 +38,15 @@ jobs:
       - name: Publish development prerelease
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
         run: |
-          gh release create "$GITHUB_REF_NAME" dist/* \
-            --verify-tag --prerelease --title "Rustleblower $GITHUB_REF_NAME" \
-            --notes-file "docs/releases/$GITHUB_REF_NAME.md"
+          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git tag -a "$RELEASE_TAG" "$GITHUB_SHA" -m "Rustleblower $RELEASE_TAG development prerelease"
+            gh auth setup-git
+            git push origin "refs/tags/$RELEASE_TAG"
+          fi
+          gh release create "$RELEASE_TAG" dist/* \
+            --verify-tag --prerelease --title "Rustleblower $RELEASE_TAG" \
+            --notes-file "docs/releases/$RELEASE_TAG.md"

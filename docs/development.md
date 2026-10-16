@@ -793,7 +793,13 @@ passed Clippy but stopped at UID mapping before core tests began. The corrected
 namespace setup was verified by `v0.2.1`, whose GPU run then exposed an Alerts
 paging fixture burst exceeding the bounded writer on CI. The fixture now fences
 persistence between records; overload behavior is covered separately. The next
-prerelease uses `v0.2.2`; published and failed tags are not rewritten.
+candidate `v0.2.2` then stopped on a five-second completion wait for the 20-MiB
+disk-budget fixture. Only that wait now allows 60 seconds; publication/old-file
+assertions and independent 500-ms permission/Ping limits remain unchanged. Failed
+tags are retained. Candidate `v0.2.3` uses the manual Release workflow on `main`:
+checks and packages complete before its annotated tag and prerelease are created.
+Invoke it with `gh workflow run release.yml --ref main -f tag=v0.2.3` (substitute
+the matching Cargo version for future releases). Tag pushes remain supported.
 
 The initial v0.1.0 tag failed its GPU gate and has no published release. Ubuntu's
 DejaVu font exposed a countdown-status wrap that moved a checksum button between

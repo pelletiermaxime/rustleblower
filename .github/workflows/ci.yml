@@ -10,6 +10,9 @@ on:
       packages:
         type: boolean
         default: false
+      release_tag:
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -20,6 +23,7 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
 
 jobs:
   linux:
@@ -85,7 +89,8 @@ jobs:
           python3 - <<'PYCODE'
           import os, pathlib, tomllib
           version = tomllib.loads(pathlib.Path('Cargo.toml').read_text())['package']['version']
-          assert os.environ['GITHUB_REF_NAME'] == f'v{version}', 'Tag and Cargo version differ'
+          assert os.environ['RELEASE_TAG'] == f'v{version}', 'Tag and Cargo version differ'
+          assert os.environ['GITHUB_EVENT_NAME'] == 'workflow_dispatch' or os.environ['GITHUB_REF_NAME'] == os.environ['RELEASE_TAG'], 'Unexpected release ref'
           assert pathlib.Path(f'docs/releases/v{version}.md').is_file(), 'Release notes missing'
           PYCODE
       - name: Build Linux release
@@ -93,7 +98,7 @@ jobs:
         run: python3 scripts/cargo.py build --release --locked
       - name: Create AppImage, Debian package and archive
         if: inputs.packages
-        run: bash scripts/package-linux.sh "$GITHUB_REF_NAME"
+        run: bash scripts/package-linux.sh "$RELEASE_TAG"
       - name: Verify packages on clean Ubuntu
         if: inputs.packages
         run: python3 scripts/verify-packages.py
