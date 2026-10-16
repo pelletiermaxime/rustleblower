@@ -790,7 +790,10 @@ interfaces. This does not change any developer machine or application behavior.
 See [Docker's Ubuntu namespace guidance](https://docs.docker.com/engine/security/rootless/)
 for the distribution restriction. The failed `v0.2.0` tag is retained: that run
 passed Clippy but stopped at UID mapping before core tests began. The corrected
-prerelease uses `v0.2.1`; published and failed tags are not rewritten.
+namespace setup was verified by `v0.2.1`, whose GPU run then exposed an Alerts
+paging fixture burst exceeding the bounded writer on CI. The fixture now fences
+persistence between records; overload behavior is covered separately. The next
+prerelease uses `v0.2.2`; published and failed tags are not rewritten.
 
 The initial v0.1.0 tag failed its GPU gate and has no published release. Ubuntu's
 DejaVu font exposed a countdown-status wrap that moved a checksum button between

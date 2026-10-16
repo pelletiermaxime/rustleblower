@@ -80,6 +80,10 @@ check precede atomic publication. Database/WAL/SHM/settings paths are protected.
   filters, detail/clipboard, read/delete/cancel, full JSON/CSV export, refusal and
   explicit replacement, a real Deny permission and matching deletion during a
   new arrival. Final search must show No matching retained alerts.
+  Pace the 206-row paging fixture with a persistence fence after each RPC;
+  receipt does not promise durability and a burst may intentionally overflow
+  the bounded writer on a slower CI disk. Keep overload/responsiveness proof in
+  the separate held-writer core case rather than depending on fixture timing.
 - Native: rebuild desktop after core tests; then
   `python scripts/verify-native.py run --feature alerts [--backend x11]`.
   Require Ctrl+5 painted synthetic warning rows, Ctrl+F empty search, six exact

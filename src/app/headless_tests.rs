@@ -4677,6 +4677,10 @@ fn headless_alerts() {
                 })
                 .await
                 .unwrap();
+            // This fixture needs all 206 rows for paging, rather than a burst
+            // that can intentionally overflow the bounded writer on slow disks.
+            // RPC receipt alone does not acknowledge SQLite durability.
+            backend.handle.history.flush().await.unwrap();
         }
         daemon
             .post_alert(protocol::Alert {
