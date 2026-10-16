@@ -50,12 +50,7 @@ async fn bulk_review(
 async fn status(h: &Handle, id: u64, value: &str) -> Result<Row> {
     status_with_timeout(h, id, value, Duration::from_secs(5)).await
 }
-async fn status_with_timeout(
-    h: &Handle,
-    id: u64,
-    value: &str,
-    timeout: Duration,
-) -> Result<Row> {
+async fn status_with_timeout(h: &Handle, id: u64, value: &str, timeout: Duration) -> Result<Row> {
     tokio::time::timeout(timeout, async {
         loop {
             let r = get(h, id).await?;
