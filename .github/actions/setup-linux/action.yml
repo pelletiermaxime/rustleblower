@@ -1,0 +1,39 @@
+name: Linux verification environment
+description: Pinned build tools, GPU dependencies and isolated fixture namespaces
+inputs:
+  cache-key:
+    description: Separate caches for checks/packages and headless test binaries
+    default: linux-x86_64
+  save-cache:
+    description: Only one parallel GPU runner writes the shared GPU cache
+    default: "true"
+runs:
+  using: composite
+  steps:
+    - name: Install Linux build and GPU test dependencies
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential pkg-config cmake clang patch dpkg-dev curl file \
+          libssl-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev \
+          libfontconfig1-dev libfreetype-dev libxcb1-dev libx11-dev libxi-dev \
+          libxcursor-dev libxrandr-dev libegl1 mesa-vulkan-drivers fonts-dejavu-core dbus iproute2 util-linux
+    - name: Prepare isolated fixture namespaces on the disposable runner
+      shell: bash
+      run: |
+        # Ubuntu 24.04 restricts unprivileged user namespaces through AppArmor.
+        # This changes only the ephemeral GitHub runner, never the user's host.
+        # All fixtures still require a distinct mapped-user, loopback-only netns.
+        sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+        python3 scripts/owned_net.py --evidence .verification/ci-network-preflight.json -- python3 -c 'print("Owned network namespace ready")'
+    - name: Install pinned Rust
+      shell: bash
+      run: rustup toolchain install 1.99.0 --profile minimal --component rustfmt --component clippy
+    - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      with:
+        shared-key: ${{ inputs.cache-key }}
+        save-if: ${{ inputs.save-cache == 'true' }}
+        cache-on-failure: true
+    - name: Prepare scoped transport patch and fetch dependencies
+      shell: bash
+      run: python3 scripts/cargo.py fetch --locked
