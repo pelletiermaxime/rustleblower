@@ -1,5 +1,27 @@
 use super::*;
 
+// The policy operation runs on GPUI's executor after each daemon ACK. Keep
+// pumping that executor while the Tokio fixture waits for its next command.
+fn next_command(
+    cx: &mut TestAppContext,
+    runtime: &tokio::runtime::Runtime,
+    mut commands: tonic::Streaming<protocol::Notification>,
+) -> (
+    tonic::Streaming<protocol::Notification>,
+    protocol::Notification,
+) {
+    let pending = runtime.spawn(async move {
+        let command = tokio::time::timeout(Duration::from_secs(1), commands.message())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        (commands, command)
+    });
+    wait_for(cx, |_| pending.is_finished());
+    runtime.block_on(pending).unwrap()
+}
+
 #[gpui_kit::test]
 fn journey(test_cx: &mut TestAppContext) {
     use crate::firewall::{self, document::Document};
@@ -220,13 +242,8 @@ fn journey(test_cx: &mut TestAppContext) {
     flush(&mut cx);
     click(&mut cx, editor, "firewall-confirm");
     flush(&mut cx);
-    let first = runtime.block_on(async {
-        tokio::time::timeout(Duration::from_secs(1), commands.message())
-            .await
-            .unwrap()
-            .unwrap()
-            .unwrap()
-    });
+    let (stream, first) = next_command(&mut cx, &runtime, commands);
+    commands = stream;
     let mut preparation = initial.clone();
     for chain in &mut preparation.system_rules[0].chains[..3] {
         chain.policy = "accept".into();
@@ -275,13 +292,8 @@ fn journey(test_cx: &mut TestAppContext) {
         }))
         .unwrap();
     flush(&mut cx);
-    let second = runtime.block_on(async {
-        tokio::time::timeout(Duration::from_secs(1), commands.message())
-            .await
-            .unwrap()
-            .unwrap()
-            .unwrap()
-    });
+    let (stream, second) = next_command(&mut cx, &runtime, commands);
+    commands = stream;
     assert_eq!(second.sys_firewall, Some(disabled.clone().into()));
     assert_eq!(
         firewall::read(&config.database, "policy-fixture")
@@ -301,7 +313,10 @@ fn journey(test_cx: &mut TestAppContext) {
             ..Default::default()
         }))
         .unwrap();
-    flush(&mut cx);
+    wait_for(&mut cx, |_| {
+        firewall::read(&config.database, "policy-fixture")
+            .is_ok_and(|snapshot| snapshot.config == disabled.clone().into())
+    });
     assert_eq!(
         firewall::read(&config.database, "policy-fixture")
             .unwrap()
@@ -329,13 +344,8 @@ fn journey(test_cx: &mut TestAppContext) {
     checkpoint(&mut cx, editor, &evidence.join("10-enable-review.json"));
     click(&mut cx, editor, "firewall-confirm");
     flush(&mut cx);
-    let enable = runtime.block_on(async {
-        tokio::time::timeout(Duration::from_secs(1), commands.message())
-            .await
-            .unwrap()
-            .unwrap()
-            .unwrap()
-    });
+    let (stream, enable) = next_command(&mut cx, &runtime, commands);
+    commands = stream;
     assert_eq!(enable.sys_firewall, Some(enabled.clone().into()));
     runtime
         .block_on(replies.send(protocol::NotificationReply {
@@ -343,7 +353,10 @@ fn journey(test_cx: &mut TestAppContext) {
             ..Default::default()
         }))
         .unwrap();
-    flush(&mut cx);
+    wait_for(&mut cx, |_| {
+        firewall::read(&config.database, "policy-fixture")
+            .is_ok_and(|snapshot| snapshot.config == enabled.clone().into())
+    });
     assert_eq!(
         firewall::read(&config.database, "policy-fixture")
             .unwrap()
@@ -360,13 +373,8 @@ fn journey(test_cx: &mut TestAppContext) {
     flush(&mut cx);
     click(&mut cx, editor, "firewall-confirm");
     flush(&mut cx);
-    let rejected = runtime.block_on(async {
-        tokio::time::timeout(Duration::from_secs(1), commands.message())
-            .await
-            .unwrap()
-            .unwrap()
-            .unwrap()
-    });
+    let (stream, rejected) = next_command(&mut cx, &runtime, commands);
+    commands = stream;
     assert_eq!(
         rejected.sys_firewall.as_ref().unwrap().system_rules[0].chains[0].policy,
         "drop"
@@ -378,7 +386,10 @@ fn journey(test_cx: &mut TestAppContext) {
             data: "Synthetic policy rejection".into(),
         }))
         .unwrap();
-    flush(&mut cx);
+    wait_for(&mut cx, |_| {
+        firewall::read(&config.database, "policy-fixture")
+            .is_ok_and(|snapshot| snapshot.config == enabled.clone().into())
+    });
     assert_eq!(
         firewall::read(&config.database, "policy-fixture")
             .unwrap()

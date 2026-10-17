@@ -196,7 +196,11 @@ fn journey(test_cx: &mut TestAppContext) {
     assert_eq!(reply.action, "allow");
     assert_eq!(reply.duration, "always");
     hold.store(false, Ordering::Release);
-    flush(&mut cx);
+    // Rendering does not wait for the independent daemon ACK/cache writer.
+    wait_for(&mut cx, |_| {
+        nodes::detail(&config.database, "preferences-fixture")
+            .is_ok_and(|snapshot| snapshot.config == command.data)
+    });
     assert_eq!(
         nodes::detail(&config.database, "preferences-fixture")
             .unwrap()
@@ -219,6 +223,15 @@ fn journey(test_cx: &mut TestAppContext) {
     click(&mut cx, editor, "node-config-review");
     click(&mut cx, editor, "node-config-confirm");
     flush(&mut cx);
+    wait_for(&mut cx, |_| observed.lock().unwrap().len() == 2);
+    wait_for(&mut cx, |_| {
+        backend
+            .handle
+            .history
+            .health
+            .catalogues
+            .uncertain(backend.handle.node("preferences-fixture").unwrap().id)
+    });
     assert_eq!(observed.lock().unwrap().len(), 2);
     assert_eq!(
         nodes::detail(&config.database, "preferences-fixture")
