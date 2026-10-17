@@ -5086,6 +5086,8 @@ fn headless_rules_advanced() {
         client
     });
     let mut cx = context();
+    // Use the Ubuntu package runner's font for layout and control reachability.
+    cx.update(|cx| Theme::global_mut(cx).font_family = "DejaVu Sans".into());
     let mut view = None;
     let main = cx
         .open_window(size(px(1240.), px(940.)), |w, cx| {
@@ -5932,6 +5934,59 @@ fn headless_history_advanced() {
 
 #[test]
 fn headless_history_tools() {
+    // Filter controls can be below the viewport with the Ubuntu release fonts.
+    // Scroll through real input before clicking, including after Clear reflows it.
+    fn control(cx: &mut HeadlessAppContext, window: AnyWindowHandle, id: &'static str) {
+        use gpui::InputEvent as _;
+        for _ in 0..32 {
+            let direction = cx
+                .update_window(window, |_, w, cx| {
+                    w.render_frame(cx);
+                    let body = w.find("history-tools-panel").bounds();
+                    let target = w.find(id).bounds();
+                    if target.center().y < body.top() + px(8.) {
+                        Some(120.)
+                    } else if target.center().y > body.bottom() - px(8.) {
+                        Some(-120.)
+                    } else {
+                        None
+                    }
+                })
+                .unwrap();
+            let Some(direction) = direction else {
+                click(cx, window, id);
+                settle(cx);
+                return;
+            };
+            cx.update_window(window, |_, w, cx| {
+                let position = w.find("history-tools-panel").bounds().center();
+                w.dispatch_event(
+                    gpui::MouseMoveEvent {
+                        position,
+                        pressed_button: None,
+                        modifiers: Default::default(),
+                    }
+                    .to_platform_input(),
+                    cx,
+                );
+                w.render_frame(cx);
+                w.dispatch_event(
+                    gpui::ScrollWheelEvent {
+                        position,
+                        delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.), px(direction))),
+                        ..Default::default()
+                    }
+                    .to_platform_input(),
+                    cx,
+                );
+                w.render_frame(cx);
+            })
+            .unwrap();
+            settle(cx);
+        }
+        panic!("History control {id} must be reachable by wheel input");
+    }
+
     fn search(cx: &mut HeadlessAppContext, w: AnyWindowHandle, value: &str) {
         cx.update_window(w, |_, w, cx| w.press("ctrl-f", cx))
             .unwrap();
@@ -5994,6 +6049,8 @@ fn headless_history_tools() {
         .ingest("history-tools-fixture".into(), events, "observed");
     runtime.block_on(backend.handle.history.flush()).unwrap();
     let mut cx = context();
+    // Use the Ubuntu package runner's font for layout and control reachability.
+    cx.update(|cx| Theme::global_mut(cx).font_family = "DejaVu Sans".into());
     let mut view = None;
     let window = cx
         .open_window(size(px(1100.), px(780.)), |window, cx| {
@@ -6030,12 +6087,12 @@ fn headless_history_tools() {
     pick(&mut cx, tools, "history-filter-field", "UID");
     pick(&mut cx, tools, "history-filter-comparison", "Equals");
     fill(&mut cx, tools, "history-filter-value", "1001");
-    click(&mut cx, tools, "history-filter-add");
+    control(&mut cx, tools, "history-filter-add");
     pick(&mut cx, tools, "history-filter-field", "Command line");
     pick(&mut cx, tools, "history-filter-comparison", "Contains");
     fill(&mut cx, tools, "history-filter-value", "blue1");
-    click(&mut cx, tools, "history-filter-add");
-    click(&mut cx, tools, "history-filter-apply");
+    control(&mut cx, tools, "history-filter-add");
+    control(&mut cx, tools, "history-filter-apply");
     settle(&mut cx);
     assert_eq!(
         cx.read_entity(&view, |view, _| view.history.page.rows.len()),
@@ -6050,7 +6107,7 @@ fn headless_history_tools() {
     pick(&mut cx, tools, "history-filter-field", "Destination port");
     pick(&mut cx, tools, "history-filter-comparison", "Equals");
     fill(&mut cx, tools, "history-filter-value", "65536");
-    click(&mut cx, tools, "history-filter-add");
+    control(&mut cx, tools, "history-filter-add");
     capture(
         &mut cx,
         tools,
@@ -6189,8 +6246,8 @@ fn headless_history_tools() {
     })
     .unwrap();
     cx.run_until_parked();
-    click(&mut cx, tools, "history-filter-clear");
-    click(&mut cx, tools, "history-filter-apply");
+    control(&mut cx, tools, "history-filter-clear");
+    control(&mut cx, tools, "history-filter-apply");
     settle(&mut cx);
     assert_eq!(
         cx.read_entity(&view, |view, _| view.history.page.rows.len()),
@@ -6212,8 +6269,8 @@ fn headless_history_tools() {
     pick(&mut cx, tools, "history-filter-field", "UID");
     pick(&mut cx, tools, "history-filter-comparison", "Equals");
     fill(&mut cx, tools, "history-filter-value", "1001");
-    click(&mut cx, tools, "history-filter-add");
-    click(&mut cx, tools, "history-filter-apply");
+    control(&mut cx, tools, "history-filter-add");
+    control(&mut cx, tools, "history-filter-apply");
     click(&mut cx, window.into(), "reject");
     search(&mut cx, window.into(), "history-app");
     settle(&mut cx);

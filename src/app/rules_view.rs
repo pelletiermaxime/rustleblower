@@ -1369,7 +1369,8 @@ impl Dashboard {
                     .rounded_lg()
                     .overflow_hidden()
                     .child(
-                        div().flex().items_center().gap_3().px_4().py_1()
+                        // Match the rows' pr_3 scrollbar gutter as well as their px_4 padding.
+                        div().flex().items_center().gap_3().px_4().pr_7().py_1()
                             .flex_shrink_0().border_b_1().border_color(border)
                             .bg(cx.theme().muted.opacity(0.45))
                             .child(div().flex_1().min_w_0().child(
