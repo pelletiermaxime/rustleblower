@@ -552,6 +552,7 @@ async fn idle_tls_connections_have_finite_admission_and_initial_deadlines() -> R
     let mut sockets = Vec::new();
     for _ in 0..transport::MAX_INITIAL_CONNECTIONS + 4 {
         sockets.push(tokio::net::TcpStream::connect(&address).await?);
+        assert!(backend.handle.connection_count() <= transport::MAX_INITIAL_CONNECTIONS);
     }
     wait_until(|| backend.handle.initial_connection_count() == transport::MAX_INITIAL_CONNECTIONS)
         .await?;

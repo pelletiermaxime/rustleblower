@@ -378,7 +378,6 @@ impl Backend {
                         let permits=server_handle.connections.clone();
                         let initial_permits=server_handle.initial_connections.clone();
                         let incoming = incoming.filter_map(move |s| {
-                            let Ok(permit)=permits.clone().try_acquire_owned() else {return futures_util::future::ready(None);};
                             futures_util::future::ready(Some(s.and_then(|stream| {
                                 let peer=match &stream {
                                     crate::transport::Io::Unix(_)=>crate::transport::Peer::unix(),
@@ -391,6 +390,10 @@ impl Backend {
                                         Err(_)=>return Err(io::Error::new(io::ErrorKind::ConnectionAborted,"Initial connection capacity reached")),
                                     }
                                 } else {None};
+                                // Reject excess initial peers before counting a live connection.
+                                // Otherwise a rejected candidate transiently inflates that count.
+                                let permit=permits.clone().try_acquire_owned()
+                                    .map_err(|_|io::Error::new(io::ErrorKind::ConnectionAborted,"Connection capacity reached"))?;
                                 Ok(SessionIo {
                                 stream,
                                 deadline,
