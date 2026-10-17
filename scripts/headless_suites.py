@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
-"""Single Kit-journey inventory and balanced, isolated CI batches."""
+"""Single Kit-journey inventory and Cargo timing extraction."""
 import argparse
-from collections import Counter
 import re
 
 FEATURE_TESTS = {'browsing': 'browsing::journey',
@@ -47,60 +46,6 @@ FEATURE_TESTS = {'browsing': 'browsing::journey',
  'subscription-url': 'subscription_url_test::journey',
  'subscription-inheritance': 'subscription_inheritance::journey'}
 
-# Fixed isolated batches covering every Kit journey once.
-# A batch is serial within its runner; each runner has separate fixture resources.
-SHARDS = (('subscriptions',
-  'history-selection',
-  'history-tools',
-  'history-preferences',
-  'firewall-policy',
-  'catalogue-policy',
-  'history-process',
-  'startup',
-  'permission-icons'),
- ('appearance',
-  'reputation',
-  'history-advanced',
-  'live-table',
-  'desktop-notifications',
-  'nodes',
-  'daemon-preferences',
-  'cross-node',
-  'firewall',
-  'multi-node-export',
-  'permission-actions'),
- ('all',
-  'firewall-files',
-  'subscription-inheritance',
-  'statistics',
-  'live',
-  'updates',
-  'settings',
-  'window-state',
-  'multi-node-drafts',
-  'port-ranges',
-  'countdown'),
- ('rules-advanced',
-  'firewall-forms',
-  'language',
-  'raw-downloads',
-  'highlighting',
-  'subscription-url',
-  'browsing',
-  'alerts',
-  'popup-preferences',
-  'checksums',
-  'tray'))
-
-
-def validate_shards(shards=SHARDS):
-    counts = Counter(feature for shard in shards for feature in shard)
-    if not shards or any(not shard for shard in shards):
-        raise ValueError("Every Kit batch must contain a journey")
-    if set(counts) != set(FEATURE_TESTS) or any(n != 1 for n in counts.values()):
-        raise ValueError("Kit batches must cover every journey exactly once")
-
-
 def log_timings(log):
     """Cargo compilation and libtest runtime; absent data stays unknown."""
     text = re.sub(r"\x1b\[[0-9;]*m", "", log)
@@ -117,10 +62,8 @@ def log_timings(log):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--shard", type=int, choices=range(len(SHARDS)))
-    args = parser.parse_args()
-    validate_shards()
-    print(" ".join(FEATURE_TESTS if args.shard is None else SHARDS[args.shard]))
+    parser.parse_args()
+    print(" ".join(FEATURE_TESTS))
 
 
 if __name__ == "__main__":

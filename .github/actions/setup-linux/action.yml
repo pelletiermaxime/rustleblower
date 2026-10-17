@@ -4,9 +4,6 @@ inputs:
   cache-key:
     description: Separate caches for checks/packages and headless test binaries
     default: linux-x86_64
-  save-cache:
-    description: Only one parallel Kit runner writes the shared Kit cache
-    default: "true"
 runs:
   using: composite
   steps:
@@ -32,7 +29,6 @@ runs:
     - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       with:
         shared-key: ${{ inputs.cache-key }}
-        save-if: ${{ inputs.save-cache == 'true' }}
         cache-on-failure: true
     - name: Prepare scoped transport patch and fetch dependencies
       shell: bash

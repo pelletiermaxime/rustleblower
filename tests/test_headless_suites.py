@@ -1,10 +1,8 @@
-"""Keep parallel Kit coverage complete and distinguish compilation from input time."""
-import ast
+"""Keep Kit coverage complete and distinguish compilation from input time."""
 from contextlib import redirect_stdout
 import importlib.util
 import io
 from pathlib import Path
-import re
 import unittest
 from unittest.mock import patch
 
@@ -14,13 +12,14 @@ suites = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(suites)
 
 
-class BatchCoverage(unittest.TestCase):
-    def test_workflow_runs_every_batch_and_every_journey_once(self):
-        suites.validate_shards()
-        workflow = (ROOT / ".github/workflows/ci.yml").read_text()
-        matrix = re.search(r"^\s+shard: (\[[^\n]+\])$", workflow, re.MULTILINE)
-        self.assertIsNotNone(matrix, "The workflow must enumerate the Kit batches")
-        self.assertEqual(ast.literal_eval(matrix[1]), list(range(len(suites.SHARDS))))
+class JourneyCoverage(unittest.TestCase):
+    def test_workflow_runs_the_complete_suite_on_one_runner(self):
+        workflow = (ROOT / ".github/workflows/ci.yml").read_text().split("  headless:\n", 1)[1]
+        self.assertNotIn("strategy:", workflow)
+        self.assertNotIn("matrix.", workflow)
+        self.assertEqual(workflow.count("--features headless-tests --no-run"), 1)
+        self.assertEqual(workflow.count("scripts/verify-headless.py --all"), 1)
+        self.assertNotIn("scripts/verify-headless.py --feature", workflow)
         self.assertEqual(len(set(suites.FEATURE_TESTS.values())), len(suites.FEATURE_TESTS))
 
     def test_every_registered_journey_uses_the_kit_runner(self):
@@ -35,24 +34,11 @@ class BatchCoverage(unittest.TestCase):
         self.assertEqual(registered, actual)
         self.assertEqual(len(registered), 42)
 
-    def test_missing_duplicate_unknown_and_empty_batches_are_refused(self):
-        batches = [list(batch) for batch in suites.SHARDS]
-        missing = [list(batch) for batch in batches]
-        missing[0].pop()
-        duplicate = [list(batch) for batch in batches]
-        duplicate[1].append(duplicate[0][0])
-        unknown = [list(batch) for batch in batches]
-        unknown[0][0] = "unknown-feature"
-        for invalid in [missing, duplicate, unknown, [*batches, []], []]:
-            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
-                suites.validate_shards(invalid)
-
-    def test_batch_cli_produces_only_its_assigned_journeys(self):
-        for index, batch in enumerate(suites.SHARDS):
-            output = io.StringIO()
-            with patch("sys.argv", ["headless_suites.py", "--shard", str(index)]), redirect_stdout(output):
-                suites.main()
-            self.assertEqual(output.getvalue().split(), list(batch))
+    def test_inventory_cli_lists_every_journey_once(self):
+        output = io.StringIO()
+        with patch("sys.argv", ["headless_suites.py"]), redirect_stdout(output):
+            suites.main()
+        self.assertEqual(output.getvalue().split(), list(suites.FEATURE_TESTS))
 
 
 class LogTimings(unittest.TestCase):

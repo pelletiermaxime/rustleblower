@@ -17,11 +17,12 @@ Run the complete suite, with each feature in its own process:
 python scripts/verify-headless.py --all
 ```
 
-`scripts/headless_suites.py` owns the feature-to-test inventory and four isolated
-CI batches. Its coverage guard requires every registered module to use the Kit
-test runner, with no missing, duplicate or unregistered journeys. CI compiles the
-headless executable separately from running the journeys, so build time and
-execution time remain distinguishable.
+`scripts/headless_suites.py` owns the feature-to-test inventory. Its coverage
+guard requires every registered module to use the Kit test runner, with no
+missing, duplicate or unregistered journeys. CI sets up one Kit runner, builds
+the headless executable once, then runs all 42 journeys serially in isolated
+processes. Build time and execution time remain separate; there is no shard
+matrix repeating setup and compilation.
 
 ## Input and synchronization
 

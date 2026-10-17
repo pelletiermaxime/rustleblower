@@ -787,16 +787,15 @@ alert configuration and permission notification actions remain pending.
 Only Linux x86-64 is packaged. `rust-toolchain.toml` pins Rust 1.99.0. The Linux
 workflow installs Ubuntu 24.04 build/graphics dependencies, prepares the scoped
 h2 patch through `scripts/cargo.py`, runs core/helper/Clippy checks and every
-background Kit journey. The 42 Kit input/layout journeys run in four balanced jobs on
-separate Ubuntu runners; each job runs its own batch serially with private
-sockets, databases and network fixtures. `scripts/headless_suites.py` is the one
-journey inventory and refuses incomplete or duplicate batch coverage. Test
-binaries compile in a distinct step, and each `result.json` reports
+background Kit journey. One Kit runner builds the headless binary once and runs
+all 42 journeys serially, with separate fixture processes, sockets, databases
+and network namespaces. `scripts/headless_suites.py` owns the journey inventory;
+coverage guards reject missing, duplicate or unregistered tests. The binary
+compiles in a distinct step, and each `result.json` reports
 `build_seconds`, `test_seconds` and total `wall_seconds`; missing timings remain
 unknown rather than zero. All JSON checkpoints and ownership/cleanup assertions stay
-required. Headless screenshots/pixel checks have been removed; native screenshots remain separate. The core/package job and Kit jobs can overlap, but publication waits
-for every job. Release-profile and Kit caches have separate keys; only one Kit
-runner writes the shared Kit cache. A `v*` tag calls the same checks, builds the
+required. Headless screenshots/pixel checks have been removed; native screenshots remain separate. The core/package and Kit jobs can overlap, but publication waits
+for both. Release-profile and Kit caches have separate keys. A `v*` tag calls the same checks, builds the
 release and runs `scripts/package-linux.sh`. That script creates `.deb`, `.AppImage` and
 `.tar.gz` assets plus SHA256SUMS. AppImage tools/runtime have pinned checksums;
 graphics drivers and glibc remain host dependencies. Packaging is adapted from
