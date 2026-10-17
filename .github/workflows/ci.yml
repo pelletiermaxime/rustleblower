@@ -68,7 +68,7 @@ jobs:
       - name: Background GPU and input journeys
         run: |
           failed=0
-          for feature in all tray permission-actions permission-icons popup-preferences countdown checksums history-tools statistics nodes daemon-preferences alerts desktop-notifications live firewall firewall-forms firewall-files firewall-policy history-process history-preferences subscriptions port-ranges cross-node multi-node-drafts multi-node-export startup appearance window-state subscription-url subscription-inheritance; do
+          for feature in browsing settings history-advanced rules-advanced updates language reputation raw-downloads highlighting catalogue-policy history-selection live-table all tray permission-actions permission-icons popup-preferences countdown checksums history-tools statistics nodes daemon-preferences alerts desktop-notifications live firewall firewall-forms firewall-files firewall-policy history-process history-preferences subscriptions port-ranges cross-node multi-node-drafts multi-node-export startup appearance window-state subscription-url subscription-inheritance; do
             if ! python3 scripts/verify-headless.py --feature "$feature" --timeout 1200; then
               failed=1
             fi

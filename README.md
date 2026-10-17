@@ -8,36 +8,39 @@ The current version supports a local Unix socket, connection status, a separate
 permission window with **Allow / Deny / Reject** and duration/match options, searchable disk-backed
 connection history with on-demand details, and an **Application rules** page. You can search permanent
 or temporary rules, change allow/deny/reject, enable/disable, delete, or create a
-permanent rule for an executable. The full editor adds conditions, durations,
+permanent rule for an executable. The **Added (UTC)** column shows when each rule was created. Click its header
+to find the newest decisions first; click again for oldest first, or **Rule name**
+to restore name order. The full editor adds conditions, durations,
 priority, logging, renaming and duplication. Changes are marked applied only
 after the daemon confirms them. You can also import/export OpenSnitch JSON and
 apply bulk actions to selected or filtered rules, including reviewed multi-node
 operations. Alerts, live process/socket inspection, blocklist subscriptions and
-reviewed system-firewall configuration are also available. Remote TCP/TLS
-connections and full opensnitch-ui parity are still being ported. A system tray
-icon keeps the app available while its main window is closed.
+reviewed system-firewall configuration are also available. TCP, TLS and mutual
+TLS listeners are available for remote daemons; see
+[connection options](docs/remote-transport.md). Full opensnitch-ui parity remains
+in progress. A system tray icon keeps the app available while its main window
+is closed.
 
 ## Install and run
 
 Download a Linux x86-64 package from the
 [GitHub releases](https://github.com/pelletiermaxime/rustleblower/releases).
-This is an early development release with an unfinished interface. Packages are
-built on Ubuntu 24.04 and require glibc 2.39 or newer, a Wayland or X11 desktop,
+Packages are built on Ubuntu 24.04 and require glibc 2.39 or newer, a Wayland or X11 desktop,
 an installed font and a supported graphics driver. Install the OpenSnitch daemon
 separately; Rustleblower contains only its frontend.
 
 For the AppImage:
 
 ```sh
-chmod +x rustleblower-0.2.3-linux-x86_64.AppImage
-./rustleblower-0.2.3-linux-x86_64.AppImage
+chmod +x rustleblower-0.3.0-linux-x86_64.AppImage
+./rustleblower-0.3.0-linux-x86_64.AppImage
 ```
 
 Without FUSE, add `--appimage-extract-and-run`. On Ubuntu/Debian, the `.deb`
 installs library dependencies and adds the application to your launcher:
 
 ```sh
-sudo apt install ./rustleblower_0.2.3_amd64.deb
+sudo apt install ./rustleblower_0.3.0_amd64.deb
 rustleblower
 ```
 
@@ -55,14 +58,49 @@ socket or file. To switch from opensnitch-ui, quit that UI first and verify that
 it has released the socket. The daemon can then reconnect to Rustleblower.
 Rustleblower never edits the daemon configuration during subscription.
 
-Use **Appearance…** to choose **System**, **Light** or **Dark**. The choice applies
-immediately and is saved beside this history database. System follows the
-desktop's color appearance. Open pages, rule drafts and pending permission
-requests stay open when switching colors. If saving fails, the choice remains
-active for this session and the appearance window explains the failure.
-**Reload saved appearance** discards that session choice; **Use System appearance**
-restores the default. Density, custom themes and language settings are still
-being ported.
+Open **Settings** in the top-right corner for one large window with categories
+on the left: appearance and language, popup preferences, startup, updates, history,
+rule catalogue, reputation, raw downloads and table highlighting. Switching
+categories keeps your unsaved edits. Every page has **Close** at the bottom right,
+with **Save** alongside it on editable pages. Save commits the current page;
+changes that need review show that review before the final Save.
+
+Use **Settings → Appearance** to choose **System**, **Light** or **Dark**, then
+click **Save**. The saved choice applies to every open window and is stored beside
+this history database. System follows the desktop's color appearance. Open pages, rule drafts and pending permission
+requests stay open when switching colors. Closing settings discards unsaved
+appearance choices. If saving fails, the applied appearance stays unchanged and
+the draft is retained for correction or retry. **Use System appearance** stages
+the default; click Save to apply it. **Display density** and installed native palettes are also available. Density changes text, spacing and ordinary controls;
+fixed window sizes and table row heights stay the same. Density and colors have
+separate reset controls. A missing saved palette falls back to its base color
+mode with an explanation. **Language** offers the system language and installed
+catalogues; a saved choice takes effect on the next launch. Packages bundle English, French, German, Spanish and Japanese, each covering the full
+message catalogue. Missing messages in externally installed partial catalogues
+fall back to English.
+
+Use **Updates…** to check official Rustleblower releases or the selected daemon's
+reported version. Automatic checks start off. **Check now** uses the saved choices;
+you can also enable checks on startup or at a chosen interval and include
+prereleases. An available-update notification opens the same preferences window.
+The result links to the official release page.
+
+**Reputation…** provides optional VirusTotal checks for domains, IP addresses and
+reported executable hashes. Checks start off. Enabling them sends the selected
+values to VirusTotal using your API key; choose a private key file in preferences.
+You can exclude destinations, choose a warning threshold and limit requests per
+session. Permission prompts remain answerable while a report loads. Reports
+distinguish warnings, unflagged analysis and unavailable information; a warning
+may recommend **Reject once** while the prompt is untouched. Your permission
+decision and its captured timeout fallback remain independent of the check.
+
+**Raw downloads…** manages scheduled URL-to-file downloads separately from
+blocklist subscriptions. Import an OpenSnitch downloader profile, review its exact
+URLs and destination filenames, then save. Automatic downloads start off and wait
+the chosen interval before their first run. You can run a saved group manually or
+cancel it; failed or cancelled downloads preserve the previous file. Success and
+failure notifications can open this window. Downloads do not create firewall
+rules or activate downloaded lists.
 
 The main window remembers its size, maximized/fullscreen state and last page
 for the next launch. Its saved bounds are fitted to connected displays when it
@@ -78,7 +116,7 @@ traffic. These choices save automatically in the background. If the settings
 file cannot be read or changes externally, Rustleblower preserves it, uses
 defaults or session-only changes and shows an explanation in History.
 
-To launch Rustleblower when you log in, open **Startup…** in the main window or
+To launch Rustleblower when you log in, open **Settings → Startup** in the main window or
 **Startup preferences…** in the tray menu. Select **Start Rustleblower when I log
 in**, then **Save startup preference**. The entry uses this installed binary or
 AppImage and the current socket, history location and permission fallback.
@@ -273,6 +311,12 @@ expression before they can be enabled. **Keep in draft** stages each edit; the d
 the complete draft is reviewed and applied. An open form can still keep its local
 values after a reconnect, so you can copy them before reopening the current node.
 
+Use **Add guided statement…** for ports, addresses,
+interfaces, connection state/marks, ICMP, logging, quotas, counters and rate
+limits. **Choose guided verdict…** helps enter a target and its parameters for
+the current chain. Helpers stage a draft and validate their inputs; the raw
+editor remains available for advanced or unfamiliar expressions.
+
 **Alt+E** edits the selected chain. **Ctrl+Enter** keeps the current form step or
 reviews the complete draft; **Ctrl+Shift+Enter** applies a prepared review.
 
@@ -350,11 +394,15 @@ search. A decreased reported count starts that key's baseline over.
 Choose **All**, **Allowed**, **Denied** or **Rejected** for the quick action
 filter. **Filters, columns & export…** opens the detailed controls:
 
-- **Filters** combines up to eight conditions with AND: node, addresses/ports,
+- **Filters** combines up to eight conditions in All/Any groups: node, addresses/ports,
   executable/command, UID/PID, matched rule/duration, time, logging, priority and
   event reason. Use Equals, Contains, numeric/time comparisons or Not reported /
-  Reported. Time values accept RFC3339 UTC; booleans use 0 or 1. Choose **Apply
-  filters** to update the main view alongside its quick search/action filter.
+  Reported. Time values accept RFC3339 UTC; booleans use 0 or 1. The optional
+  **Formula** field combines the numbered conditions, for example
+  `1 AND (2 OR 3)`. Reference each condition once; clear the formula to use group
+  buttons again. Adding/removing a condition clears it because numbers change.
+  Choose **Apply filters** to update the main view alongside its quick
+  search/action filter. Application-rule conditions offer the same formula.
 - **Columns** switches between the compact summary and a virtualized table.
   Choose the columns and **Save history view**. The choice survives restart.
   Table header arrows sort all matching history; Older keeps a fixed arrival
@@ -432,6 +480,13 @@ It also supplies synthetic application rules and acknowledges edits to its own
 in-memory catalogue. Add `--reject-rule-changes` to exercise an error response.
 
 ## Allow an application after a missed prompt
+
+If a permission popup times out, Rustleblower can show a desktop notification
+with the applied action. **Open application rules** takes you to the rules page.
+Use the **Missed popups** tab in popup preferences to turn these notices off,
+customize their text or restore the default. The template preview shows the
+expanded message; `\n` inserts a line break, `\t` a tab and `\\` a backslash.
+The general desktop-notification preference also applies.
 
 Open **Application rules**, search for the executable or rule name, and select
 the matching rule. Choose **Allow** to change its action while preserving its
@@ -531,12 +586,16 @@ files independently of group/all membership.
 For several lists, mark rows across pages and choose **Bulk edit…** (Ctrl+Shift+B).
 You can also target every active subscription matching the current filter.
 Enable or disable lists, add/remove/replace/clear groups, change input format, or
-change interval, timeout and size overrides. Check a limit to change it; leave
-its checked field empty to inherit the global default. **Review changes**
-(Ctrl+Enter) lists the exact before/after values across all selected pages.
+change interval, timeout and size overrides. Check a limit to change it, then
+choose its count and unit independently. An empty count inherits the default
+count; **Inherit default** in the unit selector inherits its unit. Unchecked
+limits keep their existing overrides. **Review changes** (Ctrl+Enter) lists raw
+before/after choices, the reviewed defaults and effective values across all
+selected pages.
 Back keeps the fields; Cancel leaves saved values intact. **Apply reviewed
 changes** (Ctrl+Shift+Enter) saves the whole reviewed batch together. If any
-reviewed list changed meanwhile, rebuild the review before applying it.
+reviewed list or the global defaults changed meanwhile, rebuild the review
+before applying it.
 Use **Import / export…** (Ctrl+Shift+T) to transfer subscription configuration.
 Import accepts a Rustleblower configuration, an OpenSnitch subscription action
 file, or its configuration object. Choose the JSON file and **Review import…**
@@ -556,7 +615,11 @@ Export can include marked rows or all active matches across pages, in native
 Rustleblower or OpenSnitch action format. Choose a new destination filename;
 existing files are preserved. Configuration transfer keeps downloaded data and
 daemon rules separate. Imported action metadata is retained for export; other
-plugin actions and imported notification settings are not executed. OpenSnitch exports normalize typed filenames and make duplicates distinct;
+plugin actions are retained without execution. Rustleblower uses
+imported subscription notification settings and provide a **Notifications…**
+editor for success/failure messages. Click a subscription notice to reopen
+Blocklists; the general Desktop notifications switch also applies. Cancelled
+downloads and URL tests stay quiet. OpenSnitch exports normalize typed filenames and make duplicates distinct;
 native configuration preserves exact names and filenames. When upgrading older
 imported metadata, uncertain matches stay archived rather than being attached to
 an arbitrary row. Reimporting the original file can bind those fields again.

@@ -252,3 +252,42 @@ The current reference and new master-parity requirements are recorded in
 reports are preserved, while the next priority is the native subscription manager
 and then port ranges. System-firewall backend-specific condition helpers and
 broader native/RSS proof still remain in the full goal.
+
+
+## Guided statement and verdict helpers
+
+Expressions → Add guided statement… opens finite Kit family/option/comparison
+controls and contextual input. All 17 source families construct ordered wire
+values; Rule → Choose guided verdict… validates parameters against the captured
+chain hook. Keep changes only the local rule, followed by the existing complete
+review/ACK path; Cancel/Escape preserves raw and unknown fields. Bounded local
+service-name and interface suggestions supplement numerical ports/ranges/lists
+and manual interface names/wildcards. Read
+[exact scope and bounds](../../../../docs/firewall-helpers-plan.md).
+
+`python scripts/verify-headless.py --feature firewall-forms` now retains 18 frames.
+Frames 15–18 exercise actual dual-protocol/not-equal port input, IPv6 CIDR,
+SNAT hook refusal and queue parameters; common assertions require complete wire
+payload, held ACK/independent permission and reconnect behavior. The passing run
+is `.verification/headless/20261017T022741Z-b0a175e2/result.json`. Preserve the
+failed `20261017T022336Z-66b482c8` attempt that found stretched Select hit bounds;
+fixed rem-height rows now match their painted triggers. Five dedicated
+`tests/firewall_helpers.rs` core cases pass in the final focused run; the original
+four are also included in the retained 200-case full-core report. The fifth
+requires guided DNAT/redirect hook refusal without moving a captured chain,
+while preserving raw-editor reachability. This does not prove native compositor helper input,
+all helper option combinations, kernel enforcement or final whole-app visuals.
+
+
+The expanded current `firewall-forms` journey passes 22 frames under
+`.verification/headless/20261017T030013Z-f8b4702d/result.json`. New 19–22 exercise
+actual service protocol ambiguity refusal, exact 5553/udp selection, local owned0
+interface selection and reload from mutated owned discovery files while keeping
+the typed 1234 value. The new selections are checked in the whole expected wire
+snapshot before existing held-ACK/permission/stale-reconnect regressions.
+Two focused discovery/constructor cases pass in
+`.verification/firewall-suggestions-core2.log`. All PNGs and owned process/socket
+cleanup pass; scoped hashes/boundaries: `.verification/firewall-suggestions-result.json`.
+The test-only RAII hook supplies filesystem paths to production discovery; no
+host catalogue, environment or policy is changed. Interfaces remain local to
+the UI host. A stale hint in these screenshots receives a copy-only followup.

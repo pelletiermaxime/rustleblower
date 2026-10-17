@@ -1,6 +1,6 @@
 [package]
 name = "rustleblower"
-version = "0.2.3"
+version = "0.3.0"
 edition = "2024"
 license = "MIT"
 description = "A small native OpenSnitch frontend"
@@ -9,7 +9,7 @@ rust-version = "1.99"
 
 [features]
 default = ["desktop"]
-desktop = ["dep:gpui-kit", "dep:gpui", "dep:gpui_platform", "dep:raw-window-handle", "dep:x11rb", "dep:log", "dep:image", "dep:resvg", "dep:freedesktop-icons", "dep:freedesktop-desktop-entry", "dep:shlex", "dep:ksni", "dep:zbus"]
+desktop = ["dep:rust-i18n", "dep:gpui-kit", "dep:gpui", "dep:gpui_platform", "dep:raw-window-handle", "dep:x11rb", "dep:log", "dep:image", "dep:resvg", "dep:freedesktop-icons", "dep:freedesktop-desktop-entry", "dep:shlex", "dep:ksni", "dep:zbus"]
 headless-tests = ["desktop", "gpui/test-support", "gpui-kit/test-support", "gpui_platform/test-support", "dep:gpui_wgpu", "dep:image"]
 
 [dependencies]
@@ -17,36 +17,46 @@ anyhow = "1"
 chrono = { version = "0.4", default-features = false, features = ["std"] }
 clap = { version = "4", features = ["derive"] }
 futures-util = "0.3"
+getrandom = "0.4.3"
 # The unchanged daemon uses its UDS path as :authority. Enable only our scoped
 # server compatibility patch; ordinary HTTP authorities still validate normally.
+# Keep this exact version aligned with the checksum-verified local patch below.
 h2 = { version = "=0.4.20", features = ["opensnitch-uds-authority"] }
-gpui-kit = { version = "=0.7.3", features = ["gpui-fast"], optional = true }
-gpui = { package = "gpui-fast", version = "=0.1.7", default-features = false, features = ["wayland", "x11"], optional = true }
-gpui_platform = { package = "gpui-fast-platform", version = "=0.1.7", default-features = false, features = ["font-kit", "wayland", "x11"], optional = true }
-gpui_wgpu = { package = "gpui-fast-wgpu", version = "=0.1.7", optional = true, features = ["test-support"] }
+hex = "0.4"
+http = "1"
+gpui-kit = { version = "0.7.3", features = ["gpui-fast"], optional = true }
+gpui = { package = "gpui-fast", version = "0.1.7", default-features = false, features = ["wayland", "x11"], optional = true }
+gpui_platform = { package = "gpui-fast-platform", version = "0.1.7", default-features = false, features = ["font-kit", "wayland", "x11"], optional = true }
+gpui_wgpu = { package = "gpui-fast-wgpu", version = "0.1.7", optional = true, features = ["test-support"] }
 image = { version = "0.25", default-features = false, features = ["png"], optional = true }
-resvg = { version = "=0.46.0", default-features = false, optional = true }
+resvg = { version = "0.48.1", default-features = false, optional = true }
 freedesktop-icons = { version = "0.4", optional = true }
 freedesktop-desktop-entry = { version = "0.8", default-features = false, optional = true }
 shlex = { version = "2", optional = true }
-prost = "0.13"
+prost = "0.14.4"
 log = { version = "0.4", optional = true }
+libc = "0.2"
 raw-window-handle = { version = "0.6", optional = true }
-x11rb = { version = "0.13", features = ["randr"], optional = true }
-reqwest = { version = "=0.12.28", default-features = false, features = ["rustls-tls-native-roots", "stream", "gzip"] }
-rusqlite = { version = "0.37", features = ["bundled", "backup"] }
-rustix = { version = "=1.1.5", features = ["process", "fs"] }
+x11rb = { version = "0.14", features = ["randr"], optional = true }
+reqwest = { version = "0.13.5", default-features = false, features = ["rustls", "stream", "gzip"] }
+rusqlite = { version = "0.40.2", features = ["bundled", "backup", "hooks", "fallible_uint"] }
+rust-i18n = { version = "4.2.4", optional = true }
+rustix = { version = "1.1.5", features = ["process", "fs"] }
+rustls = { version = "0.23", default-features = false, features = ["aws-lc-rs"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["raw_value", "arbitrary_precision"] }
-sha2 = "0.10"
+semver = "1.0.28"
+svgtypes = "0.16.1"
+sha2 = "0.11.1"
 tempfile = "3"
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "net", "signal", "macros"] }
 tokio-stream = { version = "0.1", features = ["net"] }
 tokio-util = { version = "0.7", features = ["rt"] }
-tonic = { version = "0.12", features = ["transport"] }
-tower = { version = "0.4", features = ["util"] }
-ksni = { version = "=0.3.6", default-features = false, features = ["async-io"], optional = true }
-zbus = { version = "=5.19.0", optional = true }
+tonic = { version = "0.14.6", features = ["transport", "tls-aws-lc"] }
+tonic-prost = "0.14.6"
+tower = { version = "0.5", features = ["util"] }
+ksni = { version = "0.3.6", default-features = false, features = ["async-io"], optional = true }
+zbus = { version = "6", optional = true }
 
 [dev-dependencies]
 hyper-util = { version = "0.1", features = ["tokio"] }

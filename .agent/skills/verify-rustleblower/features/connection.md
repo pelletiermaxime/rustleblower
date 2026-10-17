@@ -157,7 +157,7 @@ wait for 500 ms stability. Close/Quit flush the latest sample. Quit shuts down
 permissions/backend immediately, then waits at most 500 ms for layout save.
 A process kill/power loss before the latest write is not covered.
 
-Run `python scripts/verify-headless.py --feature window-state` for eleven frames.
+Run `python scripts/verify-headless.py --feature window-state` for thirteen frames.
 Require current-display fitting and saved Nodes page; actual Rules navigation;
 25 GPUI geometry requests with callback shim yielding one write; close/Open and
 permission while hidden; a permission before held load-result delivery, default
@@ -199,3 +199,24 @@ not a pointer click on the desktop panel's tray icon.
 Read `.verification/window-state-result.json` for exact current proof. Native
 fullscreen, X11 restoration, physical monitor-disconnect/focus variants, separate
 column/splitter/filter state, package/RSS and final whole-app UI/UX remain separate.
+
+The current wrapping-header regression passes the same eleven window-state frames
+in `.verification/headless/20261017T034621Z-14ef202c/result.json` (13.79 seconds).
+Adding raw/reputation settings had clipped Quit at a restored 1,000-logical-pixel
+window; the owner moved the existing Kit buttons into a full-width wrapping row.
+Actual Quit input remains required, answers the pending permission and flushes
+the just-selected Statistics page. All header actions are visible in frame 11.
+`.verification/window-header-result.json` retains the exact source/binary/image
+hashes and the original failed attempt. Frame 11 intentionally captures before
+settling the Kit underline spring, to retain the immediate-Quit persistence case;
+it is not a settled tab-indicator screenshot or native compositor claim.
+
+
+The compact shell checkpoint adds two Settings frames to the existing eleven-frame
+window journey: at780×560, actual popover input must expose all eight global actions
+fully inside the viewport, open Popup preferences, then close it. The original
+navigation, saved geometry, independent permission and actual Quit assertions
+remain. The shared click helper opens Settings through real input when a global
+action is hidden. Background window13 result
+`.verification/headless/20261017T050057Z-351e46fd/result.json` passes; this is
+separate from native compositor sizing, package and real-daemon proof.

@@ -41,7 +41,7 @@ impl UrlTest {
     }
     pub fn cancel(&mut self) {
         if self.ticket.take().is_some() {
-            self.message = Some("URL test cancelled".into());
+            self.message = Some(crate::i18n::tr("URL test cancelled"));
             self.failed = false;
         }
     }
@@ -99,8 +99,9 @@ impl Dashboard {
                 match self.backend.subscriptions.test_url(target.0, target.1) {
                     Ok(ticket) => {
                         form.url_test.ticket = Some(ticket);
-                        form.url_test.message =
-                            Some("Testing URL… No subscription or list data will be saved.".into());
+                        form.url_test.message = Some(crate::i18n::tr(
+                            "Testing URL… No subscription or list data will be saved.",
+                        ));
                         form.url_test.failed = false;
                     }
                     Err(error) => {

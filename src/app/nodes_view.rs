@@ -41,7 +41,11 @@ impl NodesView {
     pub fn new(window: &mut Window, cx: &mut Context<Dashboard>) -> Self {
         let input = cx.new(|cx| {
             InputState::new(window, cx)
-                .placeholder("Filter node name or kernel…")
+                .placeholder(crate::i18n::placeholder(
+                    "Filter node name or kernel…",
+                    window,
+                    cx,
+                ))
                 .validate(|text, _| text.len() <= 256)
         });
         cx.subscribe(&input, |this, _, event, cx| {
@@ -170,7 +174,7 @@ impl NodesView {
                 }
                 Err(oneshot::error::TryRecvError::Closed) => {
                     self.pending = None;
-                    self.error = Some("Node reader stopped".into());
+                    self.error = Some(crate::i18n::tr("Node reader stopped"));
                     changed = true;
                 }
                 _ => {}
@@ -238,13 +242,14 @@ impl Dashboard {
             .as_ref()
             .is_some_and(|session| self.backend.control.pause_restoring(session.id));
         let mut body=div().flex_1().min_h_0().px_6().pb_3().flex().flex_col().gap_3().child(div().h_8().flex_shrink_0().child(Input::new(&self.nodes.input).id("nodes-search")))
-   .child(div().text_sm().text_color(muted).child(format!("{} connected nodes · {} cached nodes in this search. Choose a node to manage its application rules, interception or daemon configuration.",self.backend.status().sessions.len(),self.nodes.page.len())))
-   .when_some(self.nodes.error.clone(),|body,error|body.child(super::banner(error,cx))).when_some(self.nodes.message.clone().filter(|_|!restoring),|body,message|body.child(div().text_sm().child(message)))
-   .when(restoring,|body|body.child(div().text_sm().child("Restoring saved pause: waiting for daemon confirmation and saved local state…")));
+   .child(div().text_sm().text_color(muted).child(crate::i18n::tr_args("%{arg0} connected nodes · %{arg1} cached nodes in this search. Choose a node to manage its application rules, interception or daemon configuration.", &[("arg0", &(self.backend.status().sessions.len()).to_string()), ("arg1", &(self.nodes.page.len()).to_string())])))
+   .when_some(self.nodes.error.clone(),|body,error|body.child(super::banner(error,cx))).when_some(self.nodes.message.clone().filter(|_|!restoring),|body,message|body.child(div().text_sm().child(crate::i18n::presentation(&message))))
+   .when(restoring,|body|body.child(div().text_sm().child(crate::i18n::tr("Restoring saved pause: waiting for daemon confirmation and saved local state…"))));
         let rows = uniform_list(
             "nodes-rows",
             self.nodes.page.len(),
             cx.processor(|this, range: std::ops::Range<usize>, _, cx| {
+                let highlights = this.backend.highlighting.snapshot();
                 range
                     .map(|index| {
                         let row = &this.nodes.page[index];
@@ -253,6 +258,37 @@ impl Dashboard {
                             session.id == row.session && session.notifications
                         });
                         let name = row.name.clone();
+                        let status = crate::i18n::tr(if online {
+                            "Connected"
+                        } else {
+                            "Offline / cached"
+                        });
+                        let interception = crate::i18n::tr(if row.running {
+                            "Interception enabled"
+                        } else {
+                            "Interception disabled"
+                        });
+                        let cells = [
+                            ("name", row.name.as_str()),
+                            ("status", status.as_str()),
+                            ("interception", interception.as_str()),
+                        ];
+                        let selected = this.nodes.selected.as_ref() == Some(&row.name);
+                        let prepared = highlights.prepare_row(
+                            crate::highlighting::View::Nodes,
+                            &cells,
+                            selected,
+                        );
+                        let style = |key: &str, value: &str, cell: Div| {
+                            super::highlighting::cell_prepared(
+                                &highlights,
+                                crate::highlighting::View::Nodes,
+                                key,
+                                value,
+                                prepared,
+                                cell,
+                            )
+                        };
                         ListItem::new(("node-row", index))
                             .h(px(64.))
                             .w_full()
@@ -265,17 +301,21 @@ impl Dashboard {
                                     .flex()
                                     .gap_3()
                                     .items_center()
-                                    .child(div().flex_1().text_sm().child(row.name.clone()))
-                                    .child(div().w(px(150.)).text_sm().child(if online {
-                                        "Connected"
-                                    } else {
-                                        "Offline / cached"
-                                    }))
-                                    .child(div().w(px(190.)).text_sm().child(if row.running {
-                                        "Interception enabled"
-                                    } else {
-                                        "Interception disabled"
-                                    })),
+                                    .child(style(
+                                        "name",
+                                        &row.name,
+                                        div().flex_1().text_sm().child(row.name.clone()),
+                                    ))
+                                    .child(style(
+                                        "status",
+                                        &status,
+                                        div().w(px(150.)).text_sm().child(status.clone()),
+                                    ))
+                                    .child(style(
+                                        "interception",
+                                        &interception,
+                                        div().w(px(190.)).text_sm().child(interception.clone()),
+                                    )),
                             )
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.nodes.select(name.clone());
@@ -300,22 +340,16 @@ impl Dashboard {
                 .flex_col()
                 .when(self.nodes.page.is_empty(), |body| {
                     body.child(div().p_4().child(if self.nodes.pending.is_some() {
-                        "Loading nodes…"
+                        crate::i18n::tr("Loading nodes…")
                     } else {
-                        "No matching cached nodes."
+                        crate::i18n::tr("No matching cached nodes.")
                     }))
                 })
                 .child(rows),
         );
         if let Some(detail) = self.nodes.detail.as_ref() {
-            body = body.child(div().text_sm().child(format!(
-                    "{} · kernel {} · reported log level {} · last confirmed {} UTC",
-                    detail.row.name,
-                    detail.row.kernel,
-                    detail.row.log_level,
-                    chrono::DateTime::from_timestamp_nanos(detail.row.updated)
-                        .format("%Y-%m-%d %H:%M:%S")
-                )));
+            body = body.child(div().text_sm().child(crate::i18n::tr_args("%{arg0} · kernel %{arg1} · reported log level %{arg2} · last confirmed %{arg3} UTC", &[("arg0", &(detail.row.name).to_string()), ("arg1", &(detail.row.kernel).to_string()), ("arg2", &(detail.row.log_level).to_string()), ("arg3", &(chrono::DateTime::from_timestamp_nanos(detail.row.updated)
+                        .format("%Y-%m-%d %H:%M:%S")).to_string())])));
             let preference = self
                 .backend
                 .history
@@ -324,7 +358,7 @@ impl Dashboard {
                 .get(&detail.row.name);
             body = body.child(
                 Checkbox::new("nodes-remember-pause")
-                    .label("Remember this node's paused state after reconnect or app restart")
+                    .label(crate::i18n::tr("Remember this node's paused state after reconnect or app restart"))
                     .checked(preference.is_some())
                     .disabled(current.is_none() || busy || uncertain)
                     .on_change(cx.listener(|this,remember:&bool,_,cx|{
@@ -338,9 +372,9 @@ impl Dashboard {
                         cx.notify();
                     })))
                 .child(div().text_xs().text_color(muted).child(match preference {
-                    Some(false)=>"Saved choice: paused. If this node reconnects running, Rustleblower will request a pause and wait for confirmation.",
-                    Some(true)=>"Saved choice: running. Confirming Stop will remember the pause. A stopped daemon is never started automatically.",
-                    None=>"Off by default. Enabling remembers the last confirmed choice. Turning this off leaves the daemon's current interception unchanged.",
+                    Some(false)=>crate::i18n::tr("Saved choice: paused. If this node reconnects running, Rustleblower will request a pause and wait for confirmation."),
+                    Some(true)=>crate::i18n::tr("Saved choice: running. Confirming Stop will remember the pause. A stopped daemon is never started automatically."),
+                    None=>crate::i18n::tr("Off by default. Enabling remembers the last confirmed choice. Turning this off leaves the daemon's current interception unchanged."),
                 }));
         }
         if let Some(error) = self
@@ -361,15 +395,20 @@ impl Dashboard {
         if let Some((session, running)) = self.nodes.confirm.as_ref() {
             let session = session.clone();
             body = body
-                .child(div().text_sm().child(format!(
-                    "{} interception on {}? {}",
-                    if *running { "Start" } else { "Stop" },
-                    session.name,
-                    if *running {
-                        "The daemon will resume interception using its saved policy."
-                    } else {
-                        "The daemon will stop intercepting application traffic."
-                    }
+                .child(div().text_sm().child(crate::i18n::tr_args(
+                    "%{arg0} interception on %{arg1}? %{arg2}",
+                    &[
+                        ("arg0", (if *running { "Start" } else { "Stop" })),
+                        ("arg1", &(session.name).to_string()),
+                        (
+                            "arg2",
+                            (if *running {
+                                "The daemon will resume interception using its saved policy."
+                            } else {
+                                "The daemon will stop intercepting application traffic."
+                            }),
+                        ),
+                    ],
                 )))
                 .child(
                     div()
@@ -377,7 +416,7 @@ impl Dashboard {
                         .gap_3()
                         .child(
                             Button::new("nodes-confirm")
-                                .label("Confirm interception change")
+                                .label(crate::i18n::tr("Confirm interception change"))
                                 .disabled(
                                     busy || !self
                                         .backend
@@ -403,7 +442,7 @@ impl Dashboard {
                         )
                         .child(
                             Button::new("nodes-cancel")
-                                .label("Cancel")
+                                .label(crate::i18n::tr("Cancel"))
                                 .disabled(busy)
                                 .on_click(cx.listener(|this, _, _, cx| {
                                     this.nodes.confirm = None;
@@ -419,7 +458,7 @@ impl Dashboard {
                 .flex_wrap()
                 .child(
                     Button::new("nodes-rules")
-                        .label("Use node for application rules")
+                        .label(crate::i18n::tr("Use node for application rules"))
                         .disabled(current.is_none() || busy)
                         .on_click(cx.listener(|this, _, window, cx| {
                             if let Some(session) = this.nodes.current(&this.backend) {
@@ -443,9 +482,9 @@ impl Dashboard {
                                 .as_ref()
                                 .is_some_and(|detail| detail.row.running)
                             {
-                                "Stop interception…"
+                                crate::i18n::tr("Stop interception…")
                             } else {
-                                "Start interception…"
+                                crate::i18n::tr("Start interception…")
                             },
                         )
                         .disabled(current.is_none() || busy || uncertain)
@@ -460,7 +499,7 @@ impl Dashboard {
                 )
                 .child(
                     Button::new("nodes-config")
-                        .label("Daemon configuration…")
+                        .label(crate::i18n::tr("Daemon configuration…"))
                         .disabled(current.is_none() || busy || uncertain)
                         .on_click(cx.listener(|this, _, _, cx| {
                             if let Some(handle) = this.nodes.editor {
@@ -486,7 +525,7 @@ impl Dashboard {
                 )
                 .child(
                     Button::new("nodes-firewall")
-                        .label("System firewall…")
+                        .label(crate::i18n::tr("System firewall…"))
                         .disabled(self.nodes.detail.is_none() || busy)
                         .on_click(cx.listener(|this, _, _, cx| {
                             if let Some(handle) = this.nodes.firewall {
@@ -507,7 +546,7 @@ impl Dashboard {
                 )
                 .child(
                     Button::new("nodes-refresh")
-                        .label("Refresh node inventory")
+                        .label(crate::i18n::tr("Refresh node inventory"))
                         .disabled(current.is_none() || busy)
                         .on_click(cx.listener(|this, _, _, cx| {
                             if let Some(session) = this.nodes.current(&this.backend)

@@ -227,7 +227,7 @@ async fn migration_backfills_bounded_details_and_preserves_unknown_legacy_metada
     let db = rusqlite::Connection::open(&path)?;
     assert_eq!(
         db.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))?,
-        9
+        11
     );
     assert_eq!(
         db.query_row(
@@ -357,6 +357,12 @@ async fn history_exports_quote_data_use_columns_and_preserve_destination_on_fail
         ".preferences.json",
         ".appearance.json",
         ".window.json",
+        ".updates.json",
+        ".reputation.json",
+        ".raw-downloads.json",
+        ".highlighting.json",
+        ".catalogue-policy.json",
+        ".raw-downloads-journal.json",
     ] {
         let reserved = std::path::PathBuf::from(format!("{}{suffix}", path.display()));
         assert!(

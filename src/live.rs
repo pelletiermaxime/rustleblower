@@ -1,5 +1,7 @@
 //! Owned, bounded daemon read tasks. Streaming replies never enter policy commands.
 pub mod model;
+pub mod presentation;
+pub mod table;
 use crate::{
     protocol::{self, Action, NotificationReply},
     rules::Control,

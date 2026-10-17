@@ -22,7 +22,7 @@ use std::{
 };
 #[derive(Clone)]
 enum Source {
-    Catalogue(ExportScope),
+    Catalogue(Box<ExportScope>),
     Draft {
         rules: Arc<Vec<crate::protocol::Rule>>,
         rename_from: Option<String>,
@@ -34,7 +34,14 @@ pub(super) fn open(
     scope: ExportScope,
     cx: &mut App,
 ) -> gpui::Result<AnyWindowHandle> {
-    open_source(backend, Source::Catalogue(scope), None, false, None, cx)
+    open_source(
+        backend,
+        Source::Catalogue(Box::new(scope)),
+        None,
+        false,
+        None,
+        cx,
+    )
 }
 pub(super) fn open_import(backend: Handle, cx: &mut App) -> gpui::Result<AnyWindowHandle> {
     let preferred = backend.status().session.map(|s| s.id);
@@ -79,7 +86,7 @@ fn open_source(
             ))),
             window_min_size: Some(size(px(720.), px(560.))),
             titlebar: Some(TitlebarOptions {
-                title: Some("Rustleblower — rules to nodes".into()),
+                title: Some(crate::i18n::tr("Rustleblower — rules to nodes").into()),
                 ..Default::default()
             }),
             app_id: Some("dev.rustleblower.Rustleblower".into()),
@@ -91,6 +98,7 @@ fn open_source(
             cx.new(|cx| Copies::new(backend, source, preferred, replace, complete, window, cx))
         },
     )?;
+    crate::i18n::register_title(window, "Rustleblower — rules to nodes", cx);
     Ok(window)
 }
 pub(super) struct Copies {
@@ -140,7 +148,11 @@ impl Copies {
         focus.focus(window, cx);
         let path = cx.new(|cx| {
             InputState::new(window, cx)
-                .placeholder("JSON file or rule directory")
+                .placeholder(crate::i18n::placeholder(
+                    "JSON file or rule directory",
+                    window,
+                    cx,
+                ))
                 .validate(|value, _| value.len() <= 4096)
         });
         cx.subscribe(&path, |this, _, event, cx| {
@@ -218,8 +230,9 @@ impl Copies {
             return;
         }
         if matches!(self.source, Source::Import) && self.import_invalid {
-            self.error =
-                Some("Capture valid clipboard text or choose a file path before review".into());
+            self.error = Some(crate::i18n::tr(
+                "Capture valid clipboard text or choose a file path before review",
+            ));
             cx.notify();
             return;
         }
@@ -313,7 +326,7 @@ impl Copies {
             distribute::run(backend, review, progress, engine_stop, tx).await
         });
         cx.spawn_in(window,async move|this,cx|{while rx.changed().await.is_ok(){let progress=rx.borrow_and_update().clone();if this.update_in(cx,|this,_,cx|{this.progress=Some(progress);cx.notify();}).is_err(){stop.store(true,Ordering::Release);}}
-   let progress=task.await;let _=this.update_in(cx,|this,_,cx|{this.busy=false;this.applying=false;this.message=format!("{} copies confirmed. Completed copies remain applied; unfinished targets keep their captured connection and inventory.",progress.confirmed());this.progress=Some(progress);cx.notify();});}).detach();
+   let progress=task.await;let _=this.update_in(cx,|this,_,cx|{this.busy=false;this.applying=false;this.message=crate::i18n::tr_args("%{arg0} copies confirmed. Completed copies remain applied; unfinished targets keep their captured connection and inventory.", &[("arg0", &format!("{}", progress.confirmed()))]);this.progress=Some(progress);cx.notify();});}).detach();
         cx.notify();
     }
     fn copy_rule(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
@@ -366,12 +379,12 @@ impl Copies {
             Some(_) => {
                 self.clipboard = None;
                 self.import_invalid = true;
-                self.error = Some("Clipboard import exceeds 8 MiB".into());
+                self.error = Some(crate::i18n::tr("Clipboard import exceeds 8 MiB"));
             }
             None => {
                 self.clipboard = None;
                 self.import_invalid = true;
-                self.error = Some("The clipboard has no rule JSON text".into());
+                self.error = Some(crate::i18n::tr("The clipboard has no rule JSON text"));
             }
         }
         cx.notify();
@@ -401,7 +414,12 @@ impl Copies {
                         }
                     }
                     Ok(Ok(None)) => {}
-                    other => this.error = Some(format!("Cannot choose import path: {other:?}")),
+                    other => {
+                        this.error = Some(crate::i18n::tr_args(
+                            "Cannot choose import path: %{other}",
+                            &[("other", &format!("{:?}", other))],
+                        ))
+                    }
                 }
                 cx.notify();
             });
@@ -411,7 +429,10 @@ impl Copies {
     }
     fn source_label(&self) -> String {
         match &self.source {
-            Source::Catalogue(scope) => format!("Source: {}", scope.query.node),
+            Source::Catalogue(scope) => crate::i18n::tr_args(
+                "Source: %{arg0}",
+                &[("arg0", &scope.query.node.to_string())],
+            ),
             Source::Draft { .. } => {
                 "Unsaved rule draft; choose every node that should receive it.".into()
             }
@@ -431,16 +452,7 @@ impl Copies {
                 .iter()
                 .zip(&progress.targets)
                 .map(|(target, p)| {
-                    format!(
-                        "{}: {}; {} confirmed; {} skipped; {} originals removed; {}/{} processed",
-                        target.destination.name,
-                        p.status.label(),
-                        p.confirmed,
-                        p.skipped,
-                        p.removed,
-                        p.next,
-                        review.rules.len()
-                    )
+                    crate::i18n::tr_args("%{arg0}: %{arg1}; %{arg2} confirmed; %{arg3} skipped; %{arg4} originals removed; %{arg5}/%{arg6} processed", &[("arg0", &target.destination.name.to_string()), ("arg1", &crate::i18n::tr(&p.status.label()).to_string()), ("arg2", &format!("{}", p.confirmed)), ("arg3", &format!("{}", p.skipped)), ("arg4", &format!("{}", p.removed)), ("arg5", &format!("{}", p.next)), ("arg6", &format!("{}", review.rules.len()))])
                 })
                 .collect::<Vec<_>>()
                 .join("\n");
@@ -465,11 +477,11 @@ impl Render for Copies {
         let busy = self.busy;
         let mut body = div().flex_1().min_h_0().px_5().flex().flex_col().gap_3();
         if let Some(review) = &self.review {
-            body=body.child(format!("{} source rules from {} · {} destinations · {}",review.rules.len(),review.source,review.targets.len(),if review.replace{"Replace conflicting confirmed names"}else{"Skip existing names"}))
-    .when_some(review.rename_from.as_ref(),|v,old|v.child(format!("Rename: confirm {} first, then remove {} on each destination where it exists.",review.rules[0].name,old)))
-    .child(div().text_sm().text_color(muted).child("The captured source data stays unchanged. Paths, users and networks retain their exact source values on each destination. Identical rules and names awaiting observation are always skipped. No cross-node rollback is possible."))
-    .child(div().flex().gap_2().child(Button::new("copy-destinations-tab").label("Destinations & results").selected(!self.rules_tab).on_click(cx.listener(|this,_,_,cx|{this.rules_tab=false;cx.notify();})))
-      .child(Button::new("copy-rules-tab").label("Source rules").selected(self.rules_tab).on_click(cx.listener(|this,_,_,cx|{this.rules_tab=true;cx.notify();}))));
+            body=body.child(crate::i18n::tr_args("%{arg0} source rules from %{arg1} · %{arg2} destinations · %{arg3}", &[("arg0", &(review.rules.len()).to_string()), ("arg1", &(review.source).to_string()), ("arg2", &(review.targets.len()).to_string()), ("arg3", (if review.replace{"Replace conflicting confirmed names"}else{"Skip existing names"}))]))
+    .when_some(review.rename_from.as_ref(),|v,old|v.child(crate::i18n::tr_args("Rename: confirm %{arg0} first, then remove %{arg1} on each destination where it exists.", &[("arg0", &(review.rules[0].name).to_string()), ("arg1", &(old).to_string())])))
+    .child(div().text_sm().text_color(muted).child(crate::i18n::tr("The captured source data stays unchanged. Paths, users and networks retain their exact source values on each destination. Identical rules and names awaiting observation are always skipped. No cross-node rollback is possible.")))
+    .child(div().flex().gap_2().child(Button::new("copy-destinations-tab").label(crate::i18n::tr("Destinations & results")).selected(!self.rules_tab).on_click(cx.listener(|this,_,_,cx|{this.rules_tab=false;cx.notify();})))
+      .child(Button::new("copy-rules-tab").label(crate::i18n::tr("Source rules")).selected(self.rules_tab).on_click(cx.listener(|this,_,_,cx|{this.rules_tab=true;cx.notify();}))));
             let count = if self.rules_tab {
                 review.rules.len()
             } else {
@@ -477,14 +489,14 @@ impl Render for Copies {
             };
             let rows=uniform_list("copy-review",count,cx.processor(|this,range:std::ops::Range<usize>,_,cx|range.map(|index|{
     let review=this.review.as_ref().unwrap();let row=div().w_full().h(px(100.)).px_3().py_2().border_b_1().border_color(cx.theme().border).flex().flex_col().gap_1();
-    if this.rules_tab {let rule=&review.rules[index];row.child(div().flex().justify_between().child(div().flex_1().truncate().child(rule.name.clone())).child(Button::new(("copy-source-json",index)).label("Copy full JSON").disabled(this.busy).on_click(cx.listener(move|this,_,window,cx|this.copy_rule(index,window,cx)))))
+    if this.rules_tab {let rule=&review.rules[index];row.child(div().flex().justify_between().child(div().flex_1().truncate().child(rule.name.clone())).child(Button::new(("copy-source-json",index)).label(crate::i18n::tr("Copy full JSON")).disabled(this.busy).on_click(cx.listener(move|this,_,window,cx|this.copy_rule(index,window,cx)))))
      .child(format!("{} · {} · {}",rule.action,rule.duration,if rule.enabled{"enabled"}else{"disabled"})).child(div().text_sm().truncate().child(rule.operator.as_ref().map(|op|format!("{} · {} · {}",op.r#type,op.operand,op.data)).unwrap_or_default()))
-    }else{let target=&review.targets[index];let progress=this.progress.as_ref().map(|p|&p.targets[index]);row.child(target.destination.name.clone()).child(format!("{} to apply · {} conflicts skipped · {} identical · {} awaiting · {} original removals",target.copies,target.existing,target.identical,target.awaiting,target.rename_removals))
-     .child(div().text_sm().truncate().child(if let Some(reason)=&target.blocked{format!("Blocked: {reason}")}else if let Some(p)=progress{format!("{} · {} confirmed · {} skipped · {} originals removed · {}/{} processed",p.status.label(),p.confirmed,p.skipped,p.removed,p.next,review.rules.len())}else{"Ready".into()}))}
+    }else{let target=&review.targets[index];let progress=this.progress.as_ref().map(|p|&p.targets[index]);row.child(target.destination.name.clone()).child(crate::i18n::tr_args("%{arg0} to apply · %{arg1} conflicts skipped · %{arg2} identical · %{arg3} awaiting · %{arg4} original removals", &[("arg0", &(target.copies).to_string()), ("arg1", &(target.existing).to_string()), ("arg2", &(target.identical).to_string()), ("arg3", &(target.awaiting).to_string()), ("arg4", &(target.rename_removals).to_string())]))
+     .child(div().text_sm().truncate().child(if let Some(reason)=&target.blocked{crate::i18n::tr_args("Blocked: %{reason}", &[("reason", &reason.to_string())])}else if let Some(p)=progress{crate::i18n::tr_args("%{arg0} · %{arg1} confirmed · %{arg2} skipped · %{arg3} originals removed · %{arg4}/%{arg5} processed", &[("arg0", &crate::i18n::tr(&p.status.label()).to_string()), ("arg1", &format!("{}", p.confirmed)), ("arg2", &format!("{}", p.skipped)), ("arg3", &format!("{}", p.removed)), ("arg4", &format!("{}", p.next)), ("arg5", &format!("{}", review.rules.len()))])}else{crate::i18n::tr("Ready")}))}
    }).collect::<Vec<_>>())).w_full().flex_1().min_h_0();
             body = body.child(rows);
         } else {
-            body = body.child(self.source_label());
+            body = body.child(crate::i18n::presentation(&self.source_label()));
             if matches!(self.source, Source::Import) {
                 body = body
                     .child(Input::new(&self.path).id("copy-import-path").disabled(busy))
@@ -494,7 +506,7 @@ impl Render for Copies {
                             .gap_2()
                             .child(
                                 Button::new("copy-import-browse")
-                                    .label("Choose file / directory…")
+                                    .label(crate::i18n::tr("Choose file / directory…"))
                                     .disabled(busy)
                                     .on_click(
                                         cx.listener(|this, _, window, cx| this.browse(window, cx)),
@@ -502,7 +514,7 @@ impl Render for Copies {
                             )
                             .child(
                                 Button::new("copy-import-clipboard")
-                                    .label("Capture clipboard")
+                                    .label(crate::i18n::tr("Capture clipboard"))
                                     .disabled(busy)
                                     .on_click(
                                         cx.listener(|this, _, _, cx| this.capture_clipboard(cx)),
@@ -510,7 +522,7 @@ impl Render for Copies {
                             )
                             .child(
                                 Button::new("copy-import-use-path")
-                                    .label("Use file path")
+                                    .label(crate::i18n::tr("Use file path"))
                                     .disabled(busy)
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         this.clipboard = None;
@@ -525,7 +537,9 @@ impl Render for Copies {
             if let Source::Catalogue(scope) = &self.source {
                 body = body.child(
                     Checkbox::new("copy-all-rules")
-                        .label("Copy every rule matching the captured filter, across all pages")
+                        .label(crate::i18n::tr(
+                            "Copy every rule matching the captured filter, across all pages",
+                        ))
                         .checked(self.all)
                         .disabled(busy || scope.names.is_none())
                         .on_change(cx.listener(|this, value: &bool, _, cx| {
@@ -535,9 +549,9 @@ impl Render for Copies {
                 );
             }
             body=body
-    .child(Checkbox::new("copy-replace").label("Replace conflicting confirmed names on the destinations").checked(self.replace).disabled(busy).on_change(cx.listener(|this,value:&bool,_,cx|{this.replace = *value;cx.notify();})))
-    .child(div().flex().gap_2().child(Button::new("copy-refresh-nodes").label("Refresh destinations").disabled(busy).on_click(cx.listener(|this,_,_,cx|{this.refresh();cx.notify();}))).child(Button::new("copy-select-all").label("Select all destinations").disabled(busy).on_click(cx.listener(|this,_,_,cx|{this.selected=this.nodes.iter().map(|d|d.session).collect();cx.notify();}))))
-    .child(format!("{} selected destinations. Rule values are copied exactly; review paths and user IDs for each destination.",self.selected.len()));
+    .child(Checkbox::new("copy-replace").label(crate::i18n::tr("Replace conflicting confirmed names on the destinations")).checked(self.replace).disabled(busy).on_change(cx.listener(|this,value:&bool,_,cx|{this.replace = *value;cx.notify();})))
+    .child(div().flex().gap_2().child(Button::new("copy-refresh-nodes").label(crate::i18n::tr("Refresh destinations")).disabled(busy).on_click(cx.listener(|this,_,_,cx|{this.refresh();cx.notify();}))).child(Button::new("copy-select-all").label(crate::i18n::tr("Select all destinations")).disabled(busy).on_click(cx.listener(|this,_,_,cx|{this.selected=this.nodes.iter().map(|d|d.session).collect();cx.notify();}))))
+    .child(crate::i18n::tr_args("%{arg0} selected destinations. Rule values are copied exactly; review paths and user IDs for each destination.", &[("arg0", &(self.selected.len()).to_string())]));
             let rows = uniform_list(
                 "copy-destinations",
                 self.nodes.len(),
@@ -569,7 +583,9 @@ impl Render for Copies {
             .min_h_0();
             body = body
                 .when(self.nodes.is_empty(), |v| {
-                    v.child("Connect another node to choose a copy destination.")
+                    v.child(crate::i18n::tr(
+                        "Connect another node to choose a copy destination.",
+                    ))
                 })
                 .child(rows);
         }
@@ -592,15 +608,21 @@ impl Render for Copies {
                     .border_color(border)
                     .text_lg()
                     .child(match self.source {
-                        Source::Catalogue(_) => "Copy application rules to nodes",
-                        Source::Draft { .. } => "Apply rule draft to nodes",
-                        Source::Import => "Import application rules to nodes",
+                        Source::Catalogue(_) => crate::i18n::tr("Copy application rules to nodes"),
+                        Source::Draft { .. } => crate::i18n::tr("Apply rule draft to nodes"),
+                        Source::Import => crate::i18n::tr("Import application rules to nodes"),
                     }),
             )
             .when_some(self.error.clone(), |v, error| {
                 v.child(super::banner(error, cx))
             })
-            .child(div().px_5().py_2().text_sm().child(self.message.clone()))
+            .child(
+                div()
+                    .px_5()
+                    .py_2()
+                    .text_sm()
+                    .child(crate::i18n::presentation(&self.message)),
+            )
             .child(body)
             .child(
                 div()
@@ -614,7 +636,7 @@ impl Render for Copies {
                     .when(self.applying, |v| {
                         v.child(
                             Button::new("copy-stop")
-                                .label("Stop after current reply")
+                                .label(crate::i18n::tr("Stop after current reply"))
                                 .on_click(cx.listener(|this, _, _, cx| {
                                     this.stop.store(true, Ordering::Release);
                                     cx.notify();
@@ -624,7 +646,7 @@ impl Render for Copies {
                     .when(self.review.is_some(), |v| {
                         v.child(
                             Button::new("copy-back")
-                                .label("Change destinations or rebuild")
+                                .label(crate::i18n::tr("Change destinations or rebuild"))
                                 .disabled(busy)
                                 .on_click(cx.listener(|this, _, _, cx| {
                                     this.review = None;
@@ -638,20 +660,20 @@ impl Render for Copies {
                     .when(self.review.is_some(), |v| {
                         v.child(
                             Button::new("copy-results")
-                                .label("Copy results")
+                                .label(crate::i18n::tr("Copy results"))
                                 .on_click(cx.listener(|this, _, _, cx| this.copy_results(cx))),
                         )
                     })
                     .child(
                         Button::new("copy-close")
-                            .label("Close")
+                            .label(crate::i18n::tr("Close"))
                             .disabled(busy)
                             .on_click(cx.listener(|_, _, window, _| window.remove_window())),
                     )
                     .when(self.review.is_none(), |v| {
                         v.child(
                             Button::new("copy-review-button")
-                                .label("Review copy")
+                                .label(crate::i18n::tr("Review copy"))
                                 .disabled(busy || self.selected.is_empty() || self.import_invalid)
                                 .on_click(
                                     cx.listener(|this, _, window, cx| this.prepare(window, cx)),
@@ -665,9 +687,9 @@ impl Render for Copies {
                                     if self.progress.as_ref().is_some_and(|p| {
                                         p.targets.iter().any(|p| p.status != Status::Ready)
                                     }) {
-                                        "Continue unfinished copies"
+                                        crate::i18n::tr("Continue unfinished copies")
                                     } else {
-                                        "Copy reviewed rules"
+                                        crate::i18n::tr("Copy reviewed rules")
                                     },
                                 )
                                 .disabled(busy || !resumable)

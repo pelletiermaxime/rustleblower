@@ -4,7 +4,7 @@
 
 SHOW_ALERT emits a desktop notification independently of archival and permission
 handling. SAVE_TO_DB and NONE do not notify. The Popup preferences checkbox
-"Desktop notifications for daemon alerts" stages the change until Save; closing
+"Desktop notifications" stages the change until Save; closing
 without saving leaves the active setting unchanged. Legacy preferences default
 it on. Disabling notifications leaves permission popups and archive recording
 unchanged and closes the worker's current known notice.
@@ -24,7 +24,7 @@ Installed OpenSnitch 1.7.2 `service.py::_on_new_alert` and `notifications.py::sh
 define severity, urgency and opening behavior. The pinned Kit has in-app notices;
 the pinned GPUI Linux system API spawns a waiting thread per notice, has no urgency
 field and cannot retract by tag. This feature instead uses the already-resolved
-zbus 5.19.0 through one background worker. No new GPUI backend is introduced.
+zbus 6 through one background worker. No new GPUI backend is introduced.
 
 Eight queued summaries (512 bytes plus a 128-byte node), one latest pending notice,
 one known active notification and one pending open action bound retained state.
@@ -58,9 +58,67 @@ Old binaries reject version 4. Invalid booleans fail explicitly; the existing
 - `python scripts/verify-headless.py --feature desktop-notifications`: actual
   checkbox/save and independent file reopen, archive while muted, restored Alerts
   after a synthetic notification callback with main window absent, and actual
-  permission input plus real RPC reply. Four screenshots and scoped cleanup.
+  permission input plus real RPC reply. Nine screenshots and scoped cleanup, including the subscription editor and Blocklists action.
 
 Private D-Bus protocol proof and GPUI callback/input proof are separate. Neither
 proves host compositor banner rendering or a physical notification pointer click.
 Permission notification alternatives/actions, other desktop lifecycle notifications
 and all upstream per-rule settings remain separate parity work.
+
+
+## Subscription results
+
+Blocklists → Notifications configures source-compatible `notify` success/error
+messages. Empty messages use the subscription name/status or failure text;
+non-object source config disables notices. Disabling clears custom messages.
+Enabled saves preserve unknown keys; stale source-template revisions refuse a
+save, and import/export retain the configuration under existing metadata bounds.
+Normal committed manual/automatic downloads post updated/304/error results;
+cancelled, stale or removed work and URL probes stay quiet. Manual-result notices
+are a native extension of the pinned source's scheduled callback.
+
+The same bounded worker/global toggle handles both kinds. Subscription actions
+open Blocklists, Alert actions open Alerts, including hidden-dashboard restore.
+The active ID's kind is checked on every signal, including reused IDs. Neither
+kind answers prompts. See [implementation contract](../../../../docs/subscription-notifications-plan.md).
+Four focused config/worker cases pass with owned HTTP200/304/404, source
+preservation/stale refusal and cancelled/stale/probe silence. Private D-Bus
+target checks also pass on the combined build; logs are
+`.verification/subscription-notifications-core.log` and
+`.verification/subscription-notifications-dbus-current.log`. The nine-frame journey passes under
+`.verification/headless/20261017T022211Z-996e1089` with actual editor controls,
+save/reopen/Back, external revision refusal, reload/Ctrl+Enter, disable-clear,
+separate hidden Alerts/Blocklists actions and an input-driven permission reply.
+Callbacks are synthetic; HTTP/private-bus tests cover production separately.
+A later copy-only cleanup removed protocol jargon without changing behavior.
+The later sixteen-frame combined journey below includes that copy.
+
+
+## Missed permission popups
+
+Popup preferences has a Missed popups tab with a separate notification toggle,
+editable template, preview and default reset. The source-compatible default is
+`%rule.action% action applied %node.addr%` followed by `Command line: %conn.process_args%`.
+The input encodes newlines as `\n`, tabs as `\t` and backslashes as `\\`;
+malformed escapes refuse the complete save. Only an unanswered AskRule timeout
+posts a notice; the captured fallback rule determines the action, while current
+notification preferences determine immediate mute and template. The shared
+general toggle and bounded mailbox still apply. The action opens Application
+rules and preserves permission handling independently.
+
+Four focused missed-popup cases and four existing preference regressions pass
+in `.verification/missed-popups-core2.log`, including actual owned gRPC timeout,
+current settings, saturation and UTF-8/template limits. Private D-Bus proof in
+`.verification/missed-popups-dbus.log` passes Rules action routing, stale-kind
+refusal and same-ID replacement across notice kinds.
+
+The combined `--feature desktop-notifications` journey passed sixteen background
+GPU/input frames in `.verification/headless/20261017T024155Z-6f0736eb/result.json`.
+Frames 10–16 cover actual default/custom escaped input/preview/save/reopen,
+per-type mute, whole-save preservation after invalid escape, reset/re-enable,
+and hidden Application rules restoration while a second real AskRule receives
+an input-driven Deny once reply. Callback delivery in the GPU journey is
+synthetic; core and private-bus tests prove production emission and transport
+separately. All PNGs and owned socket/process cleanup pass. Aggregate/source
+hashes: `.verification/missed-popups-result.json`. Host desktop banner/panel
+clicks and native compositor behavior remain separate proof.

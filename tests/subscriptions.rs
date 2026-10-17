@@ -431,6 +431,7 @@ async fn automatic_updates_wait_for_local_node_and_permissions_remain_independen
     let http = Http::start().await?;
     let dir = tempfile::tempdir()?;
     let options = Config {
+        transport: Default::default(),
         socket: dir.path().join("ui.sock"),
         database: dir.path().join("history.sqlite3"),
         prompt_timeout: 30,
@@ -523,6 +524,7 @@ async fn unavailable_subscription_storage_does_not_prevent_grpc_or_permissions()
         "owned unavailable fixture",
     )?;
     let options = Config {
+        transport: Default::default(),
         socket: dir.path().join("ui.sock"),
         database: dir.path().join("history.sqlite3"),
         prompt_timeout: 30,
@@ -795,6 +797,7 @@ async fn attached_rule_inspection_scans_full_confirmed_catalogue_and_preserves_n
     };
     let dir = tempfile::tempdir()?;
     let options = Config {
+        transport: Default::default(),
         socket: dir.path().join("ui.sock"),
         database: dir.path().join("history.sqlite3"),
         prompt_timeout: 30,
@@ -1089,6 +1092,7 @@ async fn unknown_collection_pointer_is_preserved_and_does_not_stop_grpc() -> Res
     let pointer = root.join("collections/current");
     std::fs::write(&pointer, "unrelated file")?;
     let options = Config {
+        transport: Default::default(),
         socket: dir.path().join("ui.sock"),
         database: dir.path().join("history.sqlite3"),
         prompt_timeout: 30,
@@ -1216,8 +1220,8 @@ async fn bulk_frozen_global_scope_stale_guard_and_sql_rollback_preserve_all_meta
         enabled: Some(false),
         groups: Groups::Add(vec!["New Group".into()]),
         interval: Some(None),
-        timeout: Some(Some(123)),
-        max_bytes: Some(Some(4096)),
+        timeout: Some(Some(subscriptions::limits::Override::Absolute(123))),
+        max_bytes: Some(Some(subscriptions::limits::Override::Absolute(4096))),
         ..Default::default()
     };
     let review = bulk_review(&h, Scope::Matching("Bulk".into()), patch.clone()).await?;
@@ -1423,6 +1427,7 @@ async fn permissions_reply_while_a_real_bulk_sql_transaction_is_busy() -> Result
     use subscriptions::bulk::{Patch, Scope};
     let dir = tempfile::tempdir()?;
     let options = Config {
+        transport: Default::default(),
         socket: dir.path().join("ui.sock"),
         database: dir.path().join("history.sqlite3"),
         prompt_timeout: 30,

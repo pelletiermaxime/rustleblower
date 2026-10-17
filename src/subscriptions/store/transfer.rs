@@ -52,7 +52,7 @@ fn legacy_record(template: &Value, record: &Value, base: &Settings) -> Option<(S
             .clone(),
     ))
 }
-fn metadata_usage(db: &Connection) -> Result<i64, String> {
+pub(super) fn metadata_usage(db: &Connection) -> Result<i64, String> {
     let (bytes,bound,archived):(i64,usize,usize)=db.query_row("SELECT (SELECT coalesce(sum(length(CAST(record AS BLOB))),0) FROM subscription_source_metadata)+(SELECT coalesce(sum(length(CAST(record AS BLOB))),0) FROM subscription_metadata_archive)+(SELECT length(CAST(template AS BLOB)) FROM subscription_interchange WHERE id=1),(SELECT count(*) FROM subscription_source_metadata),(SELECT count(*) FROM subscription_metadata_archive)",[],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).map_err(|e|e.to_string())?;
     if bytes > data::MAX_DOCUMENT as i64 || bound > MAX_RECORDS || archived > MAX_RECORDS {
         return Err("Retained source metadata exceeds 2 MiB or 256 records per table".into());

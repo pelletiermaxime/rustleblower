@@ -90,7 +90,9 @@ impl Probe {
         }
         self.due = Instant::now() + Duration::from_secs(1);
         if !backend.history.health.catalogues.ready(session) {
-            self.error = Some("Waiting for this daemon's saved rule inventory".into());
+            self.error = Some(crate::i18n::tr(
+                "Waiting for this daemon's saved rule inventory",
+            ));
             return;
         }
         let Some(node) = backend.session(session) else {
@@ -145,7 +147,7 @@ pub(super) fn open(
             ))),
             window_min_size: Some(size(px(700.), px(600.))),
             titlebar: Some(TitlebarOptions {
-                title: Some("Rustleblower — checksum review".into()),
+                title: Some(crate::i18n::tr("Rustleblower — checksum review").into()),
                 ..Default::default()
             }),
             app_id: Some("dev.rustleblower.Rustleblower".into()),
@@ -155,6 +157,7 @@ pub(super) fn open(
         cx,
         move |window, cx| cx.new(|cx| Review::new(backend, session, node, context, window, cx)),
     )?;
+    crate::i18n::register_title(handle, "Rustleblower — checksum review", cx);
     cx.set_global(OpenReview { handle, prompt });
     Ok(())
 }
@@ -267,9 +270,9 @@ impl Review {
 
     fn fail(&mut self, error: String) {
         if let Some(job) = self.job.take() {
-            self.message = Some(format!(
-                "{} update(s) confirmed before stopping. Reload to review the remaining rules.",
-                job.updated
+            self.message = Some(crate::i18n::tr_args(
+                "%{arg0} update(s) confirmed before stopping. Reload to review the remaining rules.",
+                &[("arg0", &format!("{}", job.updated))],
             ));
         }
         self.queue.clear();
@@ -388,14 +391,19 @@ impl Review {
         }
         if let Some(job) = self.job.as_ref() {
             if job.stop || (self.queue.is_empty() && !(job.all && job.more)) {
-                self.message = Some(format!(
-                    "{} update(s) confirmed.{} Permission decisions remain separate.",
-                    job.updated,
-                    if job.stop {
-                        " Stopped before sending further updates."
-                    } else {
-                        ""
-                    }
+                self.message = Some(crate::i18n::tr_args(
+                    "%{arg0} update(s) confirmed.%{arg1} Permission decisions remain separate.",
+                    &[
+                        ("arg0", &format!("{}", job.updated)),
+                        (
+                            "arg1",
+                            (if job.stop {
+                                " Stopped before sending further updates."
+                            } else {
+                                ""
+                            }),
+                        ),
+                    ],
                 ));
                 self.job = None;
                 self.queue.clear();
@@ -457,12 +465,7 @@ impl Render for Review {
                                     div()
                                         .text_xs()
                                         .text_color(cx.theme().muted_foreground)
-                                        .child(format!(
-                                            "{} · {} · {} changed checksum condition(s)",
-                                            rule.action,
-                                            rule.duration,
-                                            this.page.changes[index].differences.len()
-                                        )),
+                                        .child(crate::i18n::tr_args("%{arg0} · %{arg1} · %{arg2} changed checksum condition(s)", &[("arg0", &(rule.action).to_string()), ("arg1", &(rule.duration).to_string()), ("arg2", &(this.page.changes[index].differences.len()).to_string())])),
                                 ),
                             )
                             .on_click(cx.listener(move |this, _, _, cx| {
@@ -480,24 +483,26 @@ impl Render for Review {
         .w_full();
         let selected = self.selected.and_then(|index| self.page.changes.get(index));
         let mut body = div().size_full().p_5().flex().flex_col().gap_3().track_focus(&self.focus).bg(cx.theme().background).text_color(cx.theme().foreground)
-            .child(div().text_xl().child("Executable checksum changes"))
+            .child(div().text_xl().child(crate::i18n::tr("Executable checksum changes")))
             .child(div().text_sm().child(format!("{} · {}", self.node, self.context.process)))
-            .child(div().text_sm().child("Saved checksums differ from this request's reported binary. Updating trusts the reported checksum and preserves the rule's other settings. It does not answer the pending connection."))
+            .child(div().text_sm().child(crate::i18n::tr("Saved checksums differ from this request's reported binary. Updating trusts the reported checksum and preserves the rule's other settings. It does not answer the pending connection.")))
             .when(!online, |body| body.child(super::banner("Updates require this daemon's connected, confirmed rule inventory.".into(), cx)))
             .when_some(self.error.clone(), |body, error| body.child(super::banner(error, cx)))
-            .when_some(self.message.clone(), |body, message| body.child(div().text_sm().child(message)))
+            .when_some(self.message.clone(), |body, message| body.child(div().text_sm().child(crate::i18n::presentation(&message))))
             .child(div().flex().gap_3()
-                .child(Button::new("checksum-reload").label("First page / reload").disabled(busy || self.query.is_some()).on_click(cx.listener(|this, _, _, cx| { this.browse_after.clear(); this.dirty = true; this.plan = None; cx.notify(); })))
-                .child(Button::new("checksum-next").label("Next page").disabled(busy || self.query.is_some() || !self.page.has_more).on_click(cx.listener(|this, _, _, cx| { this.browse_after = this.page.after.clone(); this.dirty = true; this.plan = None; cx.notify(); }))))
+                .child(Button::new("checksum-reload").label(crate::i18n::tr("First page / reload")).disabled(busy || self.query.is_some()).on_click(cx.listener(|this, _, _, cx| { this.browse_after.clear(); this.dirty = true; this.plan = None; cx.notify(); })))
+                .child(Button::new("checksum-next").label(crate::i18n::tr("Next page")).disabled(busy || self.query.is_some() || !self.page.has_more).on_click(cx.listener(|this, _, _, cx| { this.browse_after = this.page.after.clone(); this.dirty = true; this.plan = None; cx.notify(); }))))
             .child(rows);
         if self.page.changes.is_empty() {
             body = body.child(
                 div()
                     .text_sm()
                     .child(if self.query.is_some() || self.dirty {
-                        "Checking saved rules…"
+                        crate::i18n::tr("Checking saved rules…")
                     } else {
-                        "No changed reported checksums in enabled rules for this executable."
+                        crate::i18n::tr(
+                            "No changed reported checksums in enabled rules for this executable.",
+                        )
                     }),
             );
         }
@@ -516,15 +521,24 @@ impl Render for Review {
                                     .flex()
                                     .flex_col()
                                     .child(div().text_sm().child(d.operand.clone()))
-                                    .child(div().text_xs().child(format!(
-                                        "Saved: {}",
-                                        crate::history::bounded(&d.expected, 1024)
-                                    )))
+                                    .child(
+                                        div().text_xs().child(crate::i18n::tr_args(
+                                            "Saved: %{arg0}",
+                                            &[(
+                                                "arg0",
+                                                &(crate::history::bounded(&d.expected, 1024))
+                                                    .to_string(),
+                                            )],
+                                        )),
+                                    )
                                     .child(
                                         div()
                                             .text_xs()
                                             .text_color(cx.theme().muted_foreground)
-                                            .child(format!("Reported: {}", d.reported)),
+                                            .child(crate::i18n::tr_args(
+                                                "Reported: %{arg0}",
+                                                &[("arg0", &(d.reported).to_string())],
+                                            )),
                                     )
                             })
                             .collect::<Vec<_>>()
@@ -535,19 +549,24 @@ impl Render for Review {
             );
         }
         if self.plan.is_some() {
-            body = body.child(div().text_sm().child(if matches!(self.plan, Some(Plan::All)) { "Update every changed checksum rule for this executable across all pages? Commands are sent one at a time and stop on failure." } else { "Update the selected rule with the reported checksum(s)?" }))
-                .child(div().flex().gap_3().child(Button::new("checksum-confirm").label("Confirm checksum update").disabled(!online).on_click(cx.listener(|this, _, _, cx| { this.begin(); cx.notify(); })))
-                    .child(Button::new("checksum-cancel").label("Cancel").on_click(cx.listener(|this, _, _, cx| { this.plan = None; cx.notify(); }))));
+            body = body.child(div().text_sm().child(if matches!(self.plan, Some(Plan::All)) { crate::i18n::tr("Update every changed checksum rule for this executable across all pages? Commands are sent one at a time and stop on failure.") } else { crate::i18n::tr("Update the selected rule with the reported checksum(s)?") }))
+                .child(div().flex().gap_3().child(Button::new("checksum-confirm").label(crate::i18n::tr("Confirm checksum update")).disabled(!online).on_click(cx.listener(|this, _, _, cx| { this.begin(); cx.notify(); })))
+                    .child(Button::new("checksum-cancel").label(crate::i18n::tr("Cancel")).on_click(cx.listener(|this, _, _, cx| { this.plan = None; cx.notify(); }))));
         }
         if let Some(job) = self.job.as_ref() {
-            body = body.child(div().text_sm().child(format!(
-                "{} update(s) confirmed. {}",
-                job.updated,
-                if job.stop {
-                    "Stopping after the in-flight command…"
-                } else {
-                    "Waiting for daemon confirmation…"
-                }
+            body = body.child(div().text_sm().child(crate::i18n::tr_args(
+                "%{arg0} update(s) confirmed. %{arg1}",
+                &[
+                    ("arg0", &(job.updated).to_string()),
+                    (
+                        "arg1",
+                        (if job.stop {
+                            "Stopping after the in-flight command…"
+                        } else {
+                            "Waiting for daemon confirmation…"
+                        }),
+                    ),
+                ],
             )));
         }
         body.child(
@@ -557,7 +576,7 @@ impl Render for Review {
                 .flex_wrap()
                 .child(
                     Button::new("checksum-update-selected")
-                        .label("Update selected…")
+                        .label(crate::i18n::tr("Update selected…"))
                         .disabled(!online || busy || selected.is_none() || self.plan.is_some())
                         .on_click(cx.listener(|this, _, _, cx| {
                             if let Some(change) =
@@ -570,7 +589,7 @@ impl Render for Review {
                 )
                 .child(
                     Button::new("checksum-update-all")
-                        .label("Update all changed rules…")
+                        .label(crate::i18n::tr("Update all changed rules…"))
                         .disabled(
                             !online || busy || self.page.changes.is_empty() || self.plan.is_some(),
                         )
@@ -581,7 +600,7 @@ impl Render for Review {
                 )
                 .child(
                     Button::new("checksum-stop")
-                        .label("Stop")
+                        .label(crate::i18n::tr("Stop"))
                         .disabled(!busy || self.job.as_ref().is_some_and(|job| job.stop))
                         .on_click(cx.listener(|this, _, _, cx| {
                             if let Some(job) = this.job.as_mut() {
@@ -593,7 +612,7 @@ impl Render for Review {
                 )
                 .child(
                     Button::new("checksum-close")
-                        .label("Close")
+                        .label(crate::i18n::tr("Close"))
                         .disabled(busy)
                         .on_click(|_, window, _| window.remove_window()),
                 ),

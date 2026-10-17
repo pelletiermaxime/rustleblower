@@ -29,7 +29,11 @@ impl Files {
         Self {
             path: cx.new(|cx| {
                 InputState::new(window, cx)
-                    .placeholder("JSON/.profile file or profile directory…")
+                    .placeholder(crate::i18n::placeholder(
+                        "JSON/.profile file or profile directory…",
+                        window,
+                        cx,
+                    ))
                     .validate(|text, _| text.len() <= 4096 && !text.contains('\0'))
             }),
             profiles: Vec::new(),
@@ -59,7 +63,10 @@ impl FirewallView {
                         Ok(Ok(Some(path))) => this.set_file_path(&path, window, cx),
                         Ok(Ok(None)) => {}
                         other => {
-                            this.error = Some(format!("Cannot choose an export path: {other:?}"))
+                            this.error = Some(crate::i18n::tr_args(
+                                "Cannot choose an export path: %{other}",
+                                &[("other", &format!("{:?}", other))],
+                            ))
                         }
                     }
                     cx.notify();
@@ -85,7 +92,10 @@ impl FirewallView {
                         }
                         Ok(Ok(None)) => {}
                         other => {
-                            this.error = Some(format!("Cannot choose a firewall path: {other:?}"))
+                            this.error = Some(crate::i18n::tr_args(
+                                "Cannot choose a firewall path: %{other}",
+                                &[("other", &format!("{:?}", other))],
+                            ))
                         }
                     }
                     cx.notify();
@@ -103,7 +113,7 @@ impl FirewallView {
             Some(value) => self.files.path.update(cx, |input, cx| {
                 input.set_value(value.to_owned(), window, cx)
             }),
-            None => self.error = Some("Choose a UTF-8 path of at most 4096 bytes".into()),
+            None => self.error = Some(crate::i18n::tr("Choose a UTF-8 path of at most 4096 bytes")),
         }
     }
     fn file_operation(
@@ -190,11 +200,11 @@ impl FirewallView {
                             if this.chain.is_none_or(|(g,c)|this.loaded.as_ref().is_none_or(|l|l.document.chain(g,c).is_none())) {
                                 this.chain=this.loaded.as_ref().and_then(|l|l.document.system_rules.iter().enumerate().find_map(|(g,group)|(!group.chains.is_empty()).then_some((g,0))));
                             }
-                            this.message=Some("File/profile changes kept in the local draft. Review and Apply sends the complete configuration.".into());
+                            this.message=Some(crate::i18n::tr("File/profile changes kept in the local draft. Review and Apply sends the complete configuration."));
                     },
-                    Ok(Outcome::Written)=>this.message=Some("Export saved to a new file; daemon unchanged".into()),
-                    Ok(Outcome::Clipboard(text))=>{cx.write_to_clipboard(ClipboardItem::new_string(text));this.message=Some("Selected chain copied as a complete profile".into());},
-                    Ok(Outcome::Listed(profiles))=>{this.message=Some(format!("{} profile files; select one, then merge or remove its rule IDs",profiles.len()));this.files.profiles=profiles;this.files.offset=0;},
+                    Ok(Outcome::Written)=>this.message=Some(crate::i18n::tr("Export saved to a new file; daemon unchanged")),
+                    Ok(Outcome::Clipboard(text))=>{cx.write_to_clipboard(ClipboardItem::new_string(text));this.message=Some(crate::i18n::tr("Selected chain copied as a complete profile"));},
+                    Ok(Outcome::Listed(profiles))=>{this.message=Some(crate::i18n::tr_args("%{arg0} profile files; select one, then merge or remove its rule IDs", &[("arg0", &format!("{}", profiles.len()))]));this.files.profiles=profiles;this.files.offset=0;},
                     Err(error)=>this.error=Some(error),
                 }
                 this.focus.focus(window,cx);cx.notify();
@@ -207,21 +217,21 @@ impl FirewallView {
         let read_only = disabled || !self.writable();
         let selected = self.chain.is_some();
         let mut view=div().flex_1().min_h_0().flex().flex_col().gap_2()
-            .child(div().text_sm().child("Configuration imports replace the local draft. Profiles match table/family/type/hook, set its policy and append nonduplicate rules. Removing a profile removes matching rule IDs and preserves policy. Review every change before Apply."))
+            .child(div().text_sm().child(crate::i18n::tr("Configuration imports replace the local draft. Profiles match table/family/type/hook, set its policy and append nonduplicate rules. Removing a profile removes matching rule IDs and preserves policy. Review every change before Apply.")))
             .child(Input::new(&self.files.path).id("fw-file-path").disabled(disabled))
             .child(div().flex().gap_2()
-                .child(Button::new("fw-file-browse").label("Choose file…").disabled(disabled).on_click(cx.listener(|this,_,window,cx|this.file_prompt(false,false,window,cx))))
-                .child(Button::new("fw-file-save-path").label("Choose export path…").disabled(disabled).on_click(cx.listener(|this,_,window,cx|this.file_prompt(true,false,window,cx))))
-                .child(Button::new("fw-profile-directory").label("Choose profile folder…").disabled(disabled).on_click(cx.listener(|this,_,window,cx|this.file_prompt(false,true,window,cx)))))
+                .child(Button::new("fw-file-browse").label(crate::i18n::tr("Choose file…")).disabled(disabled).on_click(cx.listener(|this,_,window,cx|this.file_prompt(false,false,window,cx))))
+                .child(Button::new("fw-file-save-path").label(crate::i18n::tr("Choose export path…")).disabled(disabled).on_click(cx.listener(|this,_,window,cx|this.file_prompt(true,false,window,cx))))
+                .child(Button::new("fw-profile-directory").label(crate::i18n::tr("Choose profile folder…")).disabled(disabled).on_click(cx.listener(|this,_,window,cx|this.file_prompt(false,true,window,cx)))))
             .child(div().flex().gap_2()
-                .child(Button::new("fw-file-load").label("Load configuration into draft").disabled(read_only).on_click(cx.listener(|this,_,window,cx|this.file_operation(Operation::Load,window,cx))))
-                .child(Button::new("fw-profile-merge").label("Merge profile into draft").disabled(read_only).on_click(cx.listener(|this,_,window,cx|this.file_operation(Operation::Merge,window,cx))))
-                .child(Button::new("fw-profile-remove").label("Remove profile rule IDs").disabled(read_only).on_click(cx.listener(|this,_,window,cx|this.file_operation(Operation::Remove,window,cx)))))
+                .child(Button::new("fw-file-load").label(crate::i18n::tr("Load configuration into draft")).disabled(read_only).on_click(cx.listener(|this,_,window,cx|this.file_operation(Operation::Load,window,cx))))
+                .child(Button::new("fw-profile-merge").label(crate::i18n::tr("Merge profile into draft")).disabled(read_only).on_click(cx.listener(|this,_,window,cx|this.file_operation(Operation::Merge,window,cx))))
+                .child(Button::new("fw-profile-remove").label(crate::i18n::tr("Remove profile rule IDs")).disabled(read_only).on_click(cx.listener(|this,_,window,cx|this.file_operation(Operation::Remove,window,cx)))))
             .child(div().flex().gap_2()
-                .child(Button::new("fw-file-export").label("Export full draft").disabled(disabled).on_click(cx.listener(|this,_,window,cx|this.file_operation(Operation::Export,window,cx))))
-                .child(Button::new("fw-profile-export").label("Export selected chain").disabled(disabled||!selected).on_click(cx.listener(|this,_,window,cx|this.file_operation(Operation::ExportProfile,window,cx))))
-                .child(Button::new("fw-profile-copy").label("Copy selected profile").disabled(disabled||!selected).on_click(cx.listener(|this,_,window,cx|this.file_operation(Operation::CopyProfile,window,cx)))))
-            .child(Button::new("fw-profiles-list").label("List profiles in folder (empty path uses OpenSnitch default)").disabled(disabled).on_click(cx.listener(|this,_,window,cx|this.file_operation(Operation::List,window,cx))));
+                .child(Button::new("fw-file-export").label(crate::i18n::tr("Export full draft")).disabled(disabled).on_click(cx.listener(|this,_,window,cx|this.file_operation(Operation::Export,window,cx))))
+                .child(Button::new("fw-profile-export").label(crate::i18n::tr("Export selected chain")).disabled(disabled||!selected).on_click(cx.listener(|this,_,window,cx|this.file_operation(Operation::ExportProfile,window,cx))))
+                .child(Button::new("fw-profile-copy").label(crate::i18n::tr("Copy selected profile")).disabled(disabled||!selected).on_click(cx.listener(|this,_,window,cx|this.file_operation(Operation::CopyProfile,window,cx)))))
+            .child(Button::new("fw-profiles-list").label(crate::i18n::tr("List profiles in folder (empty path uses OpenSnitch default)")).disabled(disabled).on_click(cx.listener(|this,_,window,cx|this.file_operation(Operation::List,window,cx))));
         let page = self
             .files
             .profiles
@@ -262,7 +272,7 @@ impl FirewallView {
                 .gap_2()
                 .child(
                     Button::new("fw-profiles-previous")
-                        .label("Previous profiles")
+                        .label(crate::i18n::tr("Previous profiles"))
                         .disabled(disabled || self.files.offset == 0)
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.files.offset = this.files.offset.saturating_sub(firewall::PAGE);
@@ -271,7 +281,7 @@ impl FirewallView {
                 )
                 .child(
                     Button::new("fw-profiles-next")
-                        .label("Next profiles")
+                        .label(crate::i18n::tr("Next profiles"))
                         .disabled(
                             disabled
                                 || self.files.offset + firewall::PAGE >= self.files.profiles.len(),
@@ -283,7 +293,7 @@ impl FirewallView {
                 )
                 .child(
                     Button::new("fw-files-review")
-                        .label("Review complete changes…")
+                        .label(crate::i18n::tr("Review complete changes…"))
                         .disabled(read_only)
                         .on_click(cx.listener(|this, _, window, cx| this.review(window, cx))),
                 ),

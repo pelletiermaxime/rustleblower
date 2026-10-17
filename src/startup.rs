@@ -101,11 +101,17 @@ impl Launch {
                 .context("Autostart paths must be UTF-8")?
                 .to_owned())
         };
-        let launch = Self {
+        let socket = match crate::transport::Endpoint::parse(&config.socket) {
+            Ok(crate::transport::Endpoint::Tcp(address)) => address.to_string(),
+            Ok(crate::transport::Endpoint::Unix(socket)) => path(&socket)?,
+            Err(_) if !config.socket.to_string_lossy().contains(':') => path(&config.socket)?,
+            Err(error) => return Err(error),
+        };
+        let mut launch = Self {
             executable,
             arguments: vec![
                 "--socket".into(),
-                path(&config.socket)?,
+                socket,
                 "--database".into(),
                 path(&config.database)?,
                 "--prompt-timeout".into(),
@@ -114,6 +120,21 @@ impl Launch {
                 config.timeout_action.action().into(),
             ],
         };
+        if config.transport.socket_auth != crate::transport::Auth::Simple {
+            launch.arguments.extend([
+                "--socket-auth".into(),
+                config.transport.socket_auth.key().into(),
+            ]);
+        }
+        for (flag, value) in [
+            ("--tls-ca-cert", &config.transport.tls_ca_cert),
+            ("--tls-cert", &config.transport.tls_cert),
+            ("--tls-key", &config.transport.tls_key),
+        ] {
+            if let Some(value) = value {
+                launch.arguments.extend([flag.into(), path(value)?]);
+            }
+        }
         launch.command()?;
         Ok(launch)
     }

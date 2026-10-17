@@ -6,6 +6,8 @@ use crate::{
     protocol::Connection,
 };
 use gpui::{prelude::*, *};
+#[cfg(feature = "headless-tests")]
+use gpui_kit::TestSupportExt;
 use gpui_kit::component::{
     ActiveTheme, Disableable, IndexPath, Sizable,
     avatar::Avatar,
@@ -15,11 +17,33 @@ use gpui_kit::component::{
     select::{SearchableVec, Select, SelectEvent, SelectState},
     tab::{Tab, TabBar},
 };
-#[cfg(all(test, feature = "headless-tests"))]
-use gpui_kit::test::TestSupportExt;
 use std::time::Duration;
-type Picker = Entity<SelectState<SearchableVec<SharedString>>>;
+type Picker = Entity<SelectState<SearchableVec<crate::i18n::LocalizedOption<String>>>>;
 
+fn target_title(key: &str, original: &str) -> String {
+    if let Some(network) = key.strip_prefix("network:") {
+        return crate::i18n::tr_args("Destination network: %{value}", &[("value", network)]);
+    }
+    if let Some(domain) = key.strip_prefix("domain:") {
+        return crate::i18n::tr_args("Destination domain: *.%{value}", &[("value", domain)]);
+    }
+    if let Some(alias) = key.strip_prefix("alias:") {
+        return crate::i18n::tr_args("This executable to %{value}", &[("value", alias)]);
+    }
+    if let Some(value) = original.strip_prefix("Process ID ") {
+        return crate::i18n::tr_args("Process ID %{value}", &[("value", value)]);
+    }
+    if let Some(value) = original.strip_prefix("User ID ") {
+        return crate::i18n::tr_args("User ID %{value}", &[("value", value)]);
+    }
+    if let Some((label, value)) = original.split_once(": ") {
+        return crate::i18n::tr_args(
+            "%{label}: %{value}",
+            &[("label", &crate::i18n::tr(label)), ("value", value)],
+        );
+    }
+    crate::i18n::tr(original)
+}
 pub(super) fn open(
     backend: Handle,
     scale: f32,
@@ -50,7 +74,7 @@ pub(super) fn open(
                 px(440.).min(bounds.size.height),
             )),
             titlebar: Some(TitlebarOptions {
-                title: Some("Rustleblower — connection permission".into()),
+                title: Some(crate::i18n::tr("Rustleblower — connection permission").into()),
                 ..Default::default()
             }),
             app_id: Some("dev.rustleblower.Rustleblower".into()),
@@ -60,6 +84,7 @@ pub(super) fn open(
         cx,
         move |window, cx| cx.new(|cx| PromptWindow::new(backend, window, cx)),
     )?;
+    crate::i18n::register_title(window, "Rustleblower — connection permission", cx);
     if position_supported {
         window.update(cx, |_, window, _| {
             window.on_next_frame(move |window, cx| {
@@ -86,8 +111,13 @@ pub(super) struct PromptWindow {
     error: Option<String>,
     checksum: Option<super::prompt_checksums::Probe>,
     icon: super::app_icon::Probe,
+    reputation: super::prompt_reputation::Probe,
 }
 impl PromptWindow {
+    #[cfg(all(test, feature = "headless-tests"))]
+    pub(super) fn reputation_status(&self) -> (bool, bool) {
+        (self.reputation.warning(), self.reputation.emphasized())
+    }
     pub(super) fn new(backend: Handle, window: &mut Window, cx: &mut Context<Self>) -> Self {
         window.on_window_should_close(cx, |window, _| {
             window.minimize_window();
@@ -140,11 +170,12 @@ impl PromptWindow {
             error: None,
             checksum: None,
             icon: super::app_icon::Probe::new(""),
+            reputation: Default::default(),
         }
     }
     fn picker(
         &mut self,
-        labels: Vec<SharedString>,
+        labels: Vec<crate::i18n::LocalizedOption<String>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Picker {
@@ -159,7 +190,9 @@ impl PromptWindow {
         });
         self.subscriptions.push(cx.subscribe(
             &state,
-            |_, _, _: &SelectEvent<SearchableVec<SharedString>>, cx| cx.notify(),
+            |_, _, _: &SelectEvent<SearchableVec<crate::i18n::LocalizedOption<String>>>, cx| {
+                cx.notify()
+            },
         ));
         state
     }
@@ -184,6 +217,7 @@ impl PromptWindow {
         self.duration = None;
         self.targets.clear();
         self.rows.clear();
+        self.reputation.reset();
         self.checksum = connection.and_then(super::prompt_checksums::Probe::new);
         self.icon = super::app_icon::Probe::new(connection.map_or("", |c| c.process_path.as_str()));
         if let Some(connection) = connection {
@@ -194,9 +228,9 @@ impl PromptWindow {
                     self.backend.prompts.review(id.unwrap());
                 }
                 if !initial.unavailable.is_empty() {
-                    self.error = Some(format!(
-                        "Requested default conditions were not reported: {}. Review the available match before answering.",
-                        initial.unavailable.join(", ")
+                    self.error = Some(crate::i18n::tr_args(
+                        "Requested default conditions were not reported: %{arg0}. Review the available match before answering.",
+                        &[("arg0", &initial.unavailable.join(", ").to_string())],
                     ));
                 }
             }
@@ -205,7 +239,14 @@ impl PromptWindow {
                 self.picker(
                     self.targets
                         .iter()
-                        .map(|target| target.label.clone().into())
+                        .map(|target| {
+                            let key = target.key.clone();
+                            let label = target.label.clone();
+                            crate::i18n::LocalizedOption::with_title(
+                                target.key.clone(),
+                                move || target_title(&key, &label),
+                            )
+                        })
                         .collect(),
                     window,
                     cx,
@@ -215,7 +256,9 @@ impl PromptWindow {
                 self.picker(
                     choice::DURATIONS
                         .iter()
-                        .map(|(_, label)| (*label).into())
+                        .map(|(value, label)| {
+                            crate::i18n::LocalizedOption::new((*value).to_owned(), *label)
+                        })
                         .collect(),
                     window,
                     cx,
@@ -253,26 +296,19 @@ impl PromptWindow {
     }
     fn selected(&self, cx: &App) -> Choice {
         let mut selected = self.choice.clone();
-        if let Some(label) = self
+        if let Some(value) = self
             .target
             .as_ref()
             .and_then(|state| state.read(cx).selected_value())
-            && let Some(target) = self
-                .targets
-                .iter()
-                .find(|target| target.label == label.as_ref())
         {
-            selected.target = target.key.clone();
+            selected.target = value.clone();
         }
-        if let Some(label) = self
+        if let Some(value) = self
             .duration
             .as_ref()
             .and_then(|state| state.read(cx).selected_value())
-            && let Some((duration, _)) = choice::DURATIONS
-                .iter()
-                .find(|(_, name)| *name == label.as_ref())
         {
-            selected.duration = (*duration).into();
+            selected.duration = value.clone();
         }
         selected
     }
@@ -311,8 +347,28 @@ impl PromptWindow {
         }
         match self.backend.prompts.choose(id, decision, &choice) {
             Ok(true) => self.error = None,
-            Ok(false) => self.error = Some("This request expired or was already answered".into()),
+            Ok(false) => {
+                self.error = Some(crate::i18n::tr(
+                    "This request expired or was already answered",
+                ))
+            }
             Err(error) => self.error = Some(error),
+        }
+        cx.notify();
+    }
+    pub(super) fn open_reputation(
+        &mut self,
+        capture: crate::reputation::Capture,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(query) = self.reputation.query(capture)
+            && let Err(error) =
+                super::reputation_view::open(self.backend.reputation.clone(), Some(query), cx)
+        {
+            self.error = Some(crate::i18n::tr_args(
+                "Cannot open reputation reports: %{error}",
+                &[("error", &format!("{:#}", error))],
+            ));
         }
         cx.notify();
     }
@@ -342,7 +398,7 @@ fn live_rows(c: &Connection) -> Vec<(String, String)> {
     ];
     for (index, arg) in c.process_args.iter().enumerate() {
         rows.push((
-            format!("Argument {index}"),
+            crate::i18n::tr_args("Argument %{index}", &[("index", &format!("{}", index))]),
             crate::history::bounded(arg, 1024),
         ));
     }
@@ -356,7 +412,10 @@ fn live_rows(c: &Connection) -> Vec<(String, String)> {
     }
     for item in c.process_tree.iter() {
         rows.push((
-            format!("Ancestor PID {}", item.value),
+            crate::i18n::tr_args(
+                "Ancestor PID %{arg0}",
+                &[("arg0", &format!("{}", item.value))],
+            ),
             crate::history::bounded(&item.key, 4096),
         ));
     }
@@ -364,7 +423,10 @@ fn live_rows(c: &Connection) -> Vec<(String, String)> {
     env.sort_unstable_by_key(|(key, _)| *key);
     for (key, value) in env.into_iter() {
         rows.push((
-            format!("Environment: {}", crate::history::bounded(key, 128)),
+            crate::i18n::tr_args(
+                "Environment: %{arg0}",
+                &[("arg0", &crate::history::bounded(key, 128).to_string())],
+            ),
             crate::history::bounded(value, 2048),
         ));
     }
@@ -383,7 +445,7 @@ impl Render for PromptWindow {
             cx,
         );
         let muted = cx.theme().muted_foreground;
-        let mut body = div()
+        let mut frame = div()
             .size_full()
             .track_focus(&self.focus)
             .p_5()
@@ -392,16 +454,25 @@ impl Render for PromptWindow {
             .gap_3()
             .bg(cx.theme().background)
             .text_color(cx.theme().foreground);
+        let mut body = div()
+            .id("prompt-content")
+            .flex_1()
+            .min_h_0()
+            .overflow_y_scroll()
+            .flex()
+            .flex_col()
+            .gap_3();
         let Some(prompt) = first else {
-            return body.child("No pending connections");
+            return frame.child(body.child(crate::i18n::tr("No pending connections")));
         };
         let con = &prompt.connection;
+        self.reputation.poll(&self.backend.reputation, prompt);
         self.icon.poll(cx);
         let id = prompt.id;
         if let Some(probe) = self.checksum.as_mut() {
             probe.poll(&self.backend, prompt.session, cx);
         }
-        body = body.capture_any_mouse_down(cx.listener(move |this, _, _, cx| {
+        frame = frame.capture_any_mouse_down(cx.listener(move |this, _, _, cx| {
             if this.id == Some(id) && this.backend.prompts.review(id) {
                 cx.notify();
             }
@@ -421,7 +492,13 @@ impl Render for PromptWindow {
             .into_iter()
             .find(|key| self.targets.iter().any(|target| target.key == *key));
         let destination = if destination_key == Some("app-host") {
-            format!("hostname {}", crate::history::bounded(&con.dst_host, 96))
+            crate::i18n::tr_args(
+                "hostname %{arg0}",
+                &[(
+                    "arg0",
+                    &crate::history::bounded(&con.dst_host, 96).to_string(),
+                )],
+            )
         } else {
             format!("IP {}", crate::history::bounded(&con.dst_ip, 64))
         };
@@ -438,21 +515,39 @@ impl Render for PromptWindow {
             .targets
             .iter()
             .find(|target| target.key == selected.target)
-            .map(|target| target.label.as_str())
-            .unwrap_or("Executable + destination");
+            .map(|target| target_title(&target.key, &target.label))
+            .unwrap_or_else(|| crate::i18n::tr("Executable + destination"));
         let preview = match simple_scope {
-            Some(0) => format!("Applies to {app_name} at any destination and port."),
-            Some(1) => format!("Applies to {app_name} only at {destination}, on any port."),
-            _ => format!(
-                "Custom match: {target_label} · {} extra restrictions. Review under Advanced.",
-                selected.constraints.len()
+            Some(0) => crate::i18n::tr_args(
+                "Applies to %{app_name} at any destination and port.",
+                &[("app_name", &app_name.to_string())],
+            ),
+            Some(1) => crate::i18n::tr_args(
+                "Applies to %{app_name} only at %{destination}, on any port.",
+                &[
+                    ("app_name", &app_name.to_string()),
+                    ("destination", &destination.to_string()),
+                ],
+            ),
+            _ => crate::i18n::tr_args(
+                "Custom match: %{target_label} · %{arg0} extra restrictions. Review under Advanced.",
+                &[
+                    ("target_label", &target_label),
+                    ("arg0", &format!("{}", selected.constraints.len())),
+                ],
             ),
         };
-        let suffix = if selected.duration == "always" {
-            "forever"
-        } else {
-            &selected.duration
-        };
+        let suffix = choice::DURATIONS
+            .iter()
+            .find(|(value, _)| *value == selected.duration)
+            .map(|(_, label)| crate::i18n::tr(label))
+            .unwrap_or_else(|| selected.duration.clone());
+        let fallback_title = super::decision_title(
+            prompt
+                .initial
+                .fallback
+                .unwrap_or(self.backend.timeout_action),
+        );
         body = body
             .child(
                 div()
@@ -474,16 +569,29 @@ impl Render for PromptWindow {
                             .text_xl()
                             .truncate()
                             .font_weight(FontWeight::SEMIBOLD)
-                            .child(format!("Allow {app_name} to access the network?")),
+                            .child(crate::i18n::tr_args(
+                                "Allow %{app_name} to access the network?",
+                                &[("app_name", &(app_name).to_string())],
+                            )),
                     ),
             )
-            .child(div().text_sm().text_color(muted).child(format!(
-                    "Node: {}",
-                    self.backend
-                        .session(prompt.session)
-                        .map(|session| session.name)
-                        .unwrap_or_else(|| "Disconnected".into())
-                )))
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(muted)
+                    .child(crate::i18n::tr_args(
+                        "Node: %{arg0}",
+                        &[(
+                            "arg0",
+                            &(self
+                                .backend
+                                .session(prompt.session)
+                                .map(|session| session.name)
+                                .unwrap_or_else(|| "Disconnected".into()))
+                            .to_string(),
+                        )],
+                    )),
+            )
             .child(
                 div()
                     .text_sm()
@@ -491,27 +599,9 @@ impl Render for PromptWindow {
                     .truncate()
                     .flex_shrink_0()
                     .child(if prompt.reviewing {
-                        format!(
-                            "{} pending · request limit {}s · {} once · Reviewing (paused)",
-                            prompts.len(),
-                            seconds,
-                            prompt
-                                .initial
-                                .fallback
-                                .unwrap_or(self.backend.timeout_action)
-                                .action()
-                        )
+                        crate::i18n::tr_args("%{arg0} pending · request limit %{arg1}s · %{arg2} once · Reviewing (paused)", &[("arg0", &format!("{}", prompts.len())), ("arg1", &format!("{}", seconds)), ("arg2", &fallback_title)])
                     } else {
-                        format!(
-                            "{} pending · {} once in {}s if unanswered",
-                            prompts.len(),
-                            prompt
-                                .initial
-                                .fallback
-                                .unwrap_or(self.backend.timeout_action)
-                                .action(),
-                            seconds
-                        )
+                        crate::i18n::tr_args("%{arg0} pending · %{arg1} once in %{arg2}s if unanswered", &[("arg0", &format!("{}", prompts.len())), ("arg1", &fallback_title), ("arg2", &format!("{}", seconds))])
                     }),
             )
             .child(
@@ -547,8 +637,8 @@ impl Render for PromptWindow {
             let context = probe.context.clone();
             let session = prompt.session;
             body = body.child(div().flex().flex_col().gap_2()
-                    .child(super::banner(if probe.found { "Reported executable checksums differ from saved rules. Review before trusting this binary.".into() } else { format!("Saved checksum check unavailable: {}. Permission actions remain available.", probe.error.as_deref().unwrap_or("unknown error")) }, cx))
-                    .child(Button::new("prompt-checksums").label("Review saved checksums…").on_click(cx.listener(move |this, _, _, cx| {
+                    .child(super::banner(if probe.found { "Reported executable checksums differ from saved rules. Review before trusting this binary.".into() } else { crate::i18n::tr_args("Saved checksum check unavailable: %{arg0}. Permission actions remain available.", &[("arg0", probe.error.as_deref().unwrap_or("unknown error"))]) }, cx))
+                    .child(Button::new("prompt-checksums").label(crate::i18n::tr("Review saved checksums…")).on_click(cx.listener(move |this, _, _, cx| {
                         if this.id != Some(id) { return; }
                         if let Err(error) = super::prompt_checksums::open(this.backend.clone(), id, session, context.clone(), cx) { this.error = Some(error.to_string()); }
                         cx.notify();
@@ -564,7 +654,7 @@ impl Render for PromptWindow {
                 .flex_col()
                 .flex_shrink_0()
                 .gap_2()
-                .child("Apply this decision to")
+                .child(crate::i18n::tr("Apply this decision to"))
                 .child(
                     RadioGroup::vertical("prompt-scope")
                         .w_full()
@@ -572,17 +662,27 @@ impl Render for PromptWindow {
                         .selected_index(Some(simple_scope.unwrap_or(2)))
                         .child(
                             Radio::new("app")
-                                .label(format!("{app_name} — any destination"))
+                                .label(crate::i18n::tr_args(
+                                    "%{app_name} — any destination",
+                                    &[("app_name", &(app_name).to_string())],
+                                ))
                                 .disabled(!has_app),
                         )
                         .child(
                             Radio::new("destination")
-                                .label(format!("{app_name} — only {destination} (any port)"))
+                                .label(crate::i18n::tr_args(
+                                    "%{app_name} — only %{destination} (any port)",
+                                    &[
+                                        ("app_name", &(app_name).to_string()),
+                                        ("destination", &(destination).to_string()),
+                                    ],
+                                ))
                                 .disabled(destination_key.is_none()),
                         )
                         .when(simple_scope.is_none(), |group| {
                             group.child(
-                                Radio::new("custom").label("Custom rule — review in Advanced"),
+                                Radio::new("custom")
+                                    .label(crate::i18n::tr("Custom rule — review in Advanced")),
                             )
                         })
                         .on_change(cx.listener(move |this, index: &usize, window, cx| {
@@ -621,18 +721,18 @@ impl Render for PromptWindow {
                         this.tab = *index;
                         cx.notify();
                     }))
-                    .child(Tab::new().label("Advanced rules"))
-                    .child(Tab::new().label("Connection details")),
+                    .child(Tab::new().label(crate::i18n::tr("Advanced rules")))
+                    .child(Tab::new().label(crate::i18n::tr("Connection details"))),
             );
             if self.tab == 0 {
                 #[cfg_attr(all(test, feature = "headless-tests"), allow(unused_mut))]
                 let mut options=div().id("prompt-options-body").flex_1().min_h_0().overflow_y_scroll().flex().flex_col().gap_3()
-                    .child(div().text_sm().child("Apply this decision for"))
-                    .child(div().h_8().flex_shrink_0().child(Select::new(self.duration.as_ref().unwrap()).id("prompt-duration").accessibility_label("Rule duration").w_full()))
-                    .child(div().text_sm().child("Rule scope"))
-                    .child(div().h_8().flex_shrink_0().child(Select::new(self.target.as_ref().unwrap()).id("prompt-target").accessibility_label("Rule scope").w_full()))
-                    .child(div().text_sm().child("Additional restrictions"))
-                    .child(div().text_sm().text_color(muted).child("All selected conditions must match. Fields already required by the scope are omitted."));
+                    .child(div().text_sm().child(crate::i18n::tr("Apply this decision for")))
+                    .child(div().h_8().flex_shrink_0().child(Select::new(self.duration.as_ref().unwrap()).id("prompt-duration").accessibility_label(crate::i18n::tr("Rule duration")).w_full()))
+                    .child(div().text_sm().child(crate::i18n::tr("Rule scope")))
+                    .child(div().h_8().flex_shrink_0().child(Select::new(self.target.as_ref().unwrap()).id("prompt-target").accessibility_label(crate::i18n::tr("Rule scope")).w_full()))
+                    .child(div().text_sm().child(crate::i18n::tr("Additional restrictions")))
+                    .child(div().text_sm().text_color(muted).child(crate::i18n::tr("All selected conditions must match. Fields already required by the scope are omitted.")));
                 // Observe geometry for bounded wheel-input verification only.
                 #[cfg(all(test, feature = "headless-tests"))]
                 let mut options = options.test_support();
@@ -660,9 +760,12 @@ impl Render for PromptWindow {
                     options = options.child(
                         Checkbox::new(("prompt-constraint", index))
                             .label(if target.key == "process.path" {
-                                format!("Require executable: {app_name}")
+                                crate::i18n::tr_args(
+                                    "Require executable: %{app_name}",
+                                    &[("app_name", &app_name.to_string())],
+                                )
                             } else {
-                                target.label.clone()
+                                target_title(&target.key, &target.label)
                             })
                             .checked(checked)
                             .disabled(!checked && selected.constraints.len() >= 16)
@@ -684,7 +787,7 @@ impl Render for PromptWindow {
                         .gap_4()
                         .child(
                             Checkbox::new("prompt-priority")
-                                .label("Priority")
+                                .label(crate::i18n::tr("Priority"))
                                 .checked(selected.priority)
                                 .on_change(cx.listener(|this, value: &bool, _, cx| {
                                     this.choice.priority = *value;
@@ -693,7 +796,7 @@ impl Render for PromptWindow {
                         )
                         .child(
                             Checkbox::new("prompt-logging")
-                                .label("Log matching connections")
+                                .label(crate::i18n::tr("Log matching connections"))
                                 .checked(selected.logging)
                                 .on_change(cx.listener(|this, value: &bool, _, cx| {
                                     this.choice.logging = *value;
@@ -742,22 +845,39 @@ impl Render for PromptWindow {
                 .w_full()
                 .flex_1()
                 .min_h_0();
-                body=body.child(div().text_xs().text_color(muted).child("Live request snapshot · long values may be shortened; environments are not saved in history."))
-                    .child(rows).child(Button::new("prompt-copy-details").label("Copy displayed details").on_click(cx.listener(|this,_,_,cx|{cx.write_to_clipboard(ClipboardItem::new_string(this.rows.iter().map(|(key,value)|format!("{key}: {value}")).collect::<Vec<_>>().join("\n")));})));
+                body=body.child(div().text_xs().text_color(muted).child(crate::i18n::tr("Live request snapshot · long values may be shortened; environments are not saved in history.")))
+                    .child(rows).child(Button::new("prompt-copy-details").label(crate::i18n::tr("Copy displayed details")).on_click(cx.listener(|this,_,_,cx|{cx.write_to_clipboard(ClipboardItem::new_string(this.rows.iter().map(|(key,value)|format!("{key}: {value}")).collect::<Vec<_>>().join("\n")));})));
             }
         } else {
             body = body.child(div().flex_1());
         }
-        body.child(div().text_sm().text_color(muted).child(preview))
+        let body = body.when(self.reputation.visible(), |body| {
+            body.child(self.reputation.render(cx))
+        });
+        #[cfg(feature = "headless-tests")]
+        let body = body.test_support();
+        frame
+            .child(body)
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .text_sm()
+                    .text_color(muted)
+                    .child(preview),
+            )
             .child(
                 div()
                     .flex()
+                    .flex_shrink_0()
                     .flex_wrap()
                     .justify_end()
                     .gap_3()
                     .child(
                         Button::new("deny-once")
-                            .label(format!("Block {suffix}"))
+                            .label(crate::i18n::tr_args(
+                                "Block %{suffix}",
+                                &[("suffix", &suffix)],
+                            ))
                             .danger()
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.apply(id, Decision::Deny, cx)
@@ -765,30 +885,53 @@ impl Render for PromptWindow {
                     )
                     .child(
                         Button::new("allow-12h")
-                            .label("Allow for 12 hours")
+                            .label(crate::i18n::tr("Allow for 12 hours"))
                             .on_click(
                                 cx.listener(move |this, _, _, cx| this.allow_for(id, "12h", cx)),
                             ),
                     )
                     .child(
                         Button::new("allow-forever")
-                            .label("Allow forever")
-                            .primary()
+                            .label(crate::i18n::tr("Allow forever"))
+                            .when(!self.reputation.emphasized(), |button| button.primary())
                             .on_click(
                                 cx.listener(move |this, _, _, cx| this.allow_for(id, "always", cx)),
                             ),
                     )
+                    .when(self.reputation.warning(), |row| {
+                        row.child(
+                            Button::new("reputation-reject-once")
+                                .label(crate::i18n::tr("Reject once"))
+                                .when(self.reputation.emphasized(), |button| button.primary())
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    if this.id == Some(id)
+                                        && !this.backend.decide(id, Decision::Reject)
+                                    {
+                                        this.error = Some(crate::i18n::tr(
+                                            "This request expired or was already answered",
+                                        ));
+                                    }
+                                    cx.notify();
+                                })),
+                        )
+                    })
                     .when(self.expanded, |row| {
                         row.child(
                             Button::new("allow-selected")
-                                .label(format!("Allow {suffix}"))
+                                .label(crate::i18n::tr_args(
+                                    "Allow %{suffix}",
+                                    &[("suffix", &suffix)],
+                                ))
                                 .on_click(cx.listener(move |this, _, _, cx| {
                                     this.apply(id, Decision::Allow, cx)
                                 })),
                         )
                         .child(
                             Button::new("reject-once")
-                                .label(format!("Reject {suffix}"))
+                                .label(crate::i18n::tr_args(
+                                    "Reject %{suffix}",
+                                    &[("suffix", &suffix)],
+                                ))
                                 .on_click(cx.listener(move |this, _, _, cx| {
                                     this.apply(id, Decision::Reject, cx)
                                 })),
@@ -797,11 +940,12 @@ impl Render for PromptWindow {
             )
             .child(
                 Button::new("prompt-more")
-                    .label(if self.expanded {
+                    .flex_shrink_0()
+                    .label(crate::i18n::tr(if self.expanded {
                         "Hide details"
                     } else {
                         "Details and advanced rules…"
-                    })
+                    }))
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.expanded = !this.expanded;
                         window.resize(
@@ -828,7 +972,7 @@ fn detail(label: &str, value: String, cx: &App) -> Div {
                 .flex_shrink_0()
                 .text_sm()
                 .text_color(cx.theme().muted_foreground)
-                .child(label.to_string()),
+                .child(crate::i18n::tr(label)),
         )
         .child(div().flex_1().min_w_0().text_sm().truncate().child(value))
 }

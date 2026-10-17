@@ -45,6 +45,8 @@ pub struct Popup {
     pub target: String,
     pub popups: bool,
     pub desktop_notifications: bool,
+    pub missed_popup_notifications: bool,
+    pub missed_popup_template: String,
     pub priority: bool,
     pub logging: bool,
     pub show_advanced: bool,
@@ -60,6 +62,8 @@ impl Default for Popup {
             target: "process.path".into(),
             popups: true,
             desktop_notifications: true,
+            missed_popup_notifications: true,
+            missed_popup_template: crate::desktop_notifications::missed::DEFAULT_TEMPLATE.into(),
             priority: false,
             logging: true,
             show_advanced: false,
@@ -72,6 +76,8 @@ impl Default for Popup {
 }
 impl Popup {
     pub fn validate(&self) -> Result<()> {
+        crate::desktop_notifications::missed::validate(&self.missed_popup_template)
+            .map_err(anyhow::Error::msg)?;
         ensure!(
             choice::DURATIONS
                 .iter()
@@ -152,12 +158,12 @@ impl Popup {
         }
     }
     fn json(&self) -> serde_json::Value {
-        serde_json::json!({"version":4,"duration":self.duration,"target":self.target,"popups":self.popups,"desktop_notifications":self.desktop_notifications,"priority":self.priority,"logging":self.logging,"show_advanced":self.show_advanced,"constraints":self.constraints,"timeout":self.timeout,"fallback":self.fallback.map(Decision::action),"position":self.position.key()})
+        serde_json::json!({"version":5,"duration":self.duration,"target":self.target,"popups":self.popups,"desktop_notifications":self.desktop_notifications,"missed_popup_notifications":self.missed_popup_notifications,"missed_popup_template":self.missed_popup_template,"priority":self.priority,"logging":self.logging,"show_advanced":self.show_advanced,"constraints":self.constraints,"timeout":self.timeout,"fallback":self.fallback.map(Decision::action),"position":self.position.key()})
     }
     fn parse(bytes: &[u8]) -> Result<Self> {
         let value: serde_json::Value = serde_json::from_slice(bytes)?;
         ensure!(
-            matches!(value["version"].as_u64(), Some(1..=4)),
+            matches!(value["version"].as_u64(), Some(1..=5)),
             "Unsupported UI preferences version"
         );
         let text = |key| {
@@ -184,6 +190,23 @@ impl Popup {
                 })
                 .transpose()?
                 .unwrap_or(true),
+            missed_popup_notifications: value
+                .get("missed_popup_notifications")
+                .map(|v| {
+                    v.as_bool()
+                        .context("Invalid missed-popup notification preference")
+                })
+                .transpose()?
+                .unwrap_or(true),
+            missed_popup_template: value
+                .get("missed_popup_template")
+                .map(|v| {
+                    v.as_str()
+                        .map(str::to_owned)
+                        .context("Invalid missed-popup message template")
+                })
+                .transpose()?
+                .unwrap_or_else(|| crate::desktop_notifications::missed::DEFAULT_TEMPLATE.into()),
             priority: flag("priority")?,
             logging: flag("logging")?,
             position: match value.get("position") {

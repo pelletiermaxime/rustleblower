@@ -57,7 +57,7 @@ pub(super) fn open(
             ))),
             window_min_size: Some(size(px(760.), px(580.))),
             titlebar: Some(TitlebarOptions {
-                title: Some("Rustleblower — system firewall".into()),
+                title: Some(crate::i18n::tr("Rustleblower — system firewall").into()),
                 ..Default::default()
             }),
             app_id: Some("dev.rustleblower.Rustleblower".into()),
@@ -67,6 +67,7 @@ pub(super) fn open(
         cx,
         move |window, cx| cx.new(|cx| FirewallView::new(backend, session, node, window, cx)),
     )?;
+    crate::i18n::register_title(window, "Rustleblower — system firewall", cx);
     Ok(window)
 }
 struct Loaded {
@@ -99,6 +100,8 @@ struct FirewallView {
     delete: Option<Command>,
     files: files::Files,
     operation: Option<std::sync::Arc<std::sync::Mutex<firewall::policy::Progress>>>,
+    suggestions: std::sync::Arc<firewall::suggestions::Catalogue>,
+    suggestions_busy: bool,
 }
 impl FirewallView {
     fn keep_key(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -106,7 +109,7 @@ impl FirewallView {
             return;
         }
         if let Some(form) = &mut self.form {
-            match form.keep_active(cx) {
+            match form.keep_active(window, cx) {
                 Ok(true) => {
                     self.error = None;
                     self.focus.focus(window, cx);
@@ -153,7 +156,7 @@ impl FirewallView {
                     state.update(cx, |state, cx| {
                         state.set_value(this.last_text.clone(), window, cx)
                     });
-                    this.error = Some("Firewall JSON must stay below 1 MiB".into());
+                    this.error = Some(crate::i18n::tr("Firewall JSON must stay below 1 MiB"));
                 } else {
                     this.last_text = text;
                     this.stage = None;
@@ -164,7 +167,11 @@ impl FirewallView {
         .detach();
         let search = cx.new(|cx| {
             InputState::new(window, cx)
-                .placeholder("Filter rules in the selected chain…")
+                .placeholder(crate::i18n::placeholder(
+                    "Filter rules in the selected chain…",
+                    window,
+                    cx,
+                ))
                 .validate(|v, _| v.len() <= 256)
         });
         cx.subscribe(&search, |this, _, event, cx| {
@@ -198,8 +205,11 @@ impl FirewallView {
             delete: None,
             files: files::Files::new(window, cx),
             operation: None,
+            suggestions: Default::default(),
+            suggestions_busy: false,
         };
         this.load(window, cx);
+        this.load_suggestions(window, cx);
         cx.spawn_in(window, async move |this, cx| {
             loop {
                 cx.background_executor()
@@ -218,6 +228,31 @@ impl FirewallView {
         })
         .detach();
         this
+    }
+    fn load_suggestions(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.suggestions_busy {
+            return;
+        }
+        let Some(permit) = firewall::suggestions::read_job() else {
+            return;
+        };
+        self.suggestions_busy = true;
+        let work = cx.background_executor().spawn(async move {
+            let _permit = permit;
+            std::sync::Arc::new(firewall::suggestions::Catalogue::discover())
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let catalogue = work.await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.suggestions = catalogue.clone();
+                this.suggestions_busy = false;
+                if let Some(form) = &mut this.form {
+                    form.refresh_suggestions(catalogue, window, cx);
+                }
+                cx.notify();
+            });
+        })
+        .detach();
     }
     fn writable(&self) -> bool {
         !self.backend.control.firewall_busy(self.session)
@@ -507,8 +542,9 @@ impl FirewallView {
         self.busy = false;
         match result {
             Ok(steps) => {
-                self.message = Some(format!(
-                    "Daemon accepted {steps} reload stage(s), and the local cache was saved. Acceptance does not prove enforcement; awaiting a fresh daemon report."
+                self.message = Some(crate::i18n::tr_args(
+                    "Daemon accepted %{steps} reload stage(s), and the local cache was saved. Acceptance does not prove enforcement; awaiting a fresh daemon report.",
+                    &[("steps", &format!("{}", steps))],
                 ));
                 self.load(window, cx);
             }
@@ -527,32 +563,32 @@ impl Render for FirewallView {
         let mut body = div().flex_1().min_h_0().flex().flex_col().gap_2();
         if let Some(operation) = &self.operation {
             let progress = operation.lock().unwrap().clone();
-            body=body.child(format!("System-firewall operation: {} of {} confirmed cache updates",progress.completed,progress.total))
-                .child(progress.label).child("Waiting for the daemon and saved cache before continuing. Closing this window lets the reviewed operation continue in the background.");
+            body=body.child(crate::i18n::tr_args("System-firewall operation: %{arg0} of %{arg1} confirmed cache updates", &[("arg0", &(progress.completed).to_string()), ("arg1", &(progress.total).to_string())]))
+                .child(progress.label).child(crate::i18n::tr("Waiting for the daemon and saved cache before continuing. Closing this window lets the reviewed operation continue in the background."));
         } else if let Some(command) = self.delete.clone() {
-            body=body.child("Remove this item from the local draft? The daemon changes only after Review and Apply.")
-                .child(div().flex().gap_2().child(Button::new("fw-delete-confirm").label("Remove from draft").disabled(self.busy||!writable).on_click(cx.listener(move|this,_,window,cx|this.mutate(command.clone(),window,cx))))
-                .child(Button::new("fw-delete-cancel").label("Cancel removal").disabled(self.busy).on_click(cx.listener(|this,_,window,cx|{this.delete=None;this.focus.focus(window,cx);cx.notify();}))));
+            body=body.child(crate::i18n::tr("Remove this item from the local draft? The daemon changes only after Review and Apply."))
+                .child(div().flex().gap_2().child(Button::new("fw-delete-confirm").label(crate::i18n::tr("Remove from draft")).disabled(self.busy||!writable).on_click(cx.listener(move|this,_,window,cx|this.mutate(command.clone(),window,cx))))
+                .child(Button::new("fw-delete-cancel").label(crate::i18n::tr("Cancel removal")).disabled(self.busy).on_click(cx.listener(|this,_,window,cx|{this.delete=None;this.focus.focus(window,cx);cx.notify();}))));
         } else if let Some(form) = &self.form {
             body = form.render(self.busy, cx);
         } else if let Some(stage) = &self.stage {
-            body=body.child(div().text_sm().child("Replace this node's complete system-firewall configuration? Unrelated application rules remain separate. The daemon can reject or partly apply a reload; refresh after any error. Long review values are shortened; Back opens the complete draft."))
+            body=body.child(div().text_sm().child(crate::i18n::tr("Replace this node's complete system-firewall configuration? Unrelated application rules remain separate. The daemon can reject or partly apply a reload; refresh after any error. Long review values are shortened; Back opens the complete draft.")))
                 .child(div().id("firewall-review-body").flex_1().min_h_0().overflow_y_scroll().children(stage.summary.iter().cloned().map(|s|div().text_sm().child(s))))
-                .child(div().flex().gap_2().child(Button::new("firewall-back").label("Back to complete draft").disabled(self.busy).on_click(cx.listener(|this,_,window,cx|{this.stage=None;if this.tab==1{this.input.focus_handle(cx).focus(window,cx);}else{this.focus.focus(window,cx);}cx.notify();})))
-                .child(Button::new("firewall-confirm").label("Apply reviewed firewall reload").disabled(self.busy||!writable).on_click(cx.listener(|this,_,window,cx|this.apply(window,cx)))));
+                .child(div().flex().gap_2().child(Button::new("firewall-back").label(crate::i18n::tr("Back to complete draft")).disabled(self.busy).on_click(cx.listener(|this,_,window,cx|{this.stage=None;if this.tab==1{this.input.focus_handle(cx).focus(window,cx);}else{this.focus.focus(window,cx);}cx.notify();})))
+                .child(Button::new("firewall-confirm").label(crate::i18n::tr("Apply reviewed firewall reload")).disabled(self.busy||!writable).on_click(cx.listener(|this,_,window,cx|this.apply(window,cx)))));
         } else if self.tab == 3 {
             body = body.child(self.render_policy(cx));
         } else if self.tab == 2 {
             body = body.child(self.render_files(cx));
         } else if self.tab == 1 {
-            body=body.child(div().text_sm().child("Edits replace this node's complete configuration. Review the changes before applying. Enable/disable transitions use the same review; prepare accept policies before disabling."))
+            body=body.child(div().text_sm().child(crate::i18n::tr("Edits replace this node's complete configuration. Review the changes before applying. Enable/disable transitions use the same review; prepare accept policies before disabling.")))
                 .child(div().flex_1().min_h_0().child(Textarea::new(&self.input).accessibility_id("firewall-json").size_full().disabled(!writable||locked).on_paste(move|clipboard,_,cx| {
                     let state=input.read(cx);let remaining=state.value().len().saturating_sub(state.selected_value().len());
                     if clipboard.text().is_some_and(|text|text.len().saturating_add(remaining)>firewall::MAX_JSON) {
-                        let _=weak.update(cx,|this,cx|{this.error=Some("Paste would exceed the 1 MiB firewall document limit".into());cx.notify();});true
+                        let _=weak.update(cx,|this,cx|{this.error=Some(crate::i18n::tr("Paste would exceed the 1 MiB firewall document limit"));cx.notify();});true
                     }else{false}
                 })))
-                .child(Button::new("firewall-review").label("Review complete changes…").disabled(!writable||locked).on_click(cx.listener(|this,_,window,cx|this.review(window,cx))));
+                .child(Button::new("firewall-review").label(crate::i18n::tr("Review complete changes…")).disabled(!writable||locked).on_click(cx.listener(|this,_,window,cx|this.review(window,cx))));
         } else if let Some(loaded) = &self.loaded {
             let selected = self.chain;
             let mut choices = div()
@@ -598,16 +634,27 @@ impl Render for FirewallView {
                 let offset = self.offset.min(total);
                 let end = (offset + firewall::PAGE).min(matches.len());
                 rows = rows
-                    .child(format!(
-                        "{} · type {} · hook {} · priority {} · policy {}",
-                        chain.name, chain.kind, chain.hook, chain.priority, chain.policy
+                    .child(crate::i18n::tr_args(
+                        "%{arg0} · type %{arg1} · hook %{arg2} · priority %{arg3} · policy %{arg4}",
+                        &[
+                            ("arg0", &(chain.name).to_string()),
+                            ("arg1", &(chain.kind).to_string()),
+                            ("arg2", &(chain.hook).to_string()),
+                            ("arg3", &(chain.priority).to_string()),
+                            ("arg4", &(chain.policy).to_string()),
+                        ],
                     ))
                     .child(Input::new(&self.search).id("firewall-search"))
-                    .child(format!(
-                        "{} matching rules · showing {}–{}",
-                        matches.len(),
-                        if matches.is_empty() { 0 } else { offset + 1 },
-                        end
+                    .child(crate::i18n::tr_args(
+                        "%{arg0} matching rules · showing %{arg1}–%{arg2}",
+                        &[
+                            ("arg0", &(matches.len()).to_string()),
+                            (
+                                "arg1",
+                                &(if matches.is_empty() { 0 } else { offset + 1 }).to_string(),
+                            ),
+                            ("arg2", &(end).to_string()),
+                        ],
                     ))
                     .child(
                         uniform_list(
@@ -619,33 +666,78 @@ impl Render for FirewallView {
                                 }) else {
                                     return vec![];
                                 };
+                                let highlights = this.backend.highlighting.snapshot();
                                 range
                                     .filter_map(|i| {
                                         matches.get(offset + i).map(|n| (*n, &chain.rules[*n]))
                                     })
                                     .map(|(i, rule)| {
+                                        let position = rule.position.to_string();
+                                        let enabled = crate::i18n::tr(if rule.enabled {
+                                            "enabled"
+                                        } else {
+                                            "disabled"
+                                        });
+                                        let cells = [
+                                            ("position", position.as_str()),
+                                            ("id", rule.uuid.as_str()),
+                                            ("target", rule.target.as_str()),
+                                            ("enabled", enabled.as_str()),
+                                            ("description", rule.description.as_str()),
+                                        ];
+                                        let prepared = highlights.prepare_row(
+                                            crate::highlighting::View::Firewall,
+                                            &cells,
+                                            this.selected_rule == Some(i),
+                                        );
+                                        let style = |key: &str, value: &str, cell: Div| {
+                                            super::highlighting::cell_prepared(
+                                                &highlights,
+                                                crate::highlighting::View::Firewall,
+                                                key,
+                                                value,
+                                                prepared,
+                                                cell,
+                                            )
+                                        };
                                         ListItem::new(("firewall-rule", i))
                                             .selected(this.selected_rule == Some(i))
                                             .child(
                                                 div()
                                                     .flex()
                                                     .flex_col()
-                                                    .child(format!(
-                                                        "{} · {} · {} · {}",
-                                                        rule.position,
-                                                        rule.uuid,
-                                                        rule.target,
-                                                        if rule.enabled {
-                                                            "enabled"
-                                                        } else {
-                                                            "disabled"
-                                                        }
-                                                    ))
                                                     .child(
+                                                        div()
+                                                            .flex()
+                                                            .gap_2()
+                                                            .child(style(
+                                                                "position",
+                                                                &position,
+                                                                div().child(position.clone()),
+                                                            ))
+                                                            .child(style(
+                                                                "id",
+                                                                &rule.uuid,
+                                                                div().child(rule.uuid.clone()),
+                                                            ))
+                                                            .child(style(
+                                                                "target",
+                                                                &rule.target,
+                                                                div().child(rule.target.clone()),
+                                                            ))
+                                                            .child(style(
+                                                                "enabled",
+                                                                &enabled,
+                                                                div().child(enabled.clone()),
+                                                            )),
+                                                    )
+                                                    .child(style(
+                                                        "description",
+                                                        &rule.description,
                                                         div()
                                                             .text_sm()
                                                             .child(rule.description.clone()),
-                                                    ),
+                                                    )),
                                             )
                                             .on_click(cx.listener(move |this, _, _, cx| {
                                                 this.selected_rule = Some(i);
@@ -664,7 +756,7 @@ impl Render for FirewallView {
                             .gap_2()
                             .child(
                                 Button::new("firewall-previous")
-                                    .label("Previous")
+                                    .label(crate::i18n::tr("Previous"))
                                     .disabled(offset == 0)
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         this.offset = this.offset.saturating_sub(firewall::PAGE);
@@ -673,7 +765,7 @@ impl Render for FirewallView {
                             )
                             .child(
                                 Button::new("firewall-next")
-                                    .label("Next")
+                                    .label(crate::i18n::tr("Next"))
                                     .disabled(end >= total)
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         this.offset += firewall::PAGE;
@@ -682,9 +774,9 @@ impl Render for FirewallView {
                             ),
                     );
             } else {
-                rows = rows.child(
+                rows = rows.child(crate::i18n::tr(
                     "No reported chains. Legacy wrappers remain available in complete JSON.",
-                );
+                ));
             }
             body = body.child(
                 div()
@@ -707,7 +799,7 @@ impl Render for FirewallView {
                     .gap_2()
                     .child(
                         Button::new("fw-chain-new")
-                            .label("New chain…")
+                            .label(crate::i18n::tr("New chain…"))
                             .disabled(!writable || locked)
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.read_draft(
@@ -722,7 +814,7 @@ impl Render for FirewallView {
                     )
                     .child(
                         Button::new("fw-chain-edit")
-                            .label("Edit chain…")
+                            .label(crate::i18n::tr("Edit chain…"))
                             .disabled(!writable || locked || chain.is_none())
                             .on_click(cx.listener(|this, _, window, cx| {
                                 if let Some((group, index)) = this.chain {
@@ -739,7 +831,7 @@ impl Render for FirewallView {
                     )
                     .child(
                         Button::new("fw-chain-delete")
-                            .label("Remove chain…")
+                            .label(crate::i18n::tr("Remove chain…"))
                             .disabled(!writable || locked || chain.is_none())
                             .on_click(cx.listener(|this, _, _, cx| {
                                 if let Some((group, chain)) = this.chain {
@@ -750,7 +842,7 @@ impl Render for FirewallView {
                     )
                     .child(
                         Button::new("fw-rule-new")
-                            .label("New rule…")
+                            .label(crate::i18n::tr("New rule…"))
                             .disabled(!writable || locked || chain.is_none())
                             .on_click(cx.listener(|this, _, window, cx| {
                                 if let Some((group, chain)) = this.chain {
@@ -769,7 +861,7 @@ impl Render for FirewallView {
                     )
                     .child(
                         Button::new("fw-rule-edit")
-                            .label("Edit rule…")
+                            .label(crate::i18n::tr("Edit rule…"))
                             .disabled(!writable || locked || selected.is_none())
                             .on_click(cx.listener(|this, _, window, cx| {
                                 if let Some((group, chain)) = this.chain
@@ -790,7 +882,7 @@ impl Render for FirewallView {
                     )
                     .child(
                         Button::new("fw-rule-duplicate")
-                            .label("Duplicate rule…")
+                            .label(crate::i18n::tr("Duplicate rule…"))
                             .disabled(!writable || locked || selected.is_none())
                             .on_click(cx.listener(|this, _, window, cx| {
                                 if let Some((group, chain)) = this.chain
@@ -811,7 +903,7 @@ impl Render for FirewallView {
                     )
                     .child(
                         Button::new("fw-rule-toggle")
-                            .label("Toggle enabled in draft")
+                            .label(crate::i18n::tr("Toggle enabled in draft"))
                             .disabled(!writable || locked || selected.is_none())
                             .on_click(cx.listener(|this, _, window, cx| {
                                 if let Some((group, chain)) = this.chain
@@ -827,7 +919,7 @@ impl Render for FirewallView {
                     )
                     .child(
                         Button::new("fw-rule-delete")
-                            .label("Remove rule…")
+                            .label(crate::i18n::tr("Remove rule…"))
                             .disabled(!writable || locked || selected.is_none())
                             .on_click(cx.listener(|this, _, _, cx| {
                                 if let Some((group, chain)) = this.chain
@@ -840,7 +932,7 @@ impl Render for FirewallView {
                     )
                     .child(
                         Button::new("fw-rule-up")
-                            .label("Move rule up")
+                            .label(crate::i18n::tr("Move rule up"))
                             .disabled(!writable || locked || selected.is_none_or(|i| i == 0))
                             .on_click(cx.listener(|this, _, window, cx| {
                                 if let Some((group, chain)) = this.chain
@@ -862,7 +954,7 @@ impl Render for FirewallView {
                     )
                     .child(
                         Button::new("fw-rule-down")
-                            .label("Move rule down")
+                            .label(crate::i18n::tr("Move rule down"))
                             .disabled(
                                 !writable || locked || selected.is_none_or(|i| i + 1 >= count),
                             )
@@ -886,13 +978,13 @@ impl Render for FirewallView {
                     )
                     .child(
                         Button::new("fw-draft-review")
-                            .label("Review draft changes…")
+                            .label(crate::i18n::tr("Review draft changes…"))
                             .disabled(!writable || locked)
                             .on_click(cx.listener(|this, _, window, cx| this.review(window, cx))),
                     ),
             );
         } else {
-            body = body.child("Loading cached system-firewall snapshot…");
+            body = body.child(crate::i18n::tr("Loading cached system-firewall snapshot…"));
         }
         div()
             .size_full()
@@ -955,15 +1047,18 @@ impl Render for FirewallView {
             }))
             .bg(cx.theme().background)
             .text_color(cx.theme().foreground)
-            .child(format!("System firewall · {}", self.node))
+            .child(crate::i18n::tr_args(
+                "System firewall · %{arg0}",
+                &[("arg0", &(self.node).to_string())],
+            ))
             .when(
                 self.loaded
                     .as_ref()
                     .is_some_and(|l| l.text != self.last_text),
                 |view| {
-                    view.child(div().text_sm().child(
+                    view.child(div().text_sm().child(crate::i18n::tr(
                         "Local draft changes · Review and Apply to send them to this daemon",
-                    ))
+                    )))
                 },
             )
             .child(
@@ -971,22 +1066,15 @@ impl Render for FirewallView {
                     self.loaded
                         .as_ref()
                         .map(|l| {
-                            format!(
-                                "Backend {} · format {} · enabled {} · {} · {}",
-                                l.snapshot.backend,
-                                l.snapshot.config.version,
-                                l.snapshot.config.enabled,
-                                if l.snapshot.reported {
+                            crate::i18n::tr_args("Backend %{arg0} · format %{arg1} · enabled %{arg2} · %{arg3} · %{arg4}", &[("arg0", &l.snapshot.backend.to_string()), ("arg1", &format!("{}", l.snapshot.config.version)), ("arg2", &format!("{}", l.snapshot.config.enabled)), ("arg3", (if l.snapshot.reported {
                                     "reported by daemon"
                                 } else {
                                     "accepted reload; awaiting fresh daemon report"
-                                },
-                                if writable {
+                                })), ("arg4", (if writable {
                                     "connected"
                                 } else {
                                     "read only / stale / unsupported"
-                                }
-                            )
+                                }))])
                         })
                         .unwrap_or_else(|| "No snapshot loaded".into()),
                 ),
@@ -1012,10 +1100,10 @@ impl Render for FirewallView {
                             cx.notify();
                         }
                     }))
-                    .child(Tab::new().label("Chains and rules"))
-                    .child(Tab::new().label("Complete JSON"))
-                    .child(Tab::new().label("Files and profiles"))
-                    .child(Tab::new().label("Policies and state")),
+                    .child(Tab::new().label(crate::i18n::tr("Chains and rules")))
+                    .child(Tab::new().label(crate::i18n::tr("Complete JSON")))
+                    .child(Tab::new().label(crate::i18n::tr("Files and profiles")))
+                    .child(Tab::new().label(crate::i18n::tr("Policies and state"))),
             )
             .when_some(self.error.clone(), |v, e| v.child(super::banner(e, cx)))
             .when_some(self.message.clone(), |v, m| {
@@ -1031,13 +1119,13 @@ impl Render for FirewallView {
                     .gap_2()
                     .child(
                         Button::new("firewall-reload")
-                            .label("Reload cached snapshot")
+                            .label(crate::i18n::tr("Reload cached snapshot"))
                             .disabled(locked || self.form.is_some() || self.delete.is_some())
                             .on_click(cx.listener(|this, _, window, cx| this.load(window, cx))),
                     )
                     .child(
                         Button::new("firewall-copy")
-                            .label("Copy complete draft JSON")
+                            .label(crate::i18n::tr("Copy complete draft JSON"))
                             .disabled(
                                 self.loaded.is_none()
                                     || self.busy
@@ -1052,7 +1140,7 @@ impl Render for FirewallView {
                     )
                     .child(
                         Button::new("firewall-close")
-                            .label("Close")
+                            .label(crate::i18n::tr("Close"))
                             .on_click(cx.listener(|_, _, window, _| window.remove_window())),
                     ),
             )

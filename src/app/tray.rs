@@ -135,7 +135,7 @@ impl ksni::Tray for Item {
     fn menu(&self) -> Vec<ksni::MenuItem<Self>> {
         vec![
             ksni::menu::StandardItem {
-                label: "Open Rustleblower".into(),
+                label: crate::i18n::tr("Open Rustleblower"),
                 activate: Box::new(|item: &mut Self| {
                     let _ = item.sender.try_send(Action::Open);
                 }),
@@ -143,7 +143,7 @@ impl ksni::Tray for Item {
             }
             .into(),
             ksni::menu::StandardItem {
-                label: "Startup preferences…".into(),
+                label: crate::i18n::tr("Startup preferences…"),
                 activate: Box::new(|item: &mut Self| {
                     let _ = item.sender.try_send(Action::Startup);
                 }),
@@ -152,7 +152,7 @@ impl ksni::Tray for Item {
             .into(),
             ksni::MenuItem::Separator,
             ksni::menu::StandardItem {
-                label: "Quit Rustleblower".into(),
+                label: crate::i18n::tr("Quit Rustleblower"),
                 activate: Box::new(|item: &mut Self| {
                     let _ = item.sender.try_send(Action::Quit);
                 }),

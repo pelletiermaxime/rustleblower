@@ -14,6 +14,7 @@ use std::{
 use tonic::transport::{Channel, Endpoint};
 fn options(dir: &Path) -> Config {
     Config {
+        transport: Default::default(),
         socket: dir.join("ui.sock"),
         database: dir.join("history.sqlite3"),
         prompt_timeout: 30,
@@ -427,7 +428,7 @@ async fn schema7_migrates_without_preferences_table_or_history_loss() -> Result<
     assert_eq!(count(&db, "events"), 1);
     assert_eq!(
         db.query_row("PRAGMA user_version", [], |r| r.get::<_, u32>(0))?,
-        9
+        11
     );
     Ok(())
 }

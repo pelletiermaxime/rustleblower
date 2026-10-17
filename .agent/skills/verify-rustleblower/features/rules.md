@@ -5,8 +5,27 @@ data lives in SQLite; changes go through the existing daemon notification stream
 
 ## Sub-features and entry points
 
-- `rules-browse`: Application rules tab → filter name/executable/description;
-  All/Permanent/Temporary; Next/First pages of at most 200 rules.
+- `rules-browse`: Application rules tab → searchable cached-node dropdown at the
+  left of the name/executable/description filter, matching the History toolbar;
+  All/Permanent/Temporary plus independent All/Allowed/Denied/Rejected quick
+  action filters; Next/First pages of at most 200 rules. Quick filters affect the
+  whole catalogue and captured exports/reviews.
+- `rules-scrollbar`: always-visible Kit vertical scrollbar beside the virtual
+  list. Actual thumb dragging must reach later rows; the toolbar has space below
+  the main tabs.
+- `rules-conditions`: Application rules → Conditions → typed Created/name/
+  description/node/booleans/action/duration/root-operator/executable predicates,
+  plus UI-local last received time and explicit Any operator operand/data tree fields,
+  with All/Any groups or a bounded nested numbered AND/OR formula. Apply stages
+  the same expression for
+  catalogue, selected/full-filter reviews/transfers and multi-node exports.
+  Eight 256-byte conditions remain the cap. Daemon/first-seen timestamps are not
+  invented; other-page filter persistence is separate.
+- `rules-added`: the Added (UTC) column, immediately after Rule name and before
+  action/duration/status, shows the daemon-reported creation date.
+  Click its header for newest first, then oldest first; Rule name restores name
+  order. Sorting covers the full bounded catalogue and follows through pages
+  and read-only exports. Missing/invalid creation timestamps display Unknown.
 - `rules-action`: select a rule → Allow/Deny/Reject; retain its operator, duration,
   priority and logging settings. Wait for daemon confirmation before updating.
 - `rules-enabled`: select a rule → Disable/Enable.
@@ -66,6 +85,12 @@ data lives in SQLite; changes go through the existing daemon notification stream
   and session identity gate edits; stale replies cannot modify a replacement.
 
 ## Verification
+
+The focused `python scripts/verify-headless.py --feature browsing` journey checks
+quick action filters across 200+20 matching rules, combined Permanent scope and
+actual pointer dragging to row 200. Its two-node History fixture also exercises
+node selection and list/table scrollbars. See `.verification/browsing/result.json`
+for the current evidence and boundaries.
 
 Run `python scripts/cargo.py test --no-default-features --locked`. The rule protocol
 tests exercise a real UI-side gRPC server, daemon command/reply streams, catalogue
@@ -175,3 +200,110 @@ preservation and exact clipboard export/import. It uses actual Kit Select/Input,
 button and scroll events. The editor scroll body uses Kit's official test-only
 observation hook; root assertions read through Kit Root. This is background
 GPU/input/protocol/storage proof. Native compositor range editing remains pending.
+
+## Typed catalogue search extension
+
+Read [advanced rule search](../../../../docs/advanced-rule-search.md) for the
+pinned source contract and limits. Conditions uses actual Kit Select/Input,
+Checkbox and Button controls with an observed scroll body for input proof.
+The editor stages up to eight 256-byte predicates, All/Any groups and an optional
+bounded nested AND/OR formula;
+Apply preserves the current quick search/scope and clears stale row selection.
+Old node/session editors cannot apply to a replacement session.
+
+One prepared native predicate serves catalogue keyset pages, selected/full-filter
+transfer/review and each actual node in multi-node capture. It streams candidates
+within the existing 10k-rule/2-MiB wire cap and returns 200 matches with a bounded
+lookahead and 8-MiB decoded-page cap. It never passes SQL/expression text through
+or rewrites cached protobuf bytes. Existing unknown operator strings/data and
+pending-observation/stale snapshot protections remain intact.
+
+`tests/rule_search.rs` covers typed fields/negation/prefix/suffix/inclusive
+boundaries, literal/injection strings, group/value caps, matching pages and
+selected/full-filter consistency, unknown cached wire preservation, immutable
+multi-node capture and pending review refusal. The predicate module has a grouped
+multi-page snapshot unit case with an actual later-page writer change. All eighteen
+focused integration cases passed (four rule search, five existing rules, five
+rule transfer and four multi-node export), and the grouped snapshot unit case passed. Exact commands,
+logs, namespace proof and source hashes are preserved in
+`.verification/rule-search-implementation-20261017T023808Z/result.json`.
+The focused `--feature rules-advanced` journey passes eight background GPU/input
+frames at `.verification/headless/20261017T024640Z-55e71c6e/result.json`: actual
+invalid boolean refusal, action/enabled plus description/inclusive-created
+groups, root/inner All/Any, exact catalogue rows, staged Close/reopen, matching
+whole-wire JSON export, removal and clear. Process/socket cleanup passes; scoped
+hashes and boundaries are in `.verification/rules-advanced-result.json`.
+Native compositor and other-page presentation persistence remain separate.
+Explicit Any operator fields search the bounded full tree; root-only fields retain
+their existing semantics and no daemon/first-seen timestamp is invented.
+
+## Nested formula input proof
+
+The expanded focused journey passes ten real-GPU frames in
+`.verification/headless/20261017T032547Z-ab61a107/result.json` (51.60 seconds).
+Duplicate/out-of-range and SQL-like formula Apply preserve the prior catalogue.
+Actual reordered `4 OR (1 AND (3 OR 2))` changes the exact rows and full protobuf
+JSON export to four matches. Reopened actual Input copies that exact expression;
+root group clicks remain inert while formula is present, then Add/Remove
+reactivate group toggling. Staged Close preserves the applied formula, and all
+previous group/partition/Clear assertions pass. Invalid feedback, numbered
+conditions and export states were visually inspected. Full source/image hashes,
+core parser/integration and compile/lint boundaries are recorded in
+`.verification/search-formula-result.json`. This formula grammar does not change
+the separate nested-operator serialization limitation above.
+
+## Received time and nested field input proof
+
+The focused rules journey now passes fourteen real-GPU frames in
+`.verification/headless/20261017T035229Z-9481b893/result.json` (77.16 seconds).
+All ten formula/group regressions remain. Actual Last received by UI date input
+refuses an invalid date without changing the prior six rows; At least 0 includes
+the received fixtures. Exact Any operator operand `dest.host` combined with Any
+operator data containing `leaf.deep` finds only the deeply nested fixture.
+Actual full-filter export equals its complete JSON document, including siblings;
+Does not contain excludes the entire matching tree and retains five others.
+
+Read-only export intentionally retains nested cached wire. Mutation Import still
+refuses that nested group and the test explicitly asserts this boundary. The
+initial verifier's mistaken use of the mutation importer is retained in the
+failed attempt. `.verification/rule-receipt-tree-gpu-result.json` links exact
+134-file rendered source, PNG/export hashes, immutable binary and the separate
+31-case core checkpoint. Six unused preference-view warnings existed before its
+caller integration; this compile is not strict-Clippy evidence. Images 11/12/14
+were visually inspected with readable controls and result counts. Native
+compositor, policy mutation/enforcement and packaging remain separate.
+
+## Added date column
+
+The Added (UTC) column uses the daemon rule's creation timestamp, with Unknown
+for absent/invalid dates. The first header click sorts newest first, the second
+oldest first; Rule name restores name order. This reuses the bounded background
+global ordering implementation, so Next/First pages and captured read-only
+exports share the selected order. No database schema or daemon policy change is
+needed.
+
+The focused rules-advanced journey now passes seventeen real GPU/input frames
+in `.verification/headless/20261017T051318Z-e77f969d/result.json`. Three added
+frames verify header input, exact date ordering and header/cell alignment; the
+existing fourteen filter/tree/export frames remain. The existing 650-rule
+global sorting/paging/export regression, strict all-target headless Clippy,
+catalogue check and normal application build pass. Exact source/evidence hashes
+are in `.verification/rule-added-result.json`; fixtures do not change the host
+daemon or rules.
+
+The subsequent column-order refinement places Rule name, Added and
+Action/Duration/Status in separate aligned columns. The same seventeen-frame
+journey passes in `.verification/headless/20261017T052052Z-ad1f79e1/result.json`
+(82.99-second runtime), including an assertion that status space follows Added.
+The current scoped report is `.verification/rules-column-order-result.json`.
+
+### 2026-10-17 browsing checkpoint
+
+The seven-frame GPU journey passed at
+`.verification/headless/20261017T060246Z-c979b303/result.json`; all requested
+filter and pointer-drag assertions passed. Eighteen focused storage/catalogue
+tests and eight localization tests passed at the recorded checkpoints. Later
+major dependency upgrades in the shared checkout caused whole-project API/type
+compile errors; this checkpoint does not establish a successful current normal
+desktop build. The aggregate retains compiler logs and exact boundaries in
+`.verification/browsing/result.json`.

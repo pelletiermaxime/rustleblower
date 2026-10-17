@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: New prerelease tag matching Cargo.toml (created after checks)
+        description: New release tag matching Cargo.toml (created after checks)
         type: string
         required: true
 
@@ -35,7 +35,7 @@ jobs:
           path: dist
       - name: Verify package checksums
         run: cd dist && sha256sum --check SHA256SUMS
-      - name: Publish development prerelease
+      - name: Publish stable release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
@@ -43,10 +43,10 @@ jobs:
           if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then
             git config user.name 'github-actions[bot]'
             git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-            git tag -a "$RELEASE_TAG" "$GITHUB_SHA" -m "Rustleblower $RELEASE_TAG development prerelease"
+            git tag -a "$RELEASE_TAG" "$GITHUB_SHA" -m "Rustleblower $RELEASE_TAG"
             gh auth setup-git
             git push origin "refs/tags/$RELEASE_TAG"
           fi
           gh release create "$RELEASE_TAG" dist/* \
-            --verify-tag --prerelease --title "Rustleblower $RELEASE_TAG" \
+            --verify-tag --latest --title "Rustleblower $RELEASE_TAG" \
             --notes-file "docs/releases/$RELEASE_TAG.md"

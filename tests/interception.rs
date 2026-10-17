@@ -11,6 +11,7 @@ use tokio_stream::wrappers::ReceiverStream;
 use tonic::transport::{Channel, Endpoint};
 fn options(dir: &Path) -> Config {
     Config {
+        transport: Default::default(),
         socket: dir.join("ui.sock"),
         database: dir.join("history.sqlite3"),
         prompt_timeout: 5,

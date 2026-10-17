@@ -711,7 +711,7 @@ def main():
             time.sleep(0.5)
             adapter.attach(app,app.pid)
             steps("ctrl+f", "Tab", "Tab", "space")
-            adapter.attach(app, app.pid, title="^Rustleblower — history preferences$")
+            adapter.attach(app, app.pid, title="^Settings$")
             adapter.capture(evidence / "01-history-preferences.png")
             steps("ctrl+a")
             adapter.type("1")

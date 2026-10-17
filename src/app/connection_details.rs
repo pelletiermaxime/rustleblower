@@ -51,7 +51,7 @@ pub(super) fn open(
             ))),
             window_min_size: Some(size(px(680.), px(520.))),
             titlebar: Some(TitlebarOptions {
-                title: Some("Rustleblower — connection details".into()),
+                title: Some(crate::i18n::tr("Rustleblower — connection details").into()),
                 ..Default::default()
             }),
             app_id: Some("dev.rustleblower.Rustleblower".into()),
@@ -63,6 +63,7 @@ pub(super) fn open(
             cx.new(|cx| ConnectionDetails::new(backend, detail, actions, processes, window, cx))
         },
     )?;
+    crate::i18n::register_title(window, "Rustleblower — connection details", cx);
     Ok(window)
 }
 
@@ -138,8 +139,9 @@ impl ConnectionDetails {
 
     fn inspect_process(&mut self, cx: &mut Context<Self>) {
         let Some(target) = self.process_target() else {
-            self.error =
-                Some("Connect this event's daemon; a recorded positive PID is required".into());
+            self.error = Some(crate::i18n::tr(
+                "Connect this event's daemon; a recorded positive PID is required",
+            ));
             cx.notify();
             return;
         };
@@ -148,7 +150,9 @@ impl ConnectionDetails {
             Ok(()) => {
                 self.busy = true;
                 self.error = None;
-                self.message = Some("Opening current process data on this event's daemon…".into());
+                self.message = Some(crate::i18n::tr(
+                    "Opening current process data on this event's daemon…",
+                ));
                 cx.spawn(async move |this, cx| {
                     let result = pending.await.unwrap_or_else(|_| {
                         Err("Process inspection request stopped before opening".into())
@@ -157,8 +161,9 @@ impl ConnectionDetails {
                         this.busy = false;
                         match result {
                             Ok(()) => {
-                                this.message =
-                                    Some("Live process inspection opened in the main window".into())
+                                this.message = Some(crate::i18n::tr(
+                                    "Live process inspection opened in the main window",
+                                ))
                             }
                             Err(error) => {
                                 this.message = None;
@@ -170,7 +175,11 @@ impl ConnectionDetails {
                 })
                 .detach();
             }
-            Err(_) => self.error = Some("Process inspection could not be queued; try again".into()),
+            Err(_) => {
+                self.error = Some(crate::i18n::tr(
+                    "Process inspection could not be queued; try again",
+                ))
+            }
         }
         cx.notify();
     }
@@ -186,7 +195,7 @@ impl ConnectionDetails {
         }) {
             Ok(()) => {
                 self.error = None;
-                self.message = Some("Opening the rule editor for review…".into());
+                self.message = Some(crate::i18n::tr("Opening the rule editor for review…"));
                 self.busy = true;
                 cx.spawn(async move |this, cx| {
                     let result = pending.await.unwrap_or_else(|_| {
@@ -195,7 +204,10 @@ impl ConnectionDetails {
                     let _ = this.update(cx, |this, cx| {
                         this.busy = false;
                         match result {
-                            Ok(()) => this.message = Some("Rule editor opened for review".into()),
+                            Ok(()) => {
+                                this.message =
+                                    Some(crate::i18n::tr("Rule editor opened for review"))
+                            }
                             Err(error) => {
                                 this.message = None;
                                 this.error = Some(error);
@@ -207,16 +219,18 @@ impl ConnectionDetails {
                 .detach();
             }
             Err(_) => {
-                self.error = Some("The rule editor request could not be queued; try again".into())
+                self.error = Some(crate::i18n::tr(
+                    "The rule editor request could not be queued; try again",
+                ))
             }
         }
         cx.notify();
     }
     fn create(&mut self, kind: DraftKind, cx: &mut Context<Self>) {
         let Some(session) = self.session() else {
-            self.error = Some(
-                "Connect this event's daemon and reload its rules before creating a rule".into(),
-            );
+            self.error = Some(crate::i18n::tr(
+                "Connect this event's daemon and reload its rules before creating a rule",
+            ));
             cx.notify();
             return;
         };
@@ -249,38 +263,59 @@ impl ConnectionDetails {
         let task = cx.background_executor().spawn(async move {
             crate::rules::transfer::find_confirmed_rule(&database, &node, &name)
         });
-        cx.spawn_in(window,async move |this,cx|{let result=task.await;let _=this.update_in(cx,|this,_,cx|{this.busy=false;match result{Ok(Some(rule))=>this.send(rule,true,session,cx),Ok(None)=>this.error=Some("The matched rule is no longer in the current inventory; it may have expired or been deleted".into()),Err(error)=>this.error=Some(format!("Cannot read the current rule: {error:#}"))}cx.notify();});}).detach();
+        cx.spawn_in(window,async move |this,cx|{let result=task.await;let _=this.update_in(cx,|this,_,cx|{this.busy=false;match result{Ok(Some(rule))=>this.send(rule,true,session,cx),Ok(None)=>this.error=Some(crate::i18n::tr("The matched rule is no longer in the current inventory; it may have expired or been deleted")),Err(error)=>this.error=Some(crate::i18n::tr_args("Cannot read the current rule: %{error}", &[("error", &format!("{:#}", error))]))}cx.notify();});}).detach();
     }
     fn text(&self) -> String {
+        // Copy every captured value unchanged. Translate headings separately so
+        // large command lines are not squeezed into bounded UI format args.
         let row = &self.detail.row;
-        let mut text = format!(
-            "Connection {}\nTime (UTC): {}\nNode: {}\nAction: {}\nReason: {}\nExecutable: {}\nDestination: {}\nProtocol: {}\n",
-            row.id,
-            chrono::DateTime::from_timestamp_nanos(row.unixnano).to_rfc3339(),
-            row.node,
-            row.action,
-            row.reason,
-            row.process,
-            endpoint(&row.destination, row.port as u32),
-            row.protocol
-        );
+        let mut fields = vec![
+            ("Connection", row.id.to_string()),
+            (
+                "Time (UTC)",
+                chrono::DateTime::from_timestamp_nanos(row.unixnano).to_rfc3339(),
+            ),
+            ("Node", row.node.clone()),
+            ("Action", row.action.clone()),
+            ("Reason", row.reason.clone()),
+            ("Executable", row.process.clone()),
+            ("Destination", endpoint(&row.destination, row.port as u32)),
+            ("Protocol", row.protocol.clone()),
+        ];
         if let Some(c) = self.detail.connection() {
-            text.push_str(&format!("Working directory: {}\nUID: {}\nPID: {}\nSource: {}\nDestination IP: {}\nHost: {}\nCommand line: {}\n",c.process_cwd,c.user_id,c.process_id,endpoint(&c.src_ip,c.src_port),endpoint(&c.dst_ip,c.dst_port),c.dst_host,c.process_args.join(" ")));
+            fields.extend([
+                ("Working directory", c.process_cwd.clone()),
+                ("User ID", c.user_id.to_string()),
+                ("Process ID", c.process_id.to_string()),
+                ("Source", endpoint(&c.src_ip, c.src_port)),
+                ("Destination IP", endpoint(&c.dst_ip, c.dst_port)),
+                ("Host", c.dst_host.clone()),
+                ("Command line", c.process_args.join(" ")),
+            ]);
         }
         if let Some(rule) = self.detail.matched_rule() {
-            text.push_str(&format!(
-                "Matched rule: {}\nDuration: {}\n",
-                rule.name, rule.duration
-            ));
+            fields.extend([
+                ("Matched rule", rule.name.clone()),
+                ("Duration", rule.duration.clone()),
+            ]);
+        }
+        let mut text = String::new();
+        for (heading, value) in fields {
+            text.push_str(&crate::i18n::tr(heading));
+            text.push_str(": ");
+            text.push_str(&value);
+            text.push('\n');
         }
         if self.detail.event.is_none() {
-            text.push_str("Detailed metadata was not recorded for this older event.\n");
+            text.push_str(&crate::i18n::tr(
+                "Detailed metadata was not recorded for this older event.\n",
+            ));
         }
         if self.detail.truncated != 0 {
-            text.push_str(&format!(
-                "Limited fields: {}\n",
-                self.detail.omissions().join(", ")
-            ));
+            text.push_str(&crate::i18n::tr("Limited fields"));
+            text.push_str(": ");
+            text.push_str(&self.detail.omissions().join(", "));
+            text.push('\n');
         }
         text
     }
@@ -306,40 +341,51 @@ impl Render for ConnectionDetails {
                 .columns(1)
                 .label_width(px(145.))
                 .item(
-                    "Time (UTC)",
+                    crate::i18n::tr("Time (UTC)"),
                     chrono::DateTime::from_timestamp_nanos(row.unixnano).to_rfc3339(),
                     1,
                 )
-                .item("Node", row.node.clone(), 1)
-                .item("Action", row.action.clone(), 1)
-                .item("Reason", row.reason.clone(), 1)
-                .item("Executable", row.process.clone(), 1);
+                .item(crate::i18n::tr("Node"), row.node.clone(), 1)
+                .item(crate::i18n::tr("Action"), row.action.clone(), 1)
+                .item(crate::i18n::tr("Reason"), row.reason.clone(), 1)
+                .item(crate::i18n::tr("Executable"), row.process.clone(), 1);
             if let Some(c) = self.detail.connection() {
                 fields = fields
-                    .item("Working directory", c.process_cwd.clone(), 1)
-                    .item("User ID", c.user_id.to_string(), 1)
-                    .item("Process ID", c.process_id.to_string(), 1)
-                    .item("Source", endpoint(&c.src_ip, c.src_port), 1)
-                    .item("Destination IP", endpoint(&c.dst_ip, c.dst_port), 1)
-                    .item("Host", c.dst_host.clone(), 1)
-                    .item("Protocol", c.protocol.clone(), 1);
+                    .item(
+                        crate::i18n::tr("Working directory"),
+                        c.process_cwd.clone(),
+                        1,
+                    )
+                    .item(crate::i18n::tr("User ID"), c.user_id.to_string(), 1)
+                    .item(crate::i18n::tr("Process ID"), c.process_id.to_string(), 1)
+                    .item(
+                        crate::i18n::tr("Source"),
+                        endpoint(&c.src_ip, c.src_port),
+                        1,
+                    )
+                    .item(
+                        crate::i18n::tr("Destination IP"),
+                        endpoint(&c.dst_ip, c.dst_port),
+                        1,
+                    )
+                    .item(crate::i18n::tr("Host"), c.dst_host.clone(), 1)
+                    .item(crate::i18n::tr("Protocol"), c.protocol.clone(), 1);
                 if let Some(event) = &self.detail.event
                     && !event.time.is_empty()
                 {
-                    fields = fields.item("Daemon time", event.time.clone(), 1);
+                    fields = fields.item(crate::i18n::tr("Daemon time"), event.time.clone(), 1);
                 }
             } else {
                 fields = fields
                     .item(
-                        "Destination",
+                        crate::i18n::tr("Destination"),
                         endpoint(&row.destination, row.port as u32),
                         1,
                     )
-                    .item("Protocol", row.protocol.clone(), 1);
+                    .item(crate::i18n::tr("Protocol"), row.protocol.clone(), 1);
             }
             content = content.child(fields);
-            content = content.child(div().text_sm().text_color(muted).child(
-                "Inspect process requests current data from this event's daemon. The process may have exited or its PID may have been reused; live data is not a historical snapshot."
+            content = content.child(div().text_sm().text_color(muted).child(crate::i18n::tr("Inspect process requests current data from this event's daemon. The process may have exited or its PID may have been reused; live data is not a historical snapshot.")
             ));
         } else if self.tab == 1 {
             if let Some(c) = self.detail.connection() {
@@ -353,14 +399,14 @@ impl Render for ConnectionDetails {
                 }
                 content = content
                     .child(if c.process_args.is_empty() {
-                        "No arguments were reported"
+                        crate::i18n::tr("No arguments were reported")
                     } else {
-                        "Recorded arguments (quoted to preserve spaces)"
+                        crate::i18n::tr("Recorded arguments (quoted to preserve spaces)")
                     })
                     .child(fields)
                     .child(
                         Button::new("connection-copy-command")
-                            .label("Copy command line")
+                            .label(crate::i18n::tr("Copy command line"))
                             .on_click(cx.listener(|this, _, _, cx| {
                                 if let Some(c) = this.detail.connection() {
                                     cx.write_to_clipboard(ClipboardItem::new_string(
@@ -370,14 +416,16 @@ impl Render for ConnectionDetails {
                             })),
                     );
             } else {
-                content = content.child("Arguments were not recorded for this older event");
+                content = content.child(crate::i18n::tr(
+                    "Arguments were not recorded for this older event",
+                ));
             }
         } else if let Some(rule) = self.detail.matched_rule() {
-            content=content.child(DescriptionList::new().columns(1).item("Name",rule.name.clone(),1).item("Action",rule.action.clone(),1).item("Duration",rule.duration.clone(),1).item("Enabled",rule.enabled.to_string(),1).item("Priority",rule.precedence.to_string(),1).item("Logging",(!rule.nolog).to_string(),1))
-                .child(div().text_sm().text_color(muted).child("This is the rule reported with the event. Open the current rule to inspect or edit its current conditions."))
-                .child(Button::new("connection-edit-rule").label("Open current rule…").disabled(!connected||self.busy||rule.name.is_empty()||self.detail.truncated&crate::history::details::MATCHED_RULE!=0).on_click(cx.listener(|this,_,window,cx|this.edit_current(window,cx))));
+            content=content.child(DescriptionList::new().columns(1).item(crate::i18n::tr("Name"),rule.name.clone(),1).item(crate::i18n::tr("Action"),rule.action.clone(),1).item(crate::i18n::tr("Duration"),rule.duration.clone(),1).item(crate::i18n::tr("Enabled"),rule.enabled.to_string(),1).item(crate::i18n::tr("Priority"),rule.precedence.to_string(),1).item(crate::i18n::tr("Logging"),(!rule.nolog).to_string(),1))
+                .child(div().text_sm().text_color(muted).child(crate::i18n::tr("This is the rule reported with the event. Open the current rule to inspect or edit its current conditions.")))
+                .child(Button::new("connection-edit-rule").label(crate::i18n::tr("Open current rule…")).disabled(!connected||self.busy||rule.name.is_empty()||self.detail.truncated&crate::history::details::MATCHED_RULE!=0).on_click(cx.listener(|this,_,window,cx|this.edit_current(window,cx))));
         } else {
-            content = content.child("No matched rule snapshot was recorded");
+            content = content.child(crate::i18n::tr("No matched rule snapshot was recorded"));
         }
         let can_create = connected
             && !self.busy
@@ -387,17 +435,17 @@ impl Render for ConnectionDetails {
                 .is_some_and(|c| !c.process_path.is_empty())
             && self.detail.truncated & crate::history::details::PATH == 0;
         div().size_full().flex().flex_col().track_focus(&self.focus).bg(cx.theme().background).text_color(cx.theme().foreground)
-            .child(div().px_5().py_3().border_b_1().border_color(border).flex().items_center().justify_between().child(format!("Connection {} · {}",row.id,row.action)).child(Button::new("connection-copy").label("Copy details").on_click(cx.listener(|this,_,_,cx|cx.write_to_clipboard(ClipboardItem::new_string(this.text()))))))
-            .child(TabBar::new("connection-tabs").selected_index(self.tab).on_click(cx.listener(|this,index:&usize,_,cx|{this.tab = *index;cx.notify();})).child(Tab::new().label("Overview")).child(Tab::new().label("Arguments")).child(Tab::new().label("Matched rule")))
+            .child(div().px_5().py_3().border_b_1().border_color(border).flex().items_center().justify_between().child(crate::i18n::tr_args("Connection %{arg0} · %{arg1}", &[("arg0", &(row.id).to_string()), ("arg1", &(row.action).to_string())])).child(Button::new("connection-copy").label(crate::i18n::tr("Copy details")).on_click(cx.listener(|this,_,_,cx|cx.write_to_clipboard(ClipboardItem::new_string(this.text()))))))
+            .child(TabBar::new("connection-tabs").selected_index(self.tab).on_click(cx.listener(|this,index:&usize,_,cx|{this.tab = *index;cx.notify();})).child(Tab::new().label(crate::i18n::tr("Overview"))).child(Tab::new().label(crate::i18n::tr("Arguments"))).child(Tab::new().label(crate::i18n::tr("Matched rule"))))
             .when(self.detail.event.is_none(),|v|v.child(super::banner("This event predates detailed history; only its summary is available.".into(),cx)))
-            .when(self.detail.truncated!=0,|v|v.child(super::banner(format!("Recording limits shortened: {}. Rule creation requires complete match fields.",self.detail.omissions().join(", ")),cx)))
+            .when(self.detail.truncated!=0,|v|v.child(super::banner(crate::i18n::tr_args("Recording limits shortened: %{arg0}. Rule creation requires complete match fields.", &[("arg0", &self.detail.omissions().join(", ").to_string())]),cx)))
             .when_some(self.error.clone(),|v,error|v.child(super::banner(error,cx)))
-            .when_some(self.message.clone(),|v,message|v.child(div().px_5().py_2().text_sm().child(message)))
+            .when_some(self.message.clone(),|v,message|v.child(div().px_5().py_2().text_sm().child(crate::i18n::presentation(&message))))
             .child(content)
             .child(div().px_5().py_3().border_t_1().border_color(border).flex().flex_wrap().gap_2()
-                .child(Button::new("connection-create-application").label("Application rule…").disabled(!can_create).on_click(cx.listener(|this,_,_,cx|this.create(DraftKind::Application,cx))))
-                .child(Button::new("connection-create-destination").label("Application + destination…").disabled(!can_create||self.detail.truncated&crate::history::details::DESTINATION!=0).on_click(cx.listener(|this,_,_,cx|this.create(DraftKind::Destination,cx))))
-                .child(Button::new("connection-inspect-process").label("Inspect process…").disabled(!process_available||self.busy).on_click(cx.listener(|this,_,_,cx|this.inspect_process(cx))))
-                .child(Button::new("connection-close").label("Close").on_click(cx.listener(|_,_,window,_|window.remove_window()))))
+                .child(Button::new("connection-create-application").label(crate::i18n::tr("Application rule…")).disabled(!can_create).on_click(cx.listener(|this,_,_,cx|this.create(DraftKind::Application,cx))))
+                .child(Button::new("connection-create-destination").label(crate::i18n::tr("Application + destination…")).disabled(!can_create||self.detail.truncated&crate::history::details::DESTINATION!=0).on_click(cx.listener(|this,_,_,cx|this.create(DraftKind::Destination,cx))))
+                .child(Button::new("connection-inspect-process").label(crate::i18n::tr("Inspect process…")).disabled(!process_available||self.busy).on_click(cx.listener(|this,_,_,cx|this.inspect_process(cx))))
+                .child(Button::new("connection-close").label(crate::i18n::tr("Close")).on_click(cx.listener(|_,_,window,_|window.remove_window()))))
     }
 }

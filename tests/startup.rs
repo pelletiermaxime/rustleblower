@@ -8,6 +8,7 @@ use std::{
 };
 fn config(dir: &Path) -> Config {
     Config {
+        transport: Default::default(),
         socket: dir.join("ui $`% socket.sock"),
         database: dir.join("history % é.sqlite3"),
         prompt_timeout: 19,

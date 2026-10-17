@@ -18,7 +18,7 @@ use gpui_kit::component::{
 use serde_json::Value;
 use std::{collections::BTreeSet, time::Duration};
 use tokio::sync::oneshot;
-type Picker = Entity<SelectState<SearchableVec<SharedString>>>;
+type Picker = Entity<SelectState<SearchableVec<crate::i18n::LocalizedOption<usize>>>>;
 actions!(daemon_preferences, [ReviewChanges, ConfirmChanges]);
 pub(super) fn bind_keys(cx: &mut App) {
     cx.bind_keys([
@@ -46,7 +46,7 @@ pub(super) fn open(
             ))),
             window_min_size: Some(size(px(760.), px(580.))),
             titlebar: Some(TitlebarOptions {
-                title: Some("Rustleblower — daemon configuration".into()),
+                title: Some(crate::i18n::tr("Rustleblower — daemon configuration").into()),
                 ..Default::default()
             }),
             app_id: Some("dev.rustleblower.Rustleblower".into()),
@@ -56,6 +56,7 @@ pub(super) fn open(
         cx,
         move |window, cx| cx.new(|cx| Configuration::new(backend, session, node, text, window, cx)),
     )?;
+    crate::i18n::register_title(handle, "Rustleblower — daemon configuration", cx);
     Ok(handle)
 }
 enum Control {
@@ -113,9 +114,9 @@ impl Form {
                         .unwrap_or_else(|| {
                             status = Some("Unrecognized reported value; preserved unless edited.");
                             values.push((
-                                SharedString::from(format!(
-                                    "Reported: {}",
-                                    crate::history::bounded(&initial, 80)
+                                SharedString::from(crate::i18n::tr_args(
+                                    "Reported: %{arg0}",
+                                    &[("arg0", &crate::history::bounded(&initial, 80).to_string())],
                                 )),
                                 original.clone(),
                             ));
@@ -126,7 +127,10 @@ impl Form {
                             SearchableVec::new(
                                 values
                                     .iter()
-                                    .map(|(label, _)| label.clone())
+                                    .enumerate()
+                                    .map(|(index, (label, _))| {
+                                        crate::i18n::LocalizedOption::new(index, label.to_string())
+                                    })
                                     .collect::<Vec<_>>(),
                             ),
                             Some(IndexPath::new(selected)),
@@ -137,7 +141,12 @@ impl Form {
                     });
                     subscriptions.push(cx.subscribe(
                         &state,
-                        move |this, _, _: &SelectEvent<SearchableVec<SharedString>>, cx| {
+                        move |this,
+                              _,
+                              _: &SelectEvent<
+                            SearchableVec<crate::i18n::LocalizedOption<usize>>,
+                        >,
+                              cx| {
                             this.form.dirty.insert(index);
                             this.message = None;
                             cx.notify();
@@ -198,10 +207,9 @@ impl Form {
             let value = match &entry.control {
                 Control::Check(checked) => Some(Value::Bool(*checked)),
                 Control::Choice { state, values } => {
-                    let label = state.read(cx).selected_value();
-                    values
-                        .iter()
-                        .find(|(text, _)| Some(text) == label)
+                    let index = state.read(cx).selected_value().copied();
+                    index
+                        .and_then(|index| values.get(index))
                         .ok_or("Choose a daemon setting value")?
                         .1
                         .clone()
@@ -274,7 +282,9 @@ impl Configuration {
                     input.update(cx, |input, cx| {
                         input.set_value(this.last_valid.clone(), window, cx)
                     });
-                    this.error = Some("Daemon configuration must stay below 64 KiB".into());
+                    this.error = Some(crate::i18n::tr(
+                        "Daemon configuration must stay below 64 KiB",
+                    ));
                 } else {
                     this.last_valid = text;
                 }
@@ -304,7 +314,7 @@ impl Configuration {
             !busy
         });
         cx.spawn_in(window,async move|this,cx|loop{cx.background_executor().timer(Duration::from_millis(50)).await;if this.update_in(cx,|this,window,cx|{
-   if let Some(pending)=this.pending.as_mut(){match pending.try_recv(){Ok(result)=>{this.pending=None;match result{Ok(())=>{if let Some(stage)=this.stage.take(){this.original=stage.text.clone();this.last_valid=stage.text.clone();this.input.update(cx,|input,cx|input.set_value(stage.text.clone(),window,cx));let value=nodes::validate_config(&stage.text).unwrap();this.form=Form::new(&value,window,cx);}this.mode=0;this.message=Some("Daemon confirmed and saved the configuration.".into());this.error=None;},Err(error)=>{this.error=Some(error);}}cx.notify();},Err(oneshot::error::TryRecvError::Closed)=>{this.pending=None;this.error=Some("Configuration command stopped without confirmation; reconnect to verify".into());cx.notify();},_=>{}}}
+   if let Some(pending)=this.pending.as_mut(){match pending.try_recv(){Ok(result)=>{this.pending=None;match result{Ok(())=>{if let Some(stage)=this.stage.take(){this.original=stage.text.clone();this.last_valid=stage.text.clone();this.input.update(cx,|input,cx|input.set_value(stage.text.clone(),window,cx));let value=nodes::validate_config(&stage.text).unwrap();this.form=Form::new(&value,window,cx);}this.mode=0;this.message=Some(crate::i18n::tr("Daemon confirmed and saved the configuration."));this.error=None;},Err(error)=>{this.error=Some(error);}}cx.notify();},Err(oneshot::error::TryRecvError::Closed)=>{this.pending=None;this.error=Some(crate::i18n::tr("Configuration command stopped without confirmation; reconnect to verify"));cx.notify();},_=>{}}}
   }).is_err(){break;}}).detach();
         Self {
             backend,
@@ -446,7 +456,7 @@ impl Configuration {
                 Control::Check(checked) => div()
                     .child(
                         Checkbox::new(field.id)
-                            .label(field.label)
+                            .label(crate::i18n::tr(field.label))
                             .checked(*checked)
                             .disabled(locked)
                             .on_change(cx.listener(move |this, value: &bool, _, cx| {
@@ -468,14 +478,24 @@ impl Configuration {
                     .flex_col()
                     .gap_1()
                     .when(!matches!(field.kind, Kind::Boolean), |row| {
-                        row.child(div().text_sm().child(field.label))
+                        row.child(div().text_sm().child(crate::i18n::tr(field.label)))
                     })
                     .child(control)
                     .when(!field.hint.is_empty(), |row| {
-                        row.child(div().text_xs().text_color(muted).child(field.hint))
+                        row.child(
+                            div()
+                                .text_xs()
+                                .text_color(muted)
+                                .child(crate::i18n::tr(field.hint)),
+                        )
                     })
                     .when_some(entry.status, |row, status| {
-                        row.child(div().text_xs().text_color(muted).child(status))
+                        row.child(
+                            div()
+                                .text_xs()
+                                .text_color(muted)
+                                .child(crate::i18n::tr(status)),
+                        )
                     }),
             );
         }
@@ -493,7 +513,11 @@ impl Configuration {
                             .position(|(group, _)| *group == self.group)
                             .unwrap(),
                     )
-                    .children(GROUPS.iter().map(|(_, label)| Tab::new().label(*label)))
+                    .children(
+                        GROUPS
+                            .iter()
+                            .map(|(_, label)| Tab::new().label(crate::i18n::tr(label))),
+                    )
                     .on_click(cx.listener(|this, index: &usize, _, cx| {
                         this.group = GROUPS[*index].0;
                         cx.notify();
@@ -544,9 +568,9 @@ impl Render for Configuration {
                                 text.len().saturating_add(length) > nodes::CONFIG_BYTES
                             }) {
                                 let _ = weak.update(cx, |this, cx| {
-                                    this.error = Some(
-                                        "Paste would exceed the 64 KiB configuration limit".into(),
-                                    );
+                                    this.error = Some(crate::i18n::tr(
+                                        "Paste would exceed the 64 KiB configuration limit",
+                                    ));
                                     cx.notify();
                                 });
                                 true
@@ -562,19 +586,19 @@ impl Render for Configuration {
                 .stage
                 .as_ref()
                 .map_or(0, |stage| stage.review.rows.len());
-            div().flex_1().min_h_0().flex().flex_col().gap_2().child(div().text_sm().child(format!("Review {count} changed setting(s) for {}. Confirming applies and saves them on that daemon.",self.node))).when(count>model::MAX_REVIEW,|body|body.child(div().text_sm().child("Only the first 200 changes are listed. Complete JSON retains the entire bounded document.")))
-   .child(uniform_list("daemon-review-rows",rows,cx.processor(|this,range:std::ops::Range<usize>,_,cx|range.map(|index|{let row=&this.stage.as_ref().unwrap().review.rows[index];div().w_full().h(px(116.)).px_3().py_2().border_b_1().border_color(cx.theme().border).flex().flex_col().gap_1().child(div().text_sm().child(model::field(&row.path).map_or_else(||row.path.clone(),|field|field.label.into()))).child(div().text_xs().truncate().text_color(cx.theme().muted_foreground).child(row.path.clone())).child(div().text_xs().truncate().text_color(cx.theme().muted_foreground).child(format!("Before: {}",row.before))).child(div().text_xs().truncate().child(format!("After: {}",row.after)))}).collect::<Vec<_>>())).flex_1().min_h_0().w_full()).into_any_element()
+            div().flex_1().min_h_0().flex().flex_col().gap_2().child(div().text_sm().child(crate::i18n::tr_args("Review %{count} changed setting(s) for %{arg0}. Confirming applies and saves them on that daemon.", &[("count", &(count).to_string()), ("arg0", &(self.node).to_string())]))).when(count>model::MAX_REVIEW,|body|body.child(div().text_sm().child(crate::i18n::tr("Only the first 200 changes are listed. Complete JSON retains the entire bounded document."))))
+   .child(uniform_list("daemon-review-rows",rows,cx.processor(|this,range:std::ops::Range<usize>,_,cx|range.map(|index|{let row=&this.stage.as_ref().unwrap().review.rows[index];div().w_full().h(px(116.)).px_3().py_2().border_b_1().border_color(cx.theme().border).flex().flex_col().gap_1().child(div().text_sm().child(model::field(&row.path).map_or_else(||row.path.clone(),|field|crate::i18n::tr(field.label)))).child(div().text_xs().truncate().text_color(cx.theme().muted_foreground).child(row.path.clone())).child(div().text_xs().truncate().text_color(cx.theme().muted_foreground).child(crate::i18n::tr_args("Before: %{arg0}", &[("arg0", &(row.before).to_string())]))).child(div().text_xs().truncate().child(crate::i18n::tr_args("After: %{arg0}", &[("arg0", &(row.after).to_string())])))}).collect::<Vec<_>>())).flex_1().min_h_0().w_full()).into_any_element()
         };
         div().size_full().p_5().flex().flex_col().gap_3().bg(cx.theme().background).text_color(cx.theme().foreground).track_focus(&self.focus).key_context("DaemonPreferences")
   .on_action(cx.listener(|this,_:&ReviewChanges,window,cx|this.stage(window,cx))).on_action(cx.listener(|this,_:&ConfirmChanges,_,cx|this.confirm(cx)))
-  .child(div().flex_shrink_0().text_xl().child(format!("Daemon configuration — {}",self.node)))
-  .child(div().flex_shrink_0().text_sm().text_color(muted).child("Changes apply to this daemon. Unedited fields are preserved; missing settings keep their reported/default behavior. Popup defaults are separate."))
-  .child(TabBar::new("daemon-config-modes").flex_shrink_0().selected_index(self.mode).children([Tab::new().label("Settings"),Tab::new().label("Complete JSON"),Tab::new().label("Review")]).on_click(cx.listener(|this,index:&usize,window,cx|this.change_mode(*index,window,cx))))
-  .child(content).when_some(self.error.clone(),|body,error|body.child(super::banner(error,cx))).when_some(self.message.clone(),|body,message|body.child(div().text_sm().child(message)))
-  .child(div().flex_shrink_0().text_xs().text_color(muted).child("Ctrl+Enter reviews changes · Ctrl+Shift+Enter confirms after review"))
-  .child(div().flex_shrink_0().flex().gap_3().child(Button::new("node-config-review").label("Review changes").disabled(locked||!connected).on_click(cx.listener(|this,_,window,cx|this.stage(window,cx))))
-   .child(Button::new("node-config-confirm").label("Confirm apply").disabled(busy||self.stage.is_none()||!connected).on_click(cx.listener(|this,_,_,cx|this.confirm(cx))))
-   .child(Button::new("node-config-cancel").label("Back to editing").disabled(busy||self.stage.is_none()).on_click(cx.listener(|this,_,window,cx|this.change_mode(0,window,cx))))
-   .child(Button::new("node-config-close").label("Close").disabled(busy).on_click(|_,window,_|window.remove_window())))
+  .child(div().flex_shrink_0().text_xl().child(crate::i18n::tr_args("Daemon configuration — %{arg0}", &[("arg0", &(self.node).to_string())])))
+  .child(div().flex_shrink_0().text_sm().text_color(muted).child(crate::i18n::tr("Changes apply to this daemon. Unedited fields are preserved; missing settings keep their reported/default behavior. Popup defaults are separate.")))
+  .child(TabBar::new("daemon-config-modes").flex_shrink_0().selected_index(self.mode).children([Tab::new().label(crate::i18n::tr("Settings")),Tab::new().label(crate::i18n::tr("Complete JSON")),Tab::new().label(crate::i18n::tr("Review"))]).on_click(cx.listener(|this,index:&usize,window,cx|this.change_mode(*index,window,cx))))
+  .child(content).when_some(self.error.clone(),|body,error|body.child(super::banner(error,cx))).when_some(self.message.clone(),|body,message|body.child(div().text_sm().child(crate::i18n::presentation(&message))))
+  .child(div().flex_shrink_0().text_xs().text_color(muted).child(crate::i18n::tr("Ctrl+Enter reviews changes · Ctrl+Shift+Enter confirms after review")))
+  .child(div().flex_shrink_0().flex().gap_3().child(Button::new("node-config-review").label(crate::i18n::tr("Review changes")).disabled(locked||!connected).on_click(cx.listener(|this,_,window,cx|this.stage(window,cx))))
+   .child(Button::new("node-config-confirm").label(crate::i18n::tr("Confirm apply")).disabled(busy||self.stage.is_none()||!connected).on_click(cx.listener(|this,_,_,cx|this.confirm(cx))))
+   .child(Button::new("node-config-cancel").label(crate::i18n::tr("Back to editing")).disabled(busy||self.stage.is_none()).on_click(cx.listener(|this,_,window,cx|this.change_mode(0,window,cx))))
+   .child(Button::new("node-config-close").label(crate::i18n::tr("Close")).disabled(busy).on_click(|_,window,_|window.remove_window())))
     }
 }

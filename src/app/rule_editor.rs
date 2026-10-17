@@ -15,7 +15,7 @@ use gpui_kit::component::{
     select::{SearchableVec, Select, SelectEvent, SelectState},
 };
 
-type Picker = Entity<SelectState<SearchableVec<SharedString>>>;
+type Picker = Entity<SelectState<SearchableVec<crate::i18n::LocalizedOption<String>>>>;
 const ACTIONS: &[(&str, &str)] = &[("allow", "Allow"), ("deny", "Deny"), ("reject", "Reject")];
 const DURATIONS: &[(&str, &str)] = &[
     ("once", "Once"),
@@ -71,13 +71,13 @@ fn picker(
 ) -> Picker {
     let mut labels = options
         .iter()
-        .map(|(_, label)| SharedString::from(label.to_string()))
+        .map(|(value, label)| crate::i18n::LocalizedOption::new((*value).to_owned(), *label))
         .collect::<Vec<_>>();
     let index = options
         .iter()
         .position(|(key, _)| *key == value)
         .unwrap_or_else(|| {
-            labels.push(value.to_string().into());
+            labels.push(crate::i18n::LocalizedOption::raw(value.to_string(), value));
             labels.len() - 1
         });
     let state = cx.new(|cx| {
@@ -91,21 +91,15 @@ fn picker(
     });
     cx.subscribe(
         &state,
-        |_, _, _: &SelectEvent<SearchableVec<SharedString>>, cx| cx.notify(),
+        |_, _, _: &SelectEvent<SearchableVec<crate::i18n::LocalizedOption<String>>>, cx| {
+            cx.notify()
+        },
     )
     .detach();
     state
 }
-fn selected(state: &Picker, options: &[(&str, &str)], cx: &App) -> String {
-    let label = state
-        .read(cx)
-        .selected_value()
-        .map(|v| v.to_string())
-        .unwrap_or_default();
-    options
-        .iter()
-        .find(|(_, name)| *name == label)
-        .map_or(label.clone(), |(key, _)| key.to_string())
+fn selected(state: &Picker, _options: &[(&str, &str)], cx: &App) -> String {
+    state.read(cx).selected_value().cloned().unwrap_or_default()
 }
 fn input(
     value: impl Into<SharedString>,
@@ -116,7 +110,7 @@ fn input(
     cx.new(|cx| {
         InputState::new(window, cx)
             .default_value(value)
-            .placeholder(hint)
+            .placeholder(crate::i18n::placeholder(hint, window, cx))
     })
 }
 
@@ -214,7 +208,7 @@ pub(super) fn open(
             ))),
             window_min_size: Some(size(px(720.), px(540.))),
             titlebar: Some(TitlebarOptions {
-                title: Some("Rustleblower — application rule".into()),
+                title: Some(crate::i18n::tr("Rustleblower — application rule").into()),
                 ..Default::default()
             }),
             app_id: Some("dev.rustleblower.Rustleblower".into()),
@@ -226,6 +220,7 @@ pub(super) fn open(
             cx.new(|cx| RuleEditor::new(backend, session, rule, original, window, cx))
         },
     )?;
+    crate::i18n::register_title(window, "Rustleblower — application rule", cx);
     Ok(window)
 }
 
@@ -420,7 +415,12 @@ impl RuleEditor {
                 })
                 .detach();
             }
-            Err(error) => self.error = Some(format!("Cannot review destinations: {error:#}")),
+            Err(error) => {
+                self.error = Some(crate::i18n::tr_args(
+                    "Cannot review destinations: %{error}",
+                    &[("error", &format!("{:#}", error))],
+                ))
+            }
         }
         cx.notify();
     }
@@ -449,7 +449,7 @@ impl RuleEditor {
         let name = rule.name.clone();
         let check=cx.background_executor().spawn(async move {
             let node=node.ok_or("Daemon changed or disconnected; reopen this editor")?;
-            if unique&&crate::rules::transfer::find_rule(&database,&node,&name).map_err(|error|format!("Cannot check rule name: {error:#}"))?.is_some() {
+            if unique&&crate::rules::transfer::find_rule(&database,&node,&name).map_err(|error|crate::i18n::tr_args("Cannot check rule name: %{error}", &[("error", &format!("{:#}", error))]))?.is_some() {
                 return Err("A rule with this name already exists; choose a different name or edit the existing rule".to_string());
             }
             Ok::<_,String>(())
@@ -470,8 +470,9 @@ impl RuleEditor {
                     let rx = control
                         .submit(session, Action::DeleteRule, old)
                         .map_err(|e| {
-                            format!(
-                                "New rule was saved, but the original could not be deleted: {e}"
+                            crate::i18n::tr_args(
+                                "New rule was saved, but the original could not be deleted: %{e}",
+                                &[("e", &e.to_string())],
                             )
                         })?;
                     rx.await
@@ -480,8 +481,9 @@ impl RuleEditor {
                                 .to_string()
                         })?
                         .map_err(|e| {
-                            format!(
-                                "New rule was saved, but the original could not be deleted: {e}"
+                            crate::i18n::tr_args(
+                                "New rule was saved, but the original could not be deleted: %{e}",
+                                &[("e", &e.to_string())],
                             )
                         })?;
                 }
@@ -509,27 +511,29 @@ impl Render for RuleEditor {
         let border = cx.theme().border;
         let busy = self.busy;
         let metadata=div().flex().flex_col().gap_3()
-            .child(div().text_sm().child(self.backend.session(self.session).map(|s|format!("Target node: {}",s.name)).unwrap_or_else(||"Target node disconnected; reopen this editor before saving.".into())))
-            .child(div().text_sm().text_color(muted).child("Name and description"))
+            .child(div().text_sm().child(self.backend.session(self.session).map(|s|crate::i18n::tr_args("Target node: %{arg0}", &[("arg0", &s.name.to_string())])).unwrap_or_else(||"Target node disconnected; reopen this editor before saving.".into())))
+            .child(div().text_sm().text_color(muted).child(crate::i18n::tr("Name and description")))
             .child(Input::new(&self.name).id("editor-name").disabled(busy))
             .child(Input::new(&self.description).id("editor-description").disabled(busy))
             .child(div().flex().gap_3().items_center()
-                .child(Select::new(&self.action).id("editor-action").accessibility_label("Rule action").w(px(180.)).disabled(busy))
-                .child(Select::new(&self.duration).id("editor-duration").accessibility_label("Rule duration").w(px(220.)).disabled(busy||self.custom_duration_enabled))
-                .child(Checkbox::new("editor-custom-duration-enabled").label("Custom duration").checked(self.custom_duration_enabled).disabled(busy).on_change(cx.listener(|this,value:&bool,_,cx|{this.custom_duration_enabled = *value;cx.notify();}))))
+                .child(Select::new(&self.action).id("editor-action").accessibility_label(crate::i18n::tr("Rule action")).w(px(180.)).disabled(busy))
+                .child(Select::new(&self.duration).id("editor-duration").accessibility_label(crate::i18n::tr("Rule duration")).w(px(220.)).disabled(busy||self.custom_duration_enabled))
+                .child(Checkbox::new("editor-custom-duration-enabled").label(crate::i18n::tr("Custom duration")).checked(self.custom_duration_enabled).disabled(busy).on_change(cx.listener(|this,value:&bool,_,cx|{this.custom_duration_enabled = *value;cx.notify();}))))
             .when(self.custom_duration_enabled,|v|v.child(Input::new(&self.custom_duration).id("editor-custom-duration").disabled(busy)))
             .child(div().flex().gap_4()
-                .child(Checkbox::new("editor-enabled").label("Enabled").checked(self.enabled).disabled(busy).on_change(cx.listener(|this,value:&bool,_,cx|{this.enabled = *value;cx.notify();})))
-                .child(Checkbox::new("editor-priority").label("Priority").checked(self.priority).disabled(busy).on_change(cx.listener(|this,value:&bool,_,cx|{this.priority = *value;cx.notify();})))
-                .child(Checkbox::new("editor-logging").label("Log matching connections").checked(self.logging).disabled(busy).on_change(cx.listener(|this,value:&bool,_,cx|{this.logging = *value;cx.notify();}))))
-            .child(div().text_xs().text_color(muted).child("Priority stops evaluation when this rule matches. Other deny/reject rules can override a non-priority allow."));
+                .child(Checkbox::new("editor-enabled").label(crate::i18n::tr("Enabled")).checked(self.enabled).disabled(busy).on_change(cx.listener(|this,value:&bool,_,cx|{this.enabled = *value;cx.notify();})))
+                .child(Checkbox::new("editor-priority").label(crate::i18n::tr("Priority")).checked(self.priority).disabled(busy).on_change(cx.listener(|this,value:&bool,_,cx|{this.priority = *value;cx.notify();})))
+                .child(Checkbox::new("editor-logging").label(crate::i18n::tr("Log matching connections")).checked(self.logging).disabled(busy).on_change(cx.listener(|this,value:&bool,_,cx|{this.logging = *value;cx.notify();}))))
+            .child(div().text_xs().text_color(muted).child(crate::i18n::tr("Priority stops evaluation when this rule matches. Other deny/reject rules can override a non-priority allow.")));
         let mut matches = div().flex().flex_col().gap_3();
         if self.raw_mode {
-            matches = matches.child("OpenSnitch match JSON").child(
-                div()
-                    .id("editor-match-json")
-                    .child(Textarea::new(&self.raw).disabled(busy)),
-            );
+            matches = matches
+                .child(crate::i18n::tr("OpenSnitch match JSON"))
+                .child(
+                    div()
+                        .id("editor-match-json")
+                        .child(Textarea::new(&self.raw).disabled(busy)),
+                );
         } else {
             for row in &self.conditions {
                 let id = row.id;
@@ -552,20 +556,20 @@ impl Render for RuleEditor {
                                 .child(
                                     Select::new(&row.field)
                                         .id(("editor-field", id))
-                                        .accessibility_label("Match field")
+                                        .accessibility_label(crate::i18n::tr("Match field"))
                                         .w(px(230.))
                                         .disabled(busy),
                                 )
                                 .child(
                                     Select::new(&row.kind)
                                         .id(("editor-match", id))
-                                        .accessibility_label("Match type")
+                                        .accessibility_label(crate::i18n::tr("Match type"))
                                         .w(px(230.))
                                         .disabled(busy),
                                 )
                                 .child(
                                     Checkbox::new(("editor-case", id))
-                                        .label("Case sensitive")
+                                        .label(crate::i18n::tr("Case sensitive"))
                                         .checked(row.sensitive)
                                         .disabled(busy)
                                         .on_change(cx.listener(
@@ -581,13 +585,11 @@ impl Render for RuleEditor {
                                 ),
                         )
                         .when(is_range, |v| v.child(
-                            div().text_xs().text_color(muted).child(
-                                "Inclusive min-max, e.g. 8000-8080. Ports run from 0 to 65535. Use Source port or Destination port."
+                            div().text_xs().text_color(muted).child(crate::i18n::tr("Inclusive min-max, e.g. 8000-8080. Ports run from 0 to 65535. Use Source port or Destination port.")
                             )
                         ))
                         .when(is_range && !self.backend.control.range_supported(self.session), |v| v.child(
-                            div().text_xs().text_color(muted).child(
-                                "Range support is unconfirmed for this daemon. Saving requires OpenSnitch 1.9 or an existing reported range rule."
+                            div().text_xs().text_color(muted).child(crate::i18n::tr("Range support is unconfirmed for this daemon. Saving requires OpenSnitch 1.9 or an existing reported range rule.")
                             )
                         ))
                         .when(is_env, |v| {
@@ -610,7 +612,7 @@ impl Render for RuleEditor {
                                 )
                                 .child(
                                     Button::new(("editor-remove", id))
-                                        .label("Remove")
+                                        .label(crate::i18n::tr("Remove"))
                                         .disabled(busy)
                                         .on_click(cx.listener(move |this, _, _, cx| {
                                             this.conditions.retain(|row| row.id != id);
@@ -622,21 +624,21 @@ impl Render for RuleEditor {
             }
         }
         let body=div().id("rule-editor-body").flex_1().min_h_0().overflow_y_scroll().p_5().flex().flex_col().gap_4()
-            .child(metadata).child(div().flex().items_center().justify_between().child("Match all of these conditions")
-                .child(Button::new("editor-json-toggle").label(if self.raw_mode{"Structured conditions"}else{"Match JSON"}).disabled(busy)
+            .child(metadata).child(div().flex().items_center().justify_between().child(crate::i18n::tr("Match all of these conditions"))
+                .child(Button::new("editor-json-toggle").label(if self.raw_mode{crate::i18n::tr("Structured conditions")}else{crate::i18n::tr("Match JSON")}).disabled(busy)
                     .on_click(cx.listener(|this,_,window,cx|{
                         if this.raw_mode {
                             match document::operator_from_text(this.raw.read(cx).value().as_ref()) {
-                                Ok(op)=>{let ops=if op.r#type=="list"{op.list.clone()}else{vec![op]};if ops.len()>64||ops.iter().any(|o|o.r#type=="list"){this.error=Some("This match requires the JSON view to preserve all its nested conditions".into());}else{this.conditions=ops.into_iter().map(|op|{let id=this.next;this.next+=1;Condition::new(id,op,window,cx)}).collect();this.raw_mode=false;}},
+                                Ok(op)=>{let ops=if op.r#type=="list"{op.list.clone()}else{vec![op]};if ops.len()>64||ops.iter().any(|o|o.r#type=="list"){this.error=Some(crate::i18n::tr("This match requires the JSON view to preserve all its nested conditions"));}else{this.conditions=ops.into_iter().map(|op|{let id=this.next;this.next+=1;Condition::new(id,op,window,cx)}).collect();this.raw_mode=false;}},
                                 Err(e)=>this.error=Some(e)
                             }
                         } else {match this.operator(cx){Ok(op)=>{let text=serde_json::to_string_pretty(&document::operator_json(&op)).unwrap();this.raw.update(cx,|raw,cx|raw.set_value(text,window,cx));this.raw_mode=true;},Err(e)=>this.error=Some(e)}}
                         cx.notify();
                     }))))
             .child(matches)
-            .when(!self.raw_mode,|v|v.child(Button::new("editor-add-condition").label("Add condition").disabled(busy||self.conditions.len()>=64)
+            .when(!self.raw_mode,|v|v.child(Button::new("editor-add-condition").label(crate::i18n::tr("Add condition")).disabled(busy||self.conditions.len()>=64)
                 .on_click(cx.listener(|this,_,window,cx|{let id=this.next;this.next+=1;this.conditions.push(Condition::new(id,Operator {r#type:"simple".into(),operand:"dest.host".into(),sensitive:true,..Default::default()},window,cx));cx.notify();}))))
-            .child(div().text_xs().text_color(muted).child("Network conditions use CIDR or daemon aliases such as LAN. Watched lists refer to directories on the daemon. Checksums require daemon checksum monitoring."));
+            .child(div().text_xs().text_color(muted).child(crate::i18n::tr("Network conditions use CIDR or daemon aliases such as LAN. Watched lists refer to directories on the daemon. Checksums require daemon checksum monitoring.")));
         #[cfg(feature = "headless-tests")]
         let body = body.test_support();
         div()
@@ -654,9 +656,9 @@ impl Render for RuleEditor {
                     .border_color(border)
                     .text_lg()
                     .child(if self.original.is_some() {
-                        "Edit application rule"
+                        crate::i18n::tr("Edit application rule")
                     } else {
-                        "New application rule"
+                        crate::i18n::tr("New application rule")
                     }),
             )
             .when_some(self.error.clone(), |v, error| {
@@ -666,7 +668,7 @@ impl Render for RuleEditor {
                         .py_2()
                         .bg(cx.theme().warning.opacity(0.15))
                         .text_color(cx.theme().warning)
-                        .child(error),
+                        .child(crate::i18n::presentation(&error)),
                 )
             })
             .child(body)
@@ -680,11 +682,11 @@ impl Render for RuleEditor {
                     .justify_between()
                     .items_center()
                     .child(if self.distributing {
-                        "Reviewing destination nodes…"
+                        crate::i18n::tr("Reviewing destination nodes…")
                     } else if busy {
-                        "Waiting for daemon confirmation…"
+                        crate::i18n::tr("Waiting for daemon confirmation…")
                     } else {
-                        "Saved only after the daemon confirms the change."
+                        crate::i18n::tr("Saved only after the daemon confirms the change.")
                     })
                     .child(
                         div()
@@ -692,7 +694,7 @@ impl Render for RuleEditor {
                             .gap_2()
                             .child(
                                 Button::new("editor-cancel")
-                                    .label("Cancel")
+                                    .label(crate::i18n::tr("Cancel"))
                                     .disabled(busy)
                                     .on_click(
                                         cx.listener(|_, _, window, _| window.remove_window()),
@@ -700,7 +702,7 @@ impl Render for RuleEditor {
                             )
                             .child(
                                 Button::new("editor-nodes")
-                                    .label("Apply to nodes…")
+                                    .label(crate::i18n::tr("Apply to nodes…"))
                                     .disabled(busy)
                                     .on_click(cx.listener(|this, _, window, cx| {
                                         this.distribute(window, cx)
@@ -708,7 +710,7 @@ impl Render for RuleEditor {
                             )
                             .child(
                                 Button::new("editor-save")
-                                    .label("Save rule")
+                                    .label(crate::i18n::tr("Save rule"))
                                     .disabled(busy)
                                     .on_click(
                                         cx.listener(|this, _, window, cx| this.save(window, cx)),

@@ -11,6 +11,7 @@ pub(super) struct Bulk {
     format: Picker,
     fields: Vec<Entity<InputState>>,
     overrides: [bool; 3],
+    limits: limits::Controls,
     pub review: Option<data::Review>,
     offset: usize,
 }
@@ -21,7 +22,14 @@ pub(super) fn picker(
 ) -> Picker {
     let state = cx.new(|cx| {
         SelectState::new(
-            SearchableVec::new(labels),
+            SearchableVec::new(
+                labels
+                    .into_iter()
+                    .map(|label| {
+                        crate::i18n::LocalizedOption::new(label.clone(), label.to_string())
+                    })
+                    .collect::<Vec<_>>(),
+            ),
             Some(IndexPath::new(0)),
             window,
             cx,
@@ -30,7 +38,9 @@ pub(super) fn picker(
     });
     cx.subscribe(
         &state,
-        |_, _, _: &SelectEvent<SearchableVec<SharedString>>, cx| cx.notify(),
+        |_, _, _: &SelectEvent<SearchableVec<crate::i18n::LocalizedOption<SharedString>>>, cx| {
+            cx.notify()
+        },
     )
     .detach();
     state
@@ -56,21 +66,21 @@ impl Bulk {
             .filter(|s| !s.is_empty())
             .map(str::to_owned)
             .collect();
-        let override_value = |index: usize| -> Result<Option<Option<u64>>, String> {
-            if !self.overrides[index] {
-                return Ok(None);
+        let mut counts = [None; 3];
+        for (index, count) in counts.iter_mut().enumerate() {
+            if self.overrides[index] {
+                let text = self.fields[index + 1].read(cx).value();
+                if !text.trim().is_empty() {
+                    *count = Some(
+                        text.trim()
+                            .parse()
+                            .map_err(|_| "Enter whole nonnegative limit counts")?,
+                    );
+                }
             }
-            let text = self.fields[index + 1].read(cx).value();
-            if text.trim().is_empty() {
-                Ok(Some(None))
-            } else {
-                Ok(Some(Some(
-                    text.trim()
-                        .parse()
-                        .map_err(|_| "Enter a whole nonnegative limit")?,
-                )))
-            }
-        };
+        }
+        let values = self.limits.overrides(counts, cx)?;
+        let change = |index: usize| self.overrides[index].then_some(values[index]);
         let format = value(&self.format, cx);
         let patch = data::Patch {
             enabled: match value(&self.enabled, cx).as_str() {
@@ -90,26 +100,9 @@ impl Bulk {
                 .find(|(_, label)| *label == format)
                 .map(|(key, _)| Format::parse(key))
                 .transpose()?,
-            interval: override_value(0)?
-                .map(|v| {
-                    v.map(u32::try_from)
-                        .transpose()
-                        .map_err(|_| "Interval is too large")
-                })
-                .transpose()?,
-            timeout: override_value(1)?
-                .map(|v| {
-                    v.map(u32::try_from)
-                        .transpose()
-                        .map_err(|_| "Timeout is too large")
-                })
-                .transpose()?,
-            max_bytes: override_value(2)?
-                .map(|v| {
-                    v.map(|n| n.checked_mul(1024).ok_or("Size is too large"))
-                        .transpose()
-                })
-                .transpose()?,
+            interval: change(0),
+            timeout: change(1),
+            max_bytes: change(2),
         };
         patch.validate()?;
         let scope = if self.matching {
@@ -141,6 +134,10 @@ impl Dashboard {
         {
             return;
         }
+        let Some(defaults) = view.page.as_ref().map(|p| p.settings.clone()) else {
+            return;
+        };
+        let (limits, _) = limits::Controls::subscription(&Spec::default(), defaults, window, cx);
         let search = view.input.read(cx).value().to_string();
         let ids = view.marked.iter().copied().collect::<Vec<_>>();
         let enabled = picker(
@@ -186,6 +183,7 @@ impl Dashboard {
             format,
             fields,
             overrides: [false; 3],
+            limits,
             review: None,
             offset: 0,
         });
@@ -234,10 +232,14 @@ impl Dashboard {
             .flex()
             .flex_col()
             .gap_3()
-            .child("Bulk subscription changes");
+            .child(crate::i18n::tr("Bulk subscription changes"));
         if let Some(review) = &view.review {
-            body = body.child(format!("{} examined · {} changes · {} unchanged",review.scanned,review.entries.len(),review.scanned-review.entries.len()))
-                .child(div().text_sm().child("Only these reviewed changes will apply. Enabled state, groups and input format change collection membership. Existing rule definitions and retained direct-list data are preserved. A concurrent edit rejects the entire batch; rebuild the review to include it."));
+            body = body.child(crate::i18n::tr_args("%{arg0} examined · %{arg1} changes · %{arg2} unchanged", &[("arg0", &(review.scanned).to_string()), ("arg1", &(review.entries.len()).to_string()), ("arg2", &(review.scanned-review.entries.len()).to_string())]))
+                .child(div().text_sm().child(crate::i18n::tr("Only these reviewed changes will apply. Enabled state, groups and input format change collection membership. Existing rule definitions and retained direct-list data are preserved. A concurrent edit rejects the entire batch; rebuild the review to include it.")));
+            body = body.child(crate::i18n::tr_args(
+                "Reviewed defaults: %{arg0}",
+                &[("arg0", &(review.settings.count_units_label()).to_string())],
+            ));
             let mut rows = div()
                 .id("subs-bulk-review-rows")
                 .min_h(px(96.))
@@ -251,7 +253,7 @@ impl Dashboard {
                     "{} (#{})\n{}",
                     entry.before.name,
                     entry.id,
-                    changes(entry)
+                    changes(entry, &review.settings)
                 )));
             }
             body = body
@@ -263,7 +265,7 @@ impl Dashboard {
                         .gap_2()
                         .child(
                             Button::new("subs-bulk-prev")
-                                .label("Previous changes")
+                                .label(crate::i18n::tr("Previous changes"))
                                 .disabled(busy || view.offset == 0)
                                 .on_click(cx.listener(|this, _, _, cx| {
                                     if let Some(v) = &mut this.subscriptions.bulk {
@@ -272,19 +274,29 @@ impl Dashboard {
                                     cx.notify();
                                 })),
                         )
-                        .child(format!(
-                            "{}–{} of {}",
-                            if review.entries.is_empty() {
-                                0
-                            } else {
-                                view.offset + 1
-                            },
-                            (view.offset + REVIEW_PAGE).min(review.entries.len()),
-                            review.entries.len()
+                        .child(crate::i18n::tr_args(
+                            "%{arg0}–%{arg1} of %{arg2}",
+                            &[
+                                (
+                                    "arg0",
+                                    &(if review.entries.is_empty() {
+                                        0
+                                    } else {
+                                        view.offset + 1
+                                    })
+                                    .to_string(),
+                                ),
+                                (
+                                    "arg1",
+                                    &((view.offset + REVIEW_PAGE).min(review.entries.len()))
+                                        .to_string(),
+                                ),
+                                ("arg2", &(review.entries.len()).to_string()),
+                            ],
                         ))
                         .child(
                             Button::new("subs-bulk-next")
-                                .label("Next changes")
+                                .label(crate::i18n::tr("Next changes"))
                                 .disabled(busy || view.offset + REVIEW_PAGE >= review.entries.len())
                                 .on_click(cx.listener(|this, _, _, cx| {
                                     if let Some(v) = &mut this.subscriptions.bulk {
@@ -301,7 +313,7 @@ impl Dashboard {
                         .gap_2()
                         .child(
                             Button::new("subs-bulk-back")
-                                .label("Back to fields")
+                                .label(crate::i18n::tr("Back to fields"))
                                 .disabled(busy)
                                 .on_click(cx.listener(|this, _, _, cx| {
                                     if let Some(v) = &mut this.subscriptions.bulk {
@@ -313,7 +325,7 @@ impl Dashboard {
                         )
                         .child(
                             Button::new("subs-bulk-rebuild")
-                                .label("Rebuild review")
+                                .label(crate::i18n::tr("Rebuild review"))
                                 .disabled(busy)
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     this.review_subscription_bulk(window, cx)
@@ -321,7 +333,7 @@ impl Dashboard {
                         )
                         .child(
                             Button::new("subs-bulk-apply")
-                                .label("Apply reviewed changes")
+                                .label(crate::i18n::tr("Apply reviewed changes"))
                                 .disabled(busy || review.entries.is_empty())
                                 .on_click(
                                     cx.listener(|this, _, _, cx| this.apply_subscription_bulk(cx)),
@@ -330,18 +342,25 @@ impl Dashboard {
                 );
         } else {
             body = body
-                .child(format!(
-                    "{} marked across pages · filter captured: {}",
-                    view.ids.len(),
-                    if view.search.is_empty() {
-                        "all active subscriptions"
-                    } else {
-                        &view.search
-                    }
+                .child(crate::i18n::tr_args(
+                    "%{arg0} marked across pages · filter captured: %{arg1}",
+                    &[
+                        ("arg0", &(view.ids.len()).to_string()),
+                        (
+                            "arg1",
+                            (if view.search.is_empty() {
+                                "all active subscriptions"
+                            } else {
+                                &view.search
+                            }),
+                        ),
+                    ],
                 ))
                 .child(
                     Checkbox::new("subs-bulk-matching")
-                        .label("All active subscriptions matching this filter, across every page")
+                        .label(crate::i18n::tr(
+                            "All active subscriptions matching this filter, across every page",
+                        ))
                         .checked(view.matching)
                         .disabled(busy)
                         .on_change(cx.listener(|this, v: &bool, _, cx| {
@@ -365,7 +384,7 @@ impl Dashboard {
                             .disabled(busy),
                     ),
                 )
-                .child("Group labels, separated by commas")
+                .child(crate::i18n::tr("Group labels, separated by commas"))
                 .child(
                     Input::new(&view.fields[0])
                         .id("subs-bulk-groups")
@@ -378,13 +397,12 @@ impl Dashboard {
                             .disabled(busy),
                     ),
                 );
-            body = body.child(div().text_sm().child(
-                "Check a limit to change it; an empty checked field inherits the global default.",
+            body = body.child(div().text_sm().child(crate::i18n::tr("Check a limit to change it. An empty count and Inherit default unit inherit independently; unchecked limits keep their current values. Review shows the effective values."),
             ));
             for (index, label) in [
-                "Change interval (seconds)",
-                "Change timeout (seconds)",
-                "Change maximum list size (KiB)",
+                "Change interval count",
+                "Change timeout count",
+                "Change maximum list count",
             ]
             .iter()
             .enumerate()
@@ -396,7 +414,7 @@ impl Dashboard {
                         .items_center()
                         .child(
                             Checkbox::new(("subs-bulk-override", index))
-                                .label(*label)
+                                .label(crate::i18n::tr(label))
                                 .checked(view.overrides[index])
                                 .disabled(busy)
                                 .on_change(cx.listener(move |this, v: &bool, _, cx| {
@@ -410,13 +428,20 @@ impl Dashboard {
                             Input::new(&view.fields[index + 1])
                                 .id(("subs-bulk-limit", index))
                                 .disabled(busy || !view.overrides[index]),
+                        )
+                        .child(
+                            div().w(px(170.)).h_8().flex_shrink_0().child(
+                                Select::new(&view.limits.pickers[index])
+                                    .id(("subs-bulk-unit", index))
+                                    .disabled(busy || !view.overrides[index]),
+                            ),
                         ),
                 );
             }
             body =
                 body.child(
                     Button::new("subs-bulk-review")
-                        .label("Review changes")
+                        .label(crate::i18n::tr("Review changes"))
                         .disabled(busy)
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.review_subscription_bulk(window, cx)
@@ -425,7 +450,7 @@ impl Dashboard {
         }
         body.child(
             Button::new("subs-bulk-cancel")
-                .label("Cancel bulk changes")
+                .label(crate::i18n::tr("Cancel bulk changes"))
                 .disabled(busy)
                 .on_click(cx.listener(|this, _, window, cx| {
                     this.subscriptions.bulk = None;
@@ -436,24 +461,31 @@ impl Dashboard {
         )
     }
 }
-fn changes(entry: &data::Entry) -> String {
+fn changes(entry: &data::Entry, settings: &Settings) -> String {
     let (before, after) = (&entry.before, &entry.after);
     let mut lines = Vec::new();
     if before.enabled != after.enabled {
-        lines.push(format!("Enabled: {} → {}", before.enabled, after.enabled));
+        lines.push(crate::i18n::tr_args(
+            "Enabled: %{arg0} → %{arg1}",
+            &[
+                ("arg0", &format!("{}", before.enabled)),
+                ("arg1", &format!("{}", after.enabled)),
+            ],
+        ));
     }
     if before.groups != after.groups {
-        lines.push(format!(
-            "Groups: [{}] → [{}]",
-            before.groups.join(", "),
-            after.groups.join(", ")
+        lines.push(crate::i18n::tr_args(
+            "Groups: [%{arg0}] → [%{arg1}]",
+            &[
+                ("arg0", &before.groups.join(", ").to_string()),
+                ("arg1", &after.groups.join(", ").to_string()),
+            ],
         ));
     }
     if before.format != after.format {
-        lines.push(format!(
-            "Input format: {} → {}",
-            before.format.key(),
-            after.format.key()
+        lines.push(crate::i18n::tr_args(
+            "Input format: %{arg0} → %{arg1}",
+            &[("arg0", before.format.key()), ("arg1", after.format.key())],
         ));
     }
     let limit = |value: Option<crate::subscriptions::limits::Override>, size| {
@@ -485,5 +517,25 @@ fn changes(entry: &data::Entry) -> String {
             ));
         }
     }
+    let effective_label = |spec: &Spec| match effective(spec, settings) {
+        Ok((interval, timeout, size)) => crate::i18n::tr_args(
+            "%{interval}s interval / %{timeout}s timeout / %{size} bytes maximum",
+            &[
+                ("interval", &format!("{}", interval)),
+                ("timeout", &format!("{}", timeout)),
+                ("size", &format!("{}", size)),
+            ],
+        ),
+        Err(error) => {
+            crate::i18n::tr_args("Unavailable: %{error}", &[("error", &error.to_string())])
+        }
+    };
+    lines.push(crate::i18n::tr_args(
+        "Effective: %{arg0} → %{arg1}",
+        &[
+            ("arg0", &effective_label(before).to_string()),
+            ("arg1", &effective_label(after).to_string()),
+        ],
+    ));
     lines.join("\n")
 }

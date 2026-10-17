@@ -21,29 +21,7 @@ pub(super) fn bind_keys(cx: &mut App) {
         ),
     ]);
 }
-pub(super) fn open(history: History, cx: &mut App) -> gpui::Result<AnyWindowHandle> {
-    let (handle, _) = gpui_kit::open_window(
-        WindowOptions {
-            window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
-                None,
-                size(px(800.), px(700.)),
-                cx,
-            ))),
-            window_min_size: Some(size(px(680.), px(560.))),
-            titlebar: Some(TitlebarOptions {
-                title: Some("Rustleblower — history preferences".into()),
-                ..Default::default()
-            }),
-            app_id: Some("dev.rustleblower.Rustleblower".into()),
-            icon: Some(super::brand_icons::window_icon()),
-            ..Default::default()
-        },
-        cx,
-        move |window, cx| cx.new(|cx| Preferences::new(history, window, cx)),
-    )?;
-    Ok(handle)
-}
-struct Preferences {
+pub(super) struct Preferences {
     history: History,
     base: Snapshot,
     days: Entity<InputState>,
@@ -70,7 +48,7 @@ fn number(
     })
 }
 impl Preferences {
-    fn new(history: History, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub(super) fn new(history: History, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let base = history.storage.snapshot();
         let config = base.config;
         let seconds = history.settings.snapshot().refresh_seconds;
@@ -134,7 +112,9 @@ impl Preferences {
             }
         };
         let Some(reply) = self.history.preview_storage(candidate, self.base.revision) else {
-            self.error = Some("History worker is busy; try reviewing again".into());
+            self.error = Some(crate::i18n::tr(
+                "History worker is busy; try reviewing again",
+            ));
             cx.notify();
             return;
         };
@@ -170,7 +150,9 @@ impl Preferences {
             .history
             .apply_storage(review.candidate, review.previous.revision)
         else {
-            self.error = Some("History worker is busy; try applying again".into());
+            self.error = Some(crate::i18n::tr(
+                "History worker is busy; try applying again",
+            ));
             cx.notify();
             return;
         };
@@ -180,14 +162,21 @@ impl Preferences {
         cx.notify();
     }
     fn feedback(report: &Applied) -> String {
-        let mut message = format!(
-            "Retention saved. Removed {} event(s), {} alert(s), {} counter(s).",
-            report.removed_events, report.removed_alerts, report.removed_counters
+        let mut message = crate::i18n::tr_args(
+            "Retention saved. Removed %{arg0} event(s), %{arg1} alert(s), %{arg2} counter(s).",
+            &[
+                ("arg0", &format!("{}", report.removed_events)),
+                ("arg1", &format!("{}", report.removed_alerts)),
+                ("arg2", &format!("{}", report.removed_counters)),
+            ],
         );
         if report.disk_verified {
-            message.push_str(&format!(
-                " Database allocation: {:.1} MiB.",
-                report.disk.allocated as f64 / 1048576.
+            message.push_str(&crate::i18n::tr_args(
+                " Database allocation: %{arg0} MiB.",
+                &[(
+                    "arg0",
+                    &format!("{:.1}", report.disk.allocated as f64 / 1048576.),
+                )],
             ));
             if report.disk.pending() {
                 message
@@ -218,7 +207,7 @@ impl Preferences {
         }
         self.review = None;
         self.error = None;
-        self.message = Some("Loaded saved settings.".into());
+        self.message = Some(crate::i18n::tr("Loaded saved settings."));
         cx.notify();
     }
     fn save_refresh(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -228,7 +217,9 @@ impl Preferences {
         let seconds = match self.refresh.read(cx).value().parse::<u16>() {
             Ok(value) if value <= 60 => value,
             _ => {
-                self.error = Some("Refresh interval must be 0 (manual) or 1–60 seconds".into());
+                self.error = Some(crate::i18n::tr(
+                    "Refresh interval must be 0 (manual) or 1–60 seconds",
+                ));
                 cx.notify();
                 return;
             }
@@ -248,7 +239,10 @@ impl Preferences {
                         this.message = Some(if seconds == 0 {
                             "Manual refresh saved. History continues to be recorded.".into()
                         } else {
-                            format!("Display refresh saved: every {seconds} second(s).")
+                            crate::i18n::tr_args(
+                                "Display refresh saved: every %{seconds} second(s).",
+                                &[("seconds", &format!("{}", seconds))],
+                            )
                         })
                     }
                     Err(error) => this.error = Some(error),
@@ -269,60 +263,96 @@ impl Render for Preferences {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let mut body = div().flex().flex_col().gap_3();
         if self.tab == 0 {
-            body=body.child(div().text_sm().child(format!("Saved: {} days · {} MiB target · idle cleanup every {} minute(s)",self.base.config.days,self.base.config.mib,self.base.config.cleanup_minutes)))
-   .child(div().text_sm().child("Retention days (1–365)"))
+            body=body.child(div().text_sm().child(crate::i18n::tr_args("Saved: %{arg0} days · %{arg1} MiB target · idle cleanup every %{arg2} minute(s)", &[("arg0", &(self.base.config.days).to_string()), ("arg1", &(self.base.config.mib).to_string()), ("arg2", &(self.base.config.cleanup_minutes).to_string())])))
+   .child(div().text_sm().child(crate::i18n::tr("Retention days (1–365)")))
    .child(div().h_8().flex_shrink_0().child(Input::new(&self.days).id("history-days").disabled(self.busy||self.review.is_some())))
-   .child(div().text_sm().child("Database target in MiB (16–4096)"))
+   .child(div().text_sm().child(crate::i18n::tr("Database target in MiB (16–4096)")))
    .child(div().h_8().flex_shrink_0().child(Input::new(&self.mib).id("history-mib").disabled(self.busy||self.review.is_some())))
-   .child(div().text_sm().child("Idle cleanup interval in minutes (1–60)"))
+   .child(div().text_sm().child(crate::i18n::tr("Idle cleanup interval in minutes (1–60)")))
    .child(div().h_8().flex_shrink_0().child(Input::new(&self.cleanup).id("history-cleanup").disabled(self.busy||self.review.is_some())))
-   .child(div().text_sm().text_color(cx.theme().muted_foreground).child("Age applies to retained events, daemon alerts and statistics. Size limits are checked during writes; idle cleanup also removes expired data while traffic is quiet. Smaller limits can remove older data. Existing files may take time to compact."));
+   .child(div().text_sm().text_color(cx.theme().muted_foreground).child(crate::i18n::tr("Age applies to retained events, daemon alerts and statistics. Size limits are checked during writes; idle cleanup also removes expired data while traffic is quiet. Smaller limits can remove older data. Existing files may take time to compact.")));
             if let Some(review) = &self.review {
-                body=div().flex().flex_col().gap_3().child(div().text_lg().child("Review retention changes")).child(div().text_sm().child(format!("Review: {} → {} days; {} → {} MiB; {} → {} minutes. {} event(s), {} alert(s), {} counter(s) are already expired at these settings. Size limits may remove additional oldest history. Removal cannot be undone.",review.previous.config.days,review.candidate.days,review.previous.config.mib,review.candidate.mib,review.previous.config.cleanup_minutes,review.candidate.cleanup_minutes,review.expired_events,review.expired_alerts,review.expired_counters)))
-   .child(div().text_sm().child(format!("Database currently allocated: {:.1} MiB; reusable pages: {:.1} MiB. Cached application rules and node settings are preserved. Other cached data may keep the file above a smaller target.",review.disk.allocated as f64/1048576.,review.disk.reusable as f64/1048576.)))
-   .child(div().flex().gap_2().child(Button::new("history-retention-back").label("Back without applying").disabled(self.busy).on_click(cx.listener(|this,_,_,cx|{this.review=None;cx.notify();}))).child(Button::new("history-retention-apply").label("Apply retention and cleanup").disabled(self.busy).on_click(cx.listener(|this,_,window,cx|this.apply(window,cx)))));
-            } else {
-                body = body.child(
-                    Button::new("history-retention-review")
-                        .label("Review retention changes")
-                        .disabled(self.busy)
-                        .on_click(cx.listener(|this, _, window, cx| this.review(window, cx))),
-                );
+                body=div().flex().flex_col().gap_3().child(div().text_lg().child(crate::i18n::tr("Review retention changes"))).child(div().text_sm().child(crate::i18n::tr_args("Review: %{arg0} → %{arg1} days; %{arg2} → %{arg3} MiB; %{arg4} → %{arg5} minutes. %{arg6} event(s), %{arg7} alert(s), %{arg8} counter(s) are already expired at these settings. Size limits may remove additional oldest history. Removal cannot be undone.", &[("arg0", &(review.previous.config.days).to_string()), ("arg1", &(review.candidate.days).to_string()), ("arg2", &(review.previous.config.mib).to_string()), ("arg3", &(review.candidate.mib).to_string()), ("arg4", &(review.previous.config.cleanup_minutes).to_string()), ("arg5", &(review.candidate.cleanup_minutes).to_string()), ("arg6", &(review.expired_events).to_string()), ("arg7", &(review.expired_alerts).to_string()), ("arg8", &(review.expired_counters).to_string())])))
+   .child(div().text_sm().child(crate::i18n::tr_args("Database currently allocated: %{arg0} MiB; reusable pages: %{arg1} MiB. Cached application rules and node settings are preserved. Other cached data may keep the file above a smaller target.", &[("arg0", &format!("{:.1}", review.disk.allocated as f64/1048576.)), ("arg1", &format!("{:.1}", review.disk.reusable as f64/1048576.))])))
+   .child(Button::new("history-retention-back").label(crate::i18n::tr("Back without applying")).disabled(self.busy).on_click(cx.listener(|this,_,_,cx|{this.review=None;cx.notify();})));
             }
         } else {
-            body=body.child(div().text_sm().child("History display refresh in seconds (0 = manual, 1–60 = automatic)"))
+            body=body.child(div().text_sm().child(crate::i18n::tr("History display refresh in seconds (0 = manual, 1–60 = automatic)")))
    .child(div().h_8().flex_shrink_0().child(Input::new(&self.refresh).id("history-refresh-seconds").disabled(self.busy)))
-   .child(div().text_sm().text_color(cx.theme().muted_foreground).child("Manual mode freezes automatic display updates. Recording, permission prompts, searching, paging and Refresh now remain available. This does not change the daemon's reporting interval."))
-   .child(Button::new("history-refresh-save").label("Save display refresh").disabled(self.busy).on_click(cx.listener(|this,_,window,cx|this.save_refresh(window,cx))));
+   .child(div().text_sm().text_color(cx.theme().muted_foreground).child(crate::i18n::tr("Manual mode freezes automatic display updates. Recording, permission prompts, searching, paging and Refresh now remain available. This does not change the daemon's reporting interval.")))
+;
         }
+        body = body.child(
+            div()
+                .flex()
+                .flex_wrap()
+                .gap_2()
+                .child(
+                    Button::new("history-preferences-reload")
+                        .label(crate::i18n::tr("Reload"))
+                        .disabled(self.busy)
+                        .on_click(cx.listener(|this, _, window, cx| this.reload(window, cx))),
+                )
+                .child(
+                    Button::new("history-preferences-copy-path")
+                        .label(crate::i18n::tr("Copy database path"))
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            cx.write_to_clipboard(ClipboardItem::new_string(
+                                this.history.database.display().to_string(),
+                            ))
+                        })),
+                ),
+        );
+        let save = Button::new(if self.tab == 1 {
+            "history-refresh-save"
+        } else if self.review.is_some() {
+            "history-retention-apply"
+        } else {
+            "history-retention-review"
+        })
+        .disabled(self.busy)
+        .on_click(cx.listener(|this, _, window, cx| {
+            if this.tab == 1 {
+                this.save_refresh(window, cx);
+            } else if this.review.is_some() {
+                this.apply(window, cx);
+            } else {
+                this.review(window, cx);
+            }
+        }));
         div()
             .key_context("HistoryPreferences")
             .track_focus(&self.focus)
             .on_action(cx.listener(|this, _: &ReviewRetention, window, cx| this.review(window, cx)))
             .on_action(cx.listener(|this, _: &ApplyRetention, window, cx| this.apply(window, cx)))
             .size_full()
-            .p_5()
             .flex()
             .flex_col()
-            .gap_3()
             .bg(cx.theme().background)
             .text_color(cx.theme().foreground)
-            .child(div().text_xl().child("History preferences"))
+            .child(super::settings::heading("History"))
             .child(
                 div()
+                    .px_5()
+                    .pb_3()
                     .text_xs()
                     .truncate()
-                    .child(format!("Database: {}", self.history.database.display())),
+                    .child(crate::i18n::tr_args(
+                        "Database: %{arg0}",
+                        &[("arg0", &self.history.database.display().to_string())],
+                    )),
             )
             .child(
-                TabBar::new("history-preferences-tabs")
-                    .selected_index(self.tab)
-                    .on_click(cx.listener(|this, index: &usize, _, cx| {
-                        this.tab = *index;
-                        cx.notify();
-                    }))
-                    .child(Tab::new().label("Storage & retention"))
-                    .child(Tab::new().label("Display refresh")),
+                div().px_5().pb_4().child(
+                    TabBar::new("history-preferences-tabs")
+                        .selected_index(self.tab)
+                        .on_click(cx.listener(|this, index: &usize, _, cx| {
+                            this.tab = *index;
+                            cx.notify();
+                        }))
+                        .child(Tab::new().label(crate::i18n::tr("Storage & retention")))
+                        .child(Tab::new().label(crate::i18n::tr("Display refresh"))),
+                ),
             )
             .child(
                 div()
@@ -330,47 +360,38 @@ impl Render for Preferences {
                     .flex_1()
                     .min_h_0()
                     .overflow_y_scroll()
+                    .px_5()
+                    .pb_5()
                     .child(body),
             )
             .when(self.busy, |view| {
-                view.child(
-                    div()
-                        .text_sm()
-                        .child("Working in the background… Permission prompts remain available."),
-                )
+                view.child(div().px_5().py_2().text_sm().child(crate::i18n::tr(
+                    "Working in the background… Permission prompts remain available.",
+                )))
             })
             .when_some(self.error.clone(), |view, error| {
-                view.child(div().text_sm().child(error))
+                view.child(
+                    div()
+                        .px_5()
+                        .py_2()
+                        .text_sm()
+                        .child(crate::i18n::presentation(&error)),
+                )
             })
             .when_some(self.message.clone(), |view, message| {
-                view.child(div().text_sm().child(message))
+                view.child(
+                    div()
+                        .px_5()
+                        .py_2()
+                        .text_sm()
+                        .child(crate::i18n::presentation(&message)),
+                )
             })
-            .child(
-                div()
-                    .flex()
-                    .gap_2()
-                    .justify_end()
-                    .child(
-                        Button::new("history-preferences-reload")
-                            .label("Reload saved values")
-                            .disabled(self.busy)
-                            .on_click(cx.listener(|this, _, window, cx| this.reload(window, cx))),
-                    )
-                    .child(
-                        Button::new("history-preferences-copy-path")
-                            .label("Copy database path")
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                cx.write_to_clipboard(ClipboardItem::new_string(
-                                    this.history.database.display().to_string(),
-                                ))
-                            })),
-                    )
-                    .child(
-                        Button::new("history-preferences-close")
-                            .label("Close")
-                            .disabled(self.busy)
-                            .on_click(|_, window, _| window.remove_window()),
-                    ),
-            )
+            .child(super::settings::footer(
+                "history-preferences-close",
+                self.busy,
+                save,
+                cx,
+            ))
     }
 }

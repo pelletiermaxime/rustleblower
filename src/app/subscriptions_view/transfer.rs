@@ -113,27 +113,29 @@ impl Dashboard {
             .flex()
             .flex_col()
             .gap_3()
-            .child("Import / export subscriptions");
+            .child(crate::i18n::tr("Import / export subscriptions"));
         if let Some(review) = &view.review {
-            body=body.child(format!("{} entries · {} changes · {} conflicts · {} retained removals",review.entries.len(),review.changed(),review.conflicts(),review.removals.len()))
-                .child(div().text_sm().child("Import saves the reviewed metadata together and retains existing downloads and rules. Source directories are not adopted. Other actions and imported notification settings are retained for export only."));
-            body = body.child(format!(
-                "Default count/unit before: {}",
-                review.settings_before.1.count_units_label()
+            body=body.child(crate::i18n::tr_args("%{arg0} entries · %{arg1} changes · %{arg2} conflicts · %{arg3} retained removals", &[("arg0", &(review.entries.len()).to_string()), ("arg1", &(review.changed()).to_string()), ("arg2", &(review.conflicts()).to_string()), ("arg3", &(review.removals.len()).to_string())]))
+                .child(div().text_sm().child(crate::i18n::tr("Import saves the reviewed metadata together and retains existing downloads and rules. Source directories are not adopted. Other actions and imported notification settings are retained for export only.")));
+            body = body.child(crate::i18n::tr_args(
+                "Default count/unit before: %{arg0}",
+                &[(
+                    "arg0",
+                    &(review.settings_before.1.count_units_label()).to_string(),
+                )],
             ));
             if review.defaults {
                 let before = &review.settings_before.1;
                 let after = &review.document.settings;
-                body = body.child(format!(
-                    "Default count/unit after: {}",
-                    after.count_units_label()
+                body = body.child(crate::i18n::tr_args(
+                    "Default count/unit after: %{arg0}",
+                    &[("arg0", &(after.count_units_label()).to_string())],
                 ));
-                body=body.child(div().text_sm().child(format!(
-                    "Global defaults before → after\nAutomatic updates: {} → {}\nInterval: {} → {} seconds · Timeout: {} → {} seconds\nMaximum list: {} → {} bytes · Disk budget: {} → {} MiB\nUser agent: {} → {}",
-                    before.automatic,after.automatic,before.interval,after.interval,before.timeout,after.timeout,before.max_bytes,after.max_bytes,before.disk_bytes/1024/1024,after.disk_bytes/1024/1024,before.user_agent,after.user_agent
-                )));
+                body=body.child(div().text_sm().child(crate::i18n::tr_args("Global defaults before → after\nAutomatic updates: %{arg0} → %{arg1}\nInterval: %{arg2} → %{arg3} seconds · Timeout: %{arg4} → %{arg5} seconds\nMaximum list: %{arg6} → %{arg7} bytes · Disk budget: %{arg8} → %{arg9} MiB\nUser agent: %{arg10} → %{arg11}", &[("arg0", &(before.automatic).to_string()), ("arg1", &(after.automatic).to_string()), ("arg2", &(before.interval).to_string()), ("arg3", &(after.interval).to_string()), ("arg4", &(before.timeout).to_string()), ("arg5", &(after.timeout).to_string()), ("arg6", &(before.max_bytes).to_string()), ("arg7", &(after.max_bytes).to_string()), ("arg8", &(before.disk_bytes/1024/1024).to_string()), ("arg9", &(after.disk_bytes/1024/1024).to_string()), ("arg10", &(before.user_agent).to_string()), ("arg11", &(after.user_agent).to_string())])));
             } else {
-                body = body.child("Keep current global defaults and automatic-update state.");
+                body = body.child(crate::i18n::tr(
+                    "Keep current global defaults and automatic-update state.",
+                ));
             }
             let mut rows = div()
                 .id("subs-transfer-review-rows")
@@ -144,7 +146,7 @@ impl Dashboard {
                 .flex_col()
                 .gap_3();
             if review.replace_catalogue {
-                body=body.child(div().text_sm().child("Complete catalogue replacement: absent active entries will stop updating and leave group/all collections. Their downloaded files remain for existing direct-list rules. No daemon rule is rewritten."));
+                body=body.child(div().text_sm().child(crate::i18n::tr("Complete catalogue replacement: absent active entries will stop updating and leave group/all collections. Their downloaded files remain for existing direct-list rules. No daemon rule is rewritten.")));
             }
             for index in (view.offset..review.review_len()).take(REVIEW_PAGE) {
                 if let Some(entry) = review.entries.get(index) {
@@ -178,24 +180,64 @@ impl Dashboard {
                     };
                     let limits = effective(&entry.after, settings)
                         .map(|(i, t, m)| {
-                            format!("{i}s interval · {t}s timeout · {m} bytes maximum")
+                            crate::i18n::tr_args(
+                                "%{i}s interval · %{t}s timeout · %{m} bytes maximum",
+                                &[
+                                    ("i", &format!("{}", i)),
+                                    ("t", &format!("{}", t)),
+                                    ("m", &format!("{}", m)),
+                                ],
+                            )
                         })
                         .unwrap_or_else(|e| e);
-                    rows = rows.child(div().text_sm().child(format!("Effective after: {limits}")));
-                    rows = rows.child(div().text_sm().child(format!(
-                        "{} · {status}\nIdentity: {}\nBefore: {before}\nAfter: {}{}",
-                        entry.after.name,
-                        entry.resolution,
-                        serde_json::to_string_pretty(&entry.after).unwrap(),
-                        if entry.metadata_changed {
-                            "\nRetained extra fields will be replaced by this file's values."
-                        } else {
-                            ""
-                        }
+                    rows = rows.child(div().text_sm().child(crate::i18n::tr_args(
+                        "Effective after: %{limits}",
+                        &[("limits", &(limits).to_string())],
                     )));
+                    rows = rows.child(
+                        div()
+                            .text_sm()
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .child(crate::i18n::tr_args(
+                                "%{name} · %{status}\nIdentity: %{identity}",
+                                &[
+                                    ("name", &entry.after.name),
+                                    ("status", &crate::i18n::tr(status)),
+                                    ("identity", &entry.resolution.to_string()),
+                                ],
+                            ))
+                            .child(crate::i18n::tr("Before:"))
+                            .child(before)
+                            .child(crate::i18n::tr("After:"))
+                            .child(serde_json::to_string_pretty(&entry.after).unwrap())
+                            .when(entry.metadata_changed, |view| {
+                                view.child(crate::i18n::tr(
+                                    "Retained extra fields will be replaced by this file's values.",
+                                ))
+                            }),
+                    );
                 } else {
                     let removed = &review.removals[index - review.entries.len()];
-                    rows=rows.child(div().text_sm().child(format!("Remove #{} {} from updates and collections\nKeep downloaded files for existing direct-list rules.\n{}",removed.id,removed.spec.name,serde_json::to_string_pretty(&removed.spec).unwrap())));
+                    rows = rows.child(
+                        div()
+                            .text_sm()
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .child(crate::i18n::tr_args(
+                                "Remove #%{id} %{name} from updates and collections",
+                                &[
+                                    ("id", &removed.id.to_string()),
+                                    ("name", &removed.spec.name),
+                                ],
+                            ))
+                            .child(crate::i18n::tr(
+                                "Keep downloaded files for existing direct-list rules.",
+                            ))
+                            .child(serde_json::to_string_pretty(&removed.spec).unwrap()),
+                    );
                 }
             }
             body = body
@@ -207,7 +249,7 @@ impl Dashboard {
                         .gap_2()
                         .child(
                             Button::new("subs-transfer-prev")
-                                .label("Previous entries")
+                                .label(crate::i18n::tr("Previous entries"))
                                 .disabled(busy || view.offset == 0)
                                 .on_click(cx.listener(|this, _, _, cx| {
                                     if let Some(v) = &mut this.subscriptions.transfer {
@@ -216,19 +258,29 @@ impl Dashboard {
                                     cx.notify();
                                 })),
                         )
-                        .child(format!(
-                            "{}–{} of {}",
-                            if review.review_len() == 0 {
-                                0
-                            } else {
-                                view.offset + 1
-                            },
-                            (view.offset + REVIEW_PAGE).min(review.review_len()),
-                            review.review_len()
+                        .child(crate::i18n::tr_args(
+                            "%{arg0}–%{arg1} of %{arg2}",
+                            &[
+                                (
+                                    "arg0",
+                                    &(if review.review_len() == 0 {
+                                        0
+                                    } else {
+                                        view.offset + 1
+                                    })
+                                    .to_string(),
+                                ),
+                                (
+                                    "arg1",
+                                    &((view.offset + REVIEW_PAGE).min(review.review_len()))
+                                        .to_string(),
+                                ),
+                                ("arg2", &(review.review_len()).to_string()),
+                            ],
                         ))
                         .child(
                             Button::new("subs-transfer-next")
-                                .label("Next entries")
+                                .label(crate::i18n::tr("Next entries"))
                                 .disabled(busy || view.offset + REVIEW_PAGE >= review.review_len())
                                 .on_click(cx.listener(|this, _, _, cx| {
                                     if let Some(v) = &mut this.subscriptions.transfer {
@@ -245,7 +297,7 @@ impl Dashboard {
                         .gap_2()
                         .child(
                             Button::new("subs-transfer-back")
-                                .label("Back to file options")
+                                .label(crate::i18n::tr("Back to file options"))
                                 .disabled(busy)
                                 .on_click(cx.listener(|this, _, _, cx| {
                                     if let Some(v) = &mut this.subscriptions.transfer {
@@ -257,7 +309,7 @@ impl Dashboard {
                         )
                         .child(
                             Button::new("subs-transfer-rebuild")
-                                .label("Rebuild from file")
+                                .label(crate::i18n::tr("Rebuild from file"))
                                 .disabled(busy)
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     this.review_subscription_import(window, cx)
@@ -265,7 +317,7 @@ impl Dashboard {
                         )
                         .child(
                             Button::new("subs-transfer-apply")
-                                .label("Import reviewed configuration")
+                                .label(crate::i18n::tr("Import reviewed configuration"))
                                 .disabled(busy || review.conflicts() > 0)
                                 .on_click(
                                     cx.listener(|this, _, _, cx| {
@@ -275,17 +327,17 @@ impl Dashboard {
                         ),
                 );
         } else {
-            body=body.child(div().text_sm().child("Choose an absolute JSON path. Import accepts Rustleblower version 1, an OpenSnitch list_subscriptions action file, or its config object. Export creates a new file and preserves existing destinations. Downloaded files and daemon rule definitions are separate."))
+            body=body.child(div().text_sm().child(crate::i18n::tr("Choose an absolute JSON path. Import accepts Rustleblower version 1, an OpenSnitch list_subscriptions action file, or its config object. Export creates a new file and preserves existing destinations. Downloaded files and daemon rule definitions are separate.")))
                 .child(Input::new(&view.path).id("subs-transfer-path").disabled(busy))
-                .child(Checkbox::new("subs-transfer-replace").label("Import: replace or restore matching existing configurations and extra fields").checked(view.replace).disabled(busy).on_change(cx.listener(|this,v:&bool,_,cx|{if let Some(t)=&mut this.subscriptions.transfer{t.replace = *v;}cx.notify();})))
-                .child(Checkbox::new("subs-transfer-catalogue").label("Import: replace complete active catalogue; retain absent entries and files").checked(view.catalogue).disabled(busy).on_change(cx.listener(|this,v:&bool,_,cx|{if let Some(t)=&mut this.subscriptions.transfer{t.catalogue = *v;}cx.notify();})))
-                .child(Checkbox::new("subs-transfer-defaults").label("Import: include global defaults and automatic-update state in review").checked(view.defaults).disabled(busy).on_change(cx.listener(|this,v:&bool,_,cx|{if let Some(t)=&mut this.subscriptions.transfer{t.defaults = *v;}cx.notify();})))
-                .child(Button::new("subs-transfer-review").label("Review import…").disabled(busy).on_click(cx.listener(|this,_,window,cx|this.review_subscription_import(window,cx))))
-                .child(format!("Export: {} marked across pages · captured filter: {}",view.ids.len(),if view.search.is_empty(){"all active subscriptions"}else{&view.search}))
-                .child(Checkbox::new("subs-transfer-matching").label("Export all active matches across every page").checked(view.matching).disabled(busy).on_change(cx.listener(|this,v:&bool,_,cx|{if let Some(t)=&mut this.subscriptions.transfer{t.matching = *v;}cx.notify();})))
-                .child(div().text_sm().child("Native export preserves exact names and filenames. OpenSnitch export normalizes typed filenames and makes duplicates distinct."))
+                .child(Checkbox::new("subs-transfer-replace").label(crate::i18n::tr("Import: replace or restore matching existing configurations and extra fields")).checked(view.replace).disabled(busy).on_change(cx.listener(|this,v:&bool,_,cx|{if let Some(t)=&mut this.subscriptions.transfer{t.replace = *v;}cx.notify();})))
+                .child(Checkbox::new("subs-transfer-catalogue").label(crate::i18n::tr("Import: replace complete active catalogue; retain absent entries and files")).checked(view.catalogue).disabled(busy).on_change(cx.listener(|this,v:&bool,_,cx|{if let Some(t)=&mut this.subscriptions.transfer{t.catalogue = *v;}cx.notify();})))
+                .child(Checkbox::new("subs-transfer-defaults").label(crate::i18n::tr("Import: include global defaults and automatic-update state in review")).checked(view.defaults).disabled(busy).on_change(cx.listener(|this,v:&bool,_,cx|{if let Some(t)=&mut this.subscriptions.transfer{t.defaults = *v;}cx.notify();})))
+                .child(Button::new("subs-transfer-review").label(crate::i18n::tr("Review import…")).disabled(busy).on_click(cx.listener(|this,_,window,cx|this.review_subscription_import(window,cx))))
+                .child(crate::i18n::tr_args("Export: %{arg0} marked across pages · captured filter: %{arg1}", &[("arg0", &(view.ids.len()).to_string()), ("arg1", (if view.search.is_empty(){"all active subscriptions"}else{&view.search}))]))
+                .child(Checkbox::new("subs-transfer-matching").label(crate::i18n::tr("Export all active matches across every page")).checked(view.matching).disabled(busy).on_change(cx.listener(|this,v:&bool,_,cx|{if let Some(t)=&mut this.subscriptions.transfer{t.matching = *v;}cx.notify();})))
+                .child(div().text_sm().child(crate::i18n::tr("Native export preserves exact names and filenames. OpenSnitch export normalizes typed filenames and makes duplicates distinct.")))
                 .child(div().h_8().flex_shrink_0().child(Select::new(&view.encoding).id("subs-transfer-encoding").disabled(busy)))
-                .child(Button::new("subs-transfer-export").label("Export to new file").disabled(busy).on_click(cx.listener(|this,_,_,cx|{
+                .child(Button::new("subs-transfer-export").label(crate::i18n::tr("Export to new file")).disabled(busy).on_click(cx.listener(|this,_,_,cx|{
                     if let Some(v)=&this.subscriptions.transfer {
                         let scope=if v.matching{Scope::Matching(v.search.clone())}else{Scope::Selected(v.ids.clone())};
                         let encoding=if v.encoding.read(cx).selected_value().is_some_and(|v|v.as_ref()=="OpenSnitch action file"){data::Encoding::OpenSnitch}else{data::Encoding::Native};
@@ -296,7 +348,7 @@ impl Dashboard {
         }
         body.child(
             Button::new("subs-transfer-cancel")
-                .label("Cancel / return to subscriptions")
+                .label(crate::i18n::tr("Cancel / return to subscriptions"))
                 .disabled(busy)
                 .on_click(cx.listener(|this, _, window, cx| {
                     this.subscriptions.transfer = None;

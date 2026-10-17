@@ -1485,3 +1485,87 @@ default/stale/reopen variants, real-time scheduling, packages or resource budget
 Independent bulk count/unit controls remain source-backed parity work, alongside
 the other outstanding features and final UX. The user requested pausing the goal
 after this slice; do not start the next feature.
+
+
+### Bulk subscription count/unit controls and frozen defaults
+
+Bulk subscription forms now use the existing Kit count/unit controls. Checked
+limits can inherit either or both parts; unchecked limits preserve their exact
+existing overrides. Raw before/after choices and effective seconds/bytes are
+shown beside the captured default counts/units. The review captures one bounded
+settings snapshot/revision and application checks it in the SQLite transaction
+before its first write. Any default change requires an explicit fresh review.
+There are no extra workers, unbounded lists, or implicit daemon policy commands.
+
+Source review distinguishes the pinned controller's pair replacement from its
+view's zero-count-clears-both serialization. The empty-plus-Inherit choice
+preserves that outcome; unit-only bulk choices extend the native consistency of
+our existing model and individual editor. Do not claim that the pinned Qt bulk
+view itself supports unit-only input.
+
+Two core cases cover structured/untouched legacy values, domain/count/overflow
+refusal, changed/tampered defaults, late SQL/log rollback, exact whole-batch apply
+and reopen after default count/unit changes. The full suite passes 176 cases.
+The expanded 61-frame subscription journey covers actual selectors, Back,
+effective review, default changes, refusal/rebuild and stored independent limits,
+alongside its existing HTTP, permission, rule, collection and transfer paths.
+Evidence and precise remaining limits are in
+`.verification/subscription-bulk-units-result.json`. Keep failed attempts.
+Native bulk-unit gestures, subscription notification parity, crash recovery,
+resource testing and the full-app UX phase remain pending. The full goal is
+active again; this slice does not establish overall feature parity.
+
+
+### Subscription result notifications — production integration
+
+The source-backed contract and native differences are recorded in
+[subscription-notifications-plan.md](subscription-notifications-plan.md).
+The Blocklists editor saves optional success/error text into retained source
+metadata with transaction/budget/revision guards. Completed normal downloads
+use the existing eight-item mailbox and one D-Bus worker; each current notice
+carries an Alerts or Blocklists action target. HTTP304 succeeds, failed checks
+notify, stale/cancelled work and URL tests remain silent. No new renderer,
+per-notice thread or prompt-path dependency was introduced.
+
+Current proof: production `cargo check --locked` passes, and the private owned
+D-Bus integration test passes with subscription title/body/actions, stale-kind
+action rejection and separate screen targets in addition to existing owner,
+mute, timeout, independent Ping/AskRule and cleanup assertions. Evidence:
+`.verification/subscription-notifications-dbus2.log`. The first sandboxed run
+could not bind its private bus and is retained as an environment refusal, not
+feature proof. Config/worker and actual GPUI editor/restoration proof are being
+run separately by the verification agent; the overall goal remains open.
+
+
+Combined integration checkpoint: strict
+`clippy --all-targets --all-features --locked -- -D warnings` passes after the
+notification, appearance, history-search, firewall-helper and initial remote
+transport integration (`.verification/parallel-slices-clippy2.log`). The current
+headless-feature build also passes the private D-Bus integration again
+(`.verification/subscription-notifications-dbus-current.log`,5.07 seconds).
+The four focused subscription notification tests pass in an owned loopback
+namespace, including HTTP200/304/404 and stale/cancel/probe silence
+(`.verification/subscription-notifications-core.log` and its network report).
+
+The first strict lint run and UI attempts are retained with their causes:
+history style/new-harness conversion errors; density control clipping under the
+fixed footer; missing notification Ctrl+Enter dispatch and a private-method
+visibility mistake. The production controls/dispatch and harness observations
+were corrected. Exact font/rem checks remain strict; rendered button geometry
+allows only one physical pixel of pinned-layout rounding, recorded with the
+actual device scale. Expanded density/palette, notification and guided-firewall
+journeys remain pending until their successful result files are recorded.
+The combined checkpoint source hashes are
+`.verification/parallel-slices-source.json`; later edits require fresh proof.
+
+
+Subscription notification GPU proof now passes nine frames under
+`.verification/headless/20261017T022211Z-996e1089` (20.917 seconds, real GPU,
+owned process exit and scoped socket cleanup). It drives saved custom text,
+Back, stale source revision refusal, reload, Ctrl+Enter, disable-clear and
+separate hidden Alerts/Blocklists callbacks, while answering a real AskRule
+through input. Root visually inspected the editor screenshot: labels, values
+and actions are readable without overlap. A later copy-only cleanup removes
+HTTP/source-format jargon from the product flow. The source/protocol semantics
+and measured behavior stay in development documentation. Physical desktop
+notification banners/clicks remain outside this owned proof.

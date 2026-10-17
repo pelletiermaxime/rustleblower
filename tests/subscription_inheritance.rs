@@ -447,3 +447,226 @@ async fn a_new_default_count_changes_the_actual_download_byte_limit() -> Result<
     worker.join();
     Ok(())
 }
+
+#[test]
+fn bulk_limits_preserve_unchecked_values_and_optional_count_unit_parts() -> Result<()> {
+    use subscriptions::bulk::Patch;
+    let before = Spec {
+        name: "Bulk codec".into(),
+        url: "http://127.0.0.1:9/metadata-only".into(),
+        interval: Some(Override::Absolute(2700)),
+        timeout: Override::parts(Some(2), Some(Unit::Minutes)),
+        max_bytes: Override::parts(None, Some(Unit::Kib)),
+        ..Default::default()
+    };
+    assert_eq!(
+        Patch::default()
+            .apply(&before)
+            .map_err(anyhow::Error::msg)?,
+        before
+    );
+    let patch = Patch {
+        interval: Some(Override::parts(None, Some(Unit::Minutes))),
+        timeout: Some(Override::parts(Some(3), None)),
+        max_bytes: Some(Override::parts(Some(2), Some(Unit::Kib))),
+        ..Default::default()
+    };
+    let after = patch.apply(&before).map_err(anyhow::Error::msg)?;
+    assert_eq!(
+        effective(&after, &Settings::default()).map_err(anyhow::Error::msg)?,
+        (1440, 3, 2048)
+    );
+    assert_eq!(
+        (&after.name, &after.url, &after.groups),
+        (&before.name, &before.url, &before.groups)
+    );
+    assert_eq!(
+        serde_json::to_value(&after)?["interval"],
+        json!({"count":null,"unit":"minutes"})
+    );
+    let inherited = Patch {
+        interval: Some(None),
+        timeout: Some(None),
+        max_bytes: Some(None),
+        ..Default::default()
+    }
+    .apply(&after)
+    .map_err(anyhow::Error::msg)?;
+    assert_eq!(
+        (inherited.interval, inherited.timeout, inherited.max_bytes),
+        (None, None, None)
+    );
+    for value in [
+        Override::Parts(subscriptions::limits::Parts {
+            count: Some(0),
+            unit: None,
+        }),
+        Override::Parts(subscriptions::limits::Parts {
+            count: None,
+            unit: Some(Unit::Kib),
+        }),
+        Override::Parts(subscriptions::limits::Parts {
+            count: Some(u64::MAX),
+            unit: Some(Unit::Weeks),
+        }),
+    ] {
+        assert!(
+            Patch {
+                interval: Some(Some(value)),
+                ..Default::default()
+            }
+            .validate()
+            .is_err()
+        );
+    }
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn bulk_limit_review_freezes_defaults_and_rolls_back_whole_batch() -> Result<()> {
+    use subscriptions::bulk::{Patch, Scope};
+    let dir = tempfile::tempdir()?;
+    let worker = Worker::start(dir.path());
+    let h = worker.handle();
+    let (revision, mut defaults) = settings(&h).await?;
+    defaults.interval = 7200;
+    defaults.timeout = 120;
+    defaults.max_bytes = 3 * 1024 * 1024;
+    defaults.units = Some(Units {
+        interval: Unit::Hours,
+        timeout: Unit::Minutes,
+        size: Unit::Mib,
+    });
+    req(
+        &h,
+        Request::SaveSettings {
+            revision,
+            settings: defaults,
+        },
+    )
+    .await?;
+    let mut ids = Vec::new();
+    for name in ["Bulk one", "Bulk two", "Unrelated"] {
+        ids.push(
+            save(
+                &h,
+                Spec {
+                    name: name.into(),
+                    url: "http://127.0.0.1:9/no-http".into(),
+                    interval: Some(Override::Absolute(3600)),
+                    timeout: Some(Override::Absolute(30)),
+                    max_bytes: Some(Override::Absolute(1024)),
+                    ..Default::default()
+                },
+            )
+            .await?,
+        );
+    }
+    let old = [get(&h, ids[0]).await?, get(&h, ids[1]).await?];
+    let patch = Patch {
+        interval: Some(Override::parts(None, Some(Unit::Minutes))),
+        timeout: Some(Override::parts(Some(3), None)),
+        max_bytes: Some(Override::parts(Some(2), Some(Unit::Kib))),
+        ..Default::default()
+    };
+    let review = |patch: Patch| Request::ReviewBulk {
+        scope: Scope::Selected(ids[..2].to_vec()),
+        patch,
+    };
+    let Reply::BulkReview(stale) = req(&h, review(patch.clone())).await? else {
+        panic!()
+    };
+    assert_eq!(stale.entries.len(), 2);
+    assert_eq!(
+        effective(&stale.entries[0].after, &stale.settings).map_err(anyhow::Error::msg)?,
+        (120, 180, 2048)
+    );
+    let (revision, mut changed) = settings(&h).await?;
+    changed.interval = 10800;
+    req(
+        &h,
+        Request::SaveSettings {
+            revision,
+            settings: changed,
+        },
+    )
+    .await?;
+    assert!(
+        req(&h, Request::ApplyBulk(stale))
+            .await
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("defaults changed since review")
+    );
+    for (id, before) in ids.iter().zip(&old) {
+        assert_eq!(get(&h, *id).await?.spec, before.spec);
+    }
+    let Reply::BulkReview(current) = req(&h, review(patch)).await? else {
+        panic!()
+    };
+    assert_eq!(
+        effective(&current.entries[0].after, &current.settings).map_err(anyhow::Error::msg)?,
+        (180, 180, 2048)
+    );
+    let mut tampered = current.clone();
+    tampered.settings.interval = 14400;
+    assert!(req(&h, Request::ApplyBulk(tampered)).await.is_err());
+    let db = rusqlite::Connection::open(dir.path().join("subscriptions.sqlite3"))?;
+    db.execute_batch(&format!("CREATE TRIGGER owned_bulk_units_failure BEFORE UPDATE ON subscriptions WHEN OLD.id={} BEGIN SELECT RAISE(ABORT,'owned late bulk units failure'); END;",ids[1]))?;
+    assert!(
+        req(&h, Request::ApplyBulk(current.clone()))
+            .await
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("owned late bulk units failure")
+    );
+    for (id, before) in ids.iter().zip(&old) {
+        let row = get(&h, *id).await?;
+        assert_eq!(row.spec, before.spec);
+        assert_eq!(row.revision, before.revision);
+    }
+    assert_eq!(db.query_row("SELECT count(*) FROM logs WHERE message='Updated by a reviewed bulk subscription change'",[],|r|r.get::<_,u64>(0))?,0);
+    db.execute_batch("DROP TRIGGER owned_bulk_units_failure")?;
+    drop(db);
+    assert!(matches!(
+        req(&h, Request::ApplyBulk(current.clone())).await?,
+        Reply::BulkApplied(2)
+    ));
+    for entry in &current.entries {
+        let row = get(&h, entry.id).await?;
+        assert_eq!(row.spec, entry.after);
+        assert_eq!((row.checked, row.bytes, row.file), (0, 0, None));
+    }
+    assert_eq!(
+        get(&h, ids[2]).await?.spec.interval,
+        Some(Override::Absolute(3600))
+    );
+    let (revision, mut changed) = settings(&h).await?;
+    changed.interval = 14400;
+    changed.timeout = 20;
+    changed.units.as_mut().unwrap().timeout = Unit::Seconds;
+    req(
+        &h,
+        Request::SaveSettings {
+            revision,
+            settings: changed.clone(),
+        },
+    )
+    .await?;
+    for id in &ids[..2] {
+        assert_eq!(
+            effective(&get(&h, *id).await?.spec, &changed).map_err(anyhow::Error::msg)?,
+            (240, 3, 2048)
+        );
+    }
+    worker.join();
+    let reopened = Worker::start(dir.path());
+    assert_eq!(
+        get(&reopened.handle(), ids[0]).await?.spec,
+        current.entries[0].after
+    );
+    reopened.join();
+    Ok(())
+}

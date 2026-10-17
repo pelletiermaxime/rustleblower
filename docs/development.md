@@ -393,6 +393,20 @@ Builds require the GPUI Linux development packages
 versions. Do not mix GPUI backends or copy Docker-specific dependencies from
 FerryDock.
 
+Dependency requirements use Cargo's default caret ranges. `cargo update` refreshes
+the lockfile within those ranges; upgrades across compatibility boundaries also
+require manifest and API changes. The exact `h2` version stays aligned with the
+checksum-verified local transport patch. The separate protocol generator keeps
+exact tool versions for reproducible checked-in bindings.
+
+Reqwest 0.13 uses `rustls` with platform certificate verification; Tonic 0.14 uses
+`tls-aws-lc` so both select the same Rustls crypto provider. Backend startup
+installs that default explicitly because desktop dependencies also enable Ring;
+an already-installed provider is retained. Its protobuf codec
+comes from `tonic-prost`. Rusqlite's `fallible_uint` feature preserves checked
+`u64`/`usize` conversions. SHA-2 digests use explicit lowercase hex encoding to
+preserve existing revision strings, filenames and collection signatures.
+
 ## Protocol bindings
 
 `proto/rustleblower.proto` is the MIT-licensed Rustleblower interoperability
@@ -780,7 +794,8 @@ missing-display error before any socket is created. It does not contact a host
 daemon. These are installation/library/startup checks, separate from GPU/input
 proof. A release uses a matching Cargo version, annotated tag and
 `docs/releases/v<version>.md`, and publishes only after all checks/packages pass.
-The first release is explicitly marked as a development prerelease.
+Releases from v0.3.0 are stable and marked Latest; earlier publications retain
+their historical prerelease status.
 
 Ubuntu 24.04's AppArmor restriction on unprivileged user namespaces must be
 relaxed on the disposable GitHub runner before running the isolated HTTP
@@ -796,9 +811,10 @@ persistence between records; overload behavior is covered separately. The next
 candidate `v0.2.2` then stopped on a five-second completion wait for the 20-MiB
 disk-budget fixture. Only that wait now allows 60 seconds; publication/old-file
 assertions and independent 500-ms permission/Ping limits remain unchanged. Failed
-tags are retained. Candidate `v0.2.3` uses the manual Release workflow on `main`:
-checks and packages complete before its annotated tag and prerelease are created.
-Invoke it with `gh workflow run release.yml --ref main -f tag=v0.2.3` (substitute
+tags are retained. The successful `v0.2.3` candidate used the manual Release workflow on `main`.
+New releases use that same path: checks and packages complete before the annotated
+tag and stable release are created.
+Invoke it with `gh workflow run release.yml --ref main -f tag=v0.3.0` (substitute
 the matching Cargo version for future releases). Tag pushes remain supported.
 
 The initial v0.1.0 tag failed its GPU gate and has no published release. Ubuntu's

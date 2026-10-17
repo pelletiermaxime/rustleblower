@@ -25,8 +25,11 @@ impl Decision {
     about = "Native OpenSnitch UI server. Existing sockets are never replaced."
 )]
 pub struct Config {
+    /// Absolute Unix socket path, unix:///path, IPv4:port or [IPv6]:port.
     #[arg(long, default_value = "/tmp/osui.sock")]
     pub socket: PathBuf,
+    #[command(flatten)]
+    pub transport: crate::transport::Settings,
     #[arg(long, default_value_os_t = default_database())]
     pub database: PathBuf,
     #[arg(long, default_value_t = 30, value_parser = clap::value_parser!(u64).range(1..=110))]

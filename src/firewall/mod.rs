@@ -1,7 +1,9 @@
 //! Bounded system-firewall snapshots and edits; enforcement remains daemon-owned.
 pub mod document;
 mod guard;
+pub mod helpers;
 pub mod policy;
+pub mod suggestions;
 pub mod transfer;
 use crate::{nodes, protocol};
 use anyhow::{Context, Result, ensure};

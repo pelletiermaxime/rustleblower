@@ -127,6 +127,20 @@ pub struct SocketRow {
     pub endpoints: String,
     pub metadata: String,
     pub raw: Range<usize>,
+    pub values: SocketValues,
+}
+pub struct SocketValues {
+    pub comm: String,
+    pub process: String,
+    pub state: u8,
+    pub source_port: u16,
+    pub source_ip: String,
+    pub destination_ip: String,
+    pub destination_port: u16,
+    pub protocol: u16,
+    pub uid: u32,
+    pub family: u8,
+    pub interface: String,
 }
 impl SocketRow {
     pub fn matches(&self, search: &str) -> bool {
@@ -267,7 +281,31 @@ pub fn sockets(raw: Arc<str>) -> Result<Sockets> {
             s.id.cookie
         );
         let start = value.get().as_ptr() as usize - raw.as_ptr() as usize;
-        bytes += title.capacity() + endpoints.capacity() + metadata.capacity();
+        let values = SocketValues {
+            comm: short(&proc.comm),
+            process: short(&proc.path),
+            state: s.state,
+            source_port: s.id.source_port,
+            source_ip: short(s.id.source.as_deref().unwrap_or("?")),
+            destination_ip: short(s.id.destination.as_deref().unwrap_or("?")),
+            destination_port: s.id.destination_port,
+            protocol: wire.proto,
+            uid: s.uid,
+            family: s.family,
+            interface: if wire.iface.is_empty() {
+                s.id.interface.to_string()
+            } else {
+                short(&wire.iface)
+            },
+        };
+        bytes += title.capacity()
+            + endpoints.capacity()
+            + metadata.capacity()
+            + values.comm.capacity()
+            + values.process.capacity()
+            + values.source_ip.capacity()
+            + values.destination_ip.capacity()
+            + values.interface.capacity();
         if bytes > MAX_VIEW_BYTES {
             shortened = true;
             break;
@@ -278,6 +316,7 @@ pub fn sockets(raw: Arc<str>) -> Result<Sockets> {
             endpoints,
             metadata,
             raw: start..start + value.get().len(),
+            values,
         });
     }
     rows.sort_by(|a, b| (&a.endpoints, a.pid).cmp(&(&b.endpoints, b.pid)));

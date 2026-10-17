@@ -48,6 +48,7 @@ fn options(dir: &Path) -> Config {
         history_days: 7,
         history_mib: 16,
         headless: true,
+        transport: Default::default(),
     }
 }
 fn evidence() -> PathBuf {
@@ -95,7 +96,49 @@ fn capture(cx: &mut HeadlessAppContext, window: AnyWindowHandle, path: &Path) {
     );
     image.save(path).unwrap();
 }
+const SETTINGS_ACTIONS: [&str; 8] = [
+    "preferences",
+    "appearance-preferences",
+    "startup-preferences",
+    "updates-preferences",
+    "reputation-preferences",
+    "raw-download-preferences",
+    "highlighting-reload",
+    "quit",
+];
 fn click(cx: &mut HeadlessAppContext, window: AnyWindowHandle, id: &'static str) {
+    if SETTINGS_ACTIONS.contains(&id)
+        && id != "quit"
+        && !cx
+            .update_window(window, |_, w, _| {
+                w.try_find(id).is_some_and(|target| target.visible())
+            })
+            .unwrap()
+    {
+        cx.update_window(window, |_, w, cx| w.click("settings-menu-trigger", cx))
+            .unwrap();
+        settle(cx);
+        let settings = cx.update(|cx| super::settings::test_window(cx));
+        let target = match id {
+            "preferences" => "settings-popup",
+            "appearance-preferences" => "settings-appearance",
+            "startup-preferences" => "settings-startup",
+            "updates-preferences" => "settings-updates",
+            "reputation-preferences" => "settings-reputation",
+            "raw-download-preferences" => "settings-downloads",
+            "highlighting-reload" => "settings-highlighting",
+            _ => unreachable!(),
+        };
+        cx.update_window(settings, |_, w, cx| w.click(target, cx))
+            .unwrap();
+        settle(cx);
+        if id == "highlighting-reload" {
+            cx.update_window(settings, |_, w, cx| w.click(id, cx))
+                .unwrap();
+            settle(cx);
+        }
+        return;
+    }
     cx.update_window(window, |_, window, cx| window.click(id, cx))
         .unwrap();
     cx.run_until_parked();
@@ -1459,6 +1502,4435 @@ fn headless_checksum_review() {
 }
 
 #[test]
+fn headless_history_selection() {
+    use gpui::InputEvent as _;
+    use std::collections::BTreeSet;
+    fn control(cx: &mut HeadlessAppContext, w: AnyWindowHandle, id: &'static str) {
+        if id != "history-tools-close" {
+            for _ in 0..32 {
+                let delta = cx
+                    .update_window(w, |_, w, cx| {
+                        w.render_frame(cx);
+                        let body = w.find("history-tools-panel").bounds();
+                        let target = w.find(id).bounds();
+                        if target.center().y < body.top() + px(6.) {
+                            Some(120.)
+                        } else if target.center().y > body.bottom() - px(6.) {
+                            Some(-120.)
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap();
+                let Some(delta) = delta else { break };
+                cx.update_window(w, |_, w, cx| {
+                    let position = w.find("history-tools-panel").bounds().center();
+                    w.dispatch_event(
+                        gpui::MouseMoveEvent {
+                            position,
+                            pressed_button: None,
+                            modifiers: Default::default(),
+                        }
+                        .to_platform_input(),
+                        cx,
+                    );
+                    w.render_frame(cx);
+                    w.dispatch_event(
+                        gpui::ScrollWheelEvent {
+                            position,
+                            delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.), px(delta))),
+                            ..Default::default()
+                        }
+                        .to_platform_input(),
+                        cx,
+                    );
+                    w.render_frame(cx);
+                })
+                .unwrap();
+                settle(cx);
+            }
+        }
+        click(cx, w, id);
+        settle(cx);
+    }
+    fn tools(cx: &mut HeadlessAppContext, w: AnyWindowHandle, tab: usize) -> AnyWindowHandle {
+        let before = cx.update(|cx| cx.windows());
+        click(cx, w, "history-tools");
+        settle(cx);
+        let tool = cx.update(|cx| {
+            cx.windows()
+                .into_iter()
+                .find(|w| !before.contains(w))
+                .unwrap()
+        });
+        cx.update_window(tool, |_, w, cx| {
+            w.within("history-tools-tabs").click(tab, cx)
+        })
+        .unwrap();
+        settle(cx);
+        tool
+    }
+    fn mark(cx: &mut HeadlessAppContext, w: AnyWindowHandle, id: i64, shift: bool) {
+        cx.update_window(w, |_, w, cx| {
+            w.render_frame(cx);
+            let target = w.find(("history-mark", id as u64));
+            assert!(target.visible());
+            let position = target.bounds().center();
+            let modifiers = gpui::Modifiers {
+                shift,
+                ..Default::default()
+            };
+            w.dispatch_event(
+                gpui::MouseMoveEvent {
+                    position,
+                    pressed_button: None,
+                    modifiers,
+                }
+                .to_platform_input(),
+                cx,
+            );
+            w.render_frame(cx);
+            w.dispatch_event(
+                gpui::MouseDownEvent {
+                    button: gpui::MouseButton::Left,
+                    position,
+                    modifiers,
+                    click_count: 1,
+                    first_mouse: false,
+                }
+                .to_platform_input(),
+                cx,
+            );
+            w.render_frame(cx);
+            w.dispatch_event(
+                gpui::MouseUpEvent {
+                    button: gpui::MouseButton::Left,
+                    position,
+                    modifiers,
+                    click_count: 1,
+                }
+                .to_platform_input(),
+                cx,
+            );
+            w.render_frame(cx);
+        })
+        .unwrap();
+        settle(cx);
+    }
+    fn file(cx: &mut HeadlessAppContext, path: &Path) {
+        for _ in 0..60 {
+            settle(cx);
+            if path.exists() {
+                return;
+            }
+        }
+        panic!("Selected export missing {}", path.display());
+    }
+    fn copy_disabled(cx: &mut HeadlessAppContext, main: AnyWindowHandle) {
+        let tool = tools(cx, main, 2);
+        cx.update(|cx| {
+            cx.write_to_clipboard(gpui::ClipboardItem::new_string(
+                "owned-empty-selection-sentinel".into(),
+            ))
+        });
+        control(cx, tool, "history-copy-selected");
+        assert_eq!(
+            cx.update(|cx| cx.read_from_clipboard().unwrap().text().unwrap()),
+            "owned-empty-selection-sentinel"
+        );
+        control(cx, tool, "history-tools-close");
+    }
+    let evidence = evidence();
+    let dir = tempfile::tempdir().unwrap();
+    let config = options(dir.path());
+    let backend = Backend::start(config.clone()).unwrap();
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap();
+    let mut daemon = runtime.block_on(async {
+        use hyper_util::rt::TokioIo;
+        let socket = config.socket.clone();
+        let channel = tonic::transport::Endpoint::try_from("http://localhost")
+            .unwrap()
+            .connect_with_connector(tower::service_fn(move |_| {
+                let socket = socket.clone();
+                async move {
+                    tokio::net::UnixStream::connect(socket)
+                        .await
+                        .map(TokioIo::new)
+                }
+            }))
+            .await
+            .unwrap();
+        let mut daemon = protocol::ui_client::UiClient::new(channel);
+        daemon
+            .subscribe(protocol::ClientConfig {
+                name: "selection-fixture".into(),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        daemon
+    });
+    let base = crate::history::now_nanos() - 1_000_000_000;
+    let event = |n: i64| protocol::Event {
+        unixnano: base + n,
+        connection: Some(protocol::Connection {
+            process_path: format!("/owned/selection-{n:03}"),
+            dst_host: "owned-selection.test".into(),
+            dst_port: 443,
+            protocol: "tcp".into(),
+            ..Default::default()
+        }),
+        rule: Some(protocol::Rule {
+            action: "deny".into(),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    backend.handle.history.ingest(
+        "selection-fixture".into(),
+        (1..=205).map(event).collect(),
+        "owned-selection",
+    );
+    runtime.block_on(backend.handle.history.flush()).unwrap();
+    let mut cx = context();
+    let mut view = None;
+    let main = cx
+        .open_window(size(px(1320.), px(980.)), |w, cx| {
+            let v = cx.new(|cx| Dashboard::new(backend.handle.clone(), config.clone(), w, cx));
+            view = Some(v.clone());
+            cx.new(|cx| gpui_kit::base::Root::new(v, w, cx))
+        })
+        .unwrap();
+    let main: AnyWindowHandle = main.into();
+    let view = view.unwrap();
+    for _ in 0..60 {
+        settle(&mut cx);
+        if cx.read_entity(&view, |v, _| v.history.page.rows.len()) == 200 {
+            break;
+        }
+    }
+    let top = cx.read_entity(&view, |v, _| v.history.page.rows[0].id);
+    assert_eq!(
+        cx.read_entity(&view, |v, _| v.history.page.rows[0].process.clone()),
+        "/owned/selection-205"
+    );
+    mark(&mut cx, main, top, false);
+    capture(&mut cx, main, &evidence.join("01-first-card-mark.png"));
+    click(&mut cx, main, "older");
+    for _ in 0..60 {
+        settle(&mut cx);
+        if cx.read_entity(&view, |v, _| v.history.page.rows.len()) == 5 {
+            break;
+        }
+    }
+    let range_end = cx.read_entity(&view, |v, _| v.history.page.rows[0].id);
+    let separate = cx.read_entity(&view, |v, _| v.history.page.rows[2].id);
+    mark(&mut cx, main, range_end, true);
+    mark(&mut cx, main, separate, false);
+    capture(
+        &mut cx,
+        main,
+        &evidence.join("02-shift-range-across-page.png"),
+    );
+    click(&mut cx, main, "history-first-page");
+    for _ in 0..60 {
+        settle(&mut cx);
+        if cx.read_entity(&view, |v, _| v.history.page.rows.first().map(|r| r.id)) == Some(top) {
+            break;
+        }
+    }
+    capture(
+        &mut cx,
+        main,
+        &evidence.join("03-first-page-keeps-marks-ceiling.png"),
+    );
+    // Focusing Details is independent of marked membership.
+    cx.update_window(main, |_, w, cx| w.click(("history-row", 1usize), cx))
+        .unwrap();
+    settle(&mut cx);
+    click(&mut cx, main, "history-details");
+    let mut details = None;
+    for _ in 0..60 {
+        settle(&mut cx);
+        details = cx.read_entity(&view, |v, _| v.history.detail_window);
+        if details.is_some() {
+            break;
+        }
+    }
+    let details = details.unwrap();
+    capture(
+        &mut cx,
+        details,
+        &evidence.join("04-details-independent-of-marks.png"),
+    );
+    click(&mut cx, details, "connection-close");
+    settle(&mut cx);
+    let tool = tools(&mut cx, main, 2);
+    control(&mut cx, tool, "history-export-format");
+    cx.update_window(tool, |_, w, cx| w.input("JSON Lines", cx))
+        .unwrap();
+    settle(&mut cx);
+    cx.update_window(tool, |_, w, cx| w.press("enter", cx))
+        .unwrap();
+    settle(&mut cx);
+    let range_path = evidence.join("selected-range.jsonl");
+    control(&mut cx, tool, "history-export-path");
+    fill(
+        &mut cx,
+        tool,
+        "history-export-path",
+        range_path.to_str().unwrap(),
+    );
+    control(&mut cx, tool, "history-export-selected");
+    file(&mut cx, &range_path);
+    let range = std::fs::read_to_string(&range_path)
+        .unwrap()
+        .lines()
+        .map(|s| {
+            serde_json::from_str::<serde_json::Value>(s).unwrap()["process"]
+                .as_str()
+                .unwrap()
+                .to_owned()
+        })
+        .collect::<BTreeSet<_>>();
+    let expected = (5..=205)
+        .chain([3])
+        .map(|n| format!("/owned/selection-{n:03}"))
+        .collect::<BTreeSet<_>>();
+    assert_eq!(range, expected);
+    control(&mut cx, tool, "history-tools-close");
+    click(&mut cx, main, "history-select-all");
+    settle(&mut cx);
+    mark(&mut cx, main, top, false);
+    backend.handle.history.ingest(
+        "selection-fixture".into(),
+        vec![event(206)],
+        "owned-selection",
+    );
+    runtime.block_on(backend.handle.history.flush()).unwrap();
+    click(&mut cx, main, "history-refresh");
+    settle(&mut cx);
+    assert!(!cx.read_entity(&view, |v, _| {
+        v.history
+            .page
+            .rows
+            .iter()
+            .any(|r| r.process == "/owned/selection-206")
+    }));
+    capture(
+        &mut cx,
+        main,
+        &evidence.join("05-all-matching-exclusion-frozen-arrival.png"),
+    );
+    let tool = tools(&mut cx, main, 1);
+    for id in [
+        "history-column-time",
+        "history-column-host",
+        "history-column-port",
+        "history-column-protocol",
+    ] {
+        control(&mut cx, tool, id);
+    }
+    control(&mut cx, tool, "history-columns-save");
+    cx.update_window(tool, |_, w, cx| {
+        w.within("history-tools-tabs").click(2usize, cx)
+    })
+    .unwrap();
+    settle(&mut cx);
+    let csv_path = evidence.join("selected-all-except-first.csv");
+    control(&mut cx, tool, "history-export-path");
+    fill(
+        &mut cx,
+        tool,
+        "history-export-path",
+        csv_path.to_str().unwrap(),
+    );
+    control(&mut cx, tool, "history-export-selected");
+    file(&mut cx, &csv_path);
+    let csv = std::fs::read_to_string(&csv_path).unwrap();
+    assert_eq!(csv.lines().count(), 205);
+    assert_eq!(
+        csv.lines().next().unwrap().split(',').count(),
+        2,
+        "Only the two chosen data columns are exported"
+    );
+    assert!(!csv.contains("selection-205") && !csv.contains("selection-206"));
+    assert!(csv.contains("selection-001") && csv.contains("selection-204"));
+    control(&mut cx, tool, "history-copy-selected");
+    for _ in 0..60 {
+        settle(&mut cx);
+        if cx
+            .update(|cx| cx.read_from_clipboard().and_then(|item| item.text()))
+            .as_deref()
+            == Some(csv.as_str())
+        {
+            break;
+        }
+    }
+    assert_eq!(
+        cx.update(|cx| cx.read_from_clipboard().unwrap().text().unwrap()),
+        csv
+    );
+    capture(
+        &mut cx,
+        tool,
+        &evidence.join("06-selected-columns-file-and-clipboard.png"),
+    );
+    let ask = runtime.spawn(async move {
+        daemon
+            .ask_rule(protocol::Connection {
+                process_path: "/owned/selection-permission".into(),
+                ..Default::default()
+            })
+            .await
+            .unwrap()
+            .into_inner()
+    });
+    let mut popup = None;
+    for _ in 0..60 {
+        settle(&mut cx);
+        popup = cx.read_entity(&view, |v, _| v.prompt_window);
+        if popup.is_some() {
+            break;
+        }
+    }
+    let popup = popup.unwrap();
+    capture(
+        &mut cx,
+        popup,
+        &evidence.join("07-permission-with-selected-export-tools.png"),
+    );
+    click(&mut cx, popup, "deny-once");
+    assert_eq!(runtime.block_on(ask).unwrap().action, "deny");
+    control(&mut cx, tool, "history-tools-close");
+    click(&mut cx, main, "latest");
+    for _ in 0..60 {
+        settle(&mut cx);
+        if cx.read_entity(&view, |v, _| {
+            v.history
+                .page
+                .rows
+                .iter()
+                .any(|r| r.process == "/owned/selection-206")
+        }) {
+            break;
+        }
+    }
+    assert!(cx.read_entity(&view, |v, _| v.history.query.ceiling.is_none()));
+    copy_disabled(&mut cx, main);
+    let tool = tools(&mut cx, main, 1);
+    control(&mut cx, tool, "history-table-mode");
+    control(&mut cx, tool, "history-columns-save");
+    control(&mut cx, tool, "history-tools-close");
+    let table_id = cx.read_entity(&view, |v, _| v.history.page.rows[0].id);
+    mark(&mut cx, main, table_id, false);
+    capture(
+        &mut cx,
+        main,
+        &evidence.join("08-table-mark-after-latest.png"),
+    );
+    cx.update_window(main, |_, w, cx| {
+        w.within("table").click(("icon-sort", 0usize), cx)
+    })
+    .unwrap();
+    settle(&mut cx);
+    copy_disabled(&mut cx, main);
+    let filtered_id = cx.read_entity(&view, |v, _| v.history.page.rows[0].id);
+    mark(&mut cx, main, filtered_id, false);
+    cx.update_window(main, |_, w, cx| {
+        w.press("ctrl-f", cx);
+        w.press("ctrl-a", cx);
+        w.input("/owned/selection-1", cx)
+    })
+    .unwrap();
+    settle(&mut cx);
+    copy_disabled(&mut cx, main);
+    capture(
+        &mut cx,
+        main,
+        &evidence.join("09-sort-and-filter-clear-marks.png"),
+    );
+    std::fs::write(evidence.join("selection-proof.json"),serde_json::to_vec_pretty(&serde_json::json!({"initial_events":205,"range_plus_manual_count":range.len(),"range_processes":range,"all_minus_one_csv_rows":csv.lines().count()-1,"csv_clipboard_exact":true,"new_arrival_excluded":true,"details_independent":true,"latest_sort_filter_copy_inert_after_clear":true})).unwrap()).unwrap();
+    drop(view);
+    drop(cx);
+    backend.join();
+    drop(runtime);
+    assert!(!config.socket.exists());
+    let screenshots = std::fs::read_dir(&evidence)
+        .unwrap()
+        .filter_map(Result::ok)
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .filter(|n| n.ends_with(".png"))
+        .collect::<Vec<_>>();
+    std::fs::write(evidence.join("headless.json"),serde_json::to_vec_pretty(&serde_json::json!({"status":"passed","real_gpu":true,"scoped_socket_removed":true,"screenshots":screenshots,"proof_boundary":"Actual pointer/Shift cross-page marks, frozen query/all exclusion, chosen column CSV/JSONL/clipboard, independent Details and permission, Latest/filter/sort clearing on owned backend; no host daemon/compositor/package claim"})).unwrap()).unwrap();
+}
+#[test]
+fn headless_catalogue_policy() {
+    use crate::rules::catalogue_policy::{Origin, Preset, Status};
+    use gpui::InputEvent as _;
+    fn control(cx: &mut HeadlessAppContext, w: AnyWindowHandle, id: &'static str) {
+        let footer = cx
+            .update_window(w, |_, w, _| {
+                w.find(id).path().contains(&"settings-footer".into())
+            })
+            .unwrap();
+        if !footer {
+            for _ in 0..32 {
+                let delta = cx
+                    .update_window(w, |_, w, cx| {
+                        w.render_frame(cx);
+                        let body = w.find("catalogue-preferences-scroll").bounds();
+                        let target = w.find(id).bounds();
+                        if target.center().y < body.top() {
+                            Some(120.)
+                        } else if target.center().y > body.bottom() {
+                            Some(-120.)
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap();
+                let Some(delta) = delta else { break };
+                cx.update_window(w, |_, w, cx| {
+                    let position = w.find("catalogue-preferences-scroll").bounds().center();
+                    w.dispatch_event(
+                        gpui::MouseMoveEvent {
+                            position,
+                            pressed_button: None,
+                            modifiers: Default::default(),
+                        }
+                        .to_platform_input(),
+                        cx,
+                    );
+                    w.render_frame(cx);
+                    w.dispatch_event(
+                        gpui::ScrollWheelEvent {
+                            position,
+                            delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.), px(delta))),
+                            ..Default::default()
+                        }
+                        .to_platform_input(),
+                        cx,
+                    );
+                    w.render_frame(cx);
+                })
+                .unwrap();
+                settle(cx);
+            }
+        }
+        click(cx, w, id);
+        settle(cx);
+    }
+    let evidence = evidence();
+    let phase = std::env::var("RUSTLEBLOWER_CATALOGUE_TEST_PHASE").ok();
+    if phase.is_none() {
+        // Two real OS processes are essential: process_run_id is process-scoped.
+        let owned = tempfile::tempdir().unwrap();
+        let executable = std::env::current_exe().unwrap();
+        let mut phases = Vec::new();
+        for name in ["seed", "reopen"] {
+            let log = std::fs::File::create(evidence.join(format!("{name}.log"))).unwrap();
+            let mut child = std::process::Command::new(&executable)
+                .args([
+                    "app::headless_tests::headless_catalogue_policy",
+                    "--exact",
+                    "--nocapture",
+                    "--test-threads=1",
+                ])
+                .env("RUSTLEBLOWER_CATALOGUE_TEST_PHASE", name)
+                .env("RUSTLEBLOWER_CATALOGUE_TEST_ROOT", owned.path())
+                .stdout(log.try_clone().unwrap())
+                .stderr(log)
+                .spawn()
+                .unwrap();
+            let pid = child.id();
+            let started = Instant::now();
+            let status = loop {
+                if let Some(status) = child.try_wait().unwrap() {
+                    break status;
+                }
+                if started.elapsed() > Duration::from_secs(150) {
+                    child.kill().unwrap();
+                    let _ = child.wait();
+                    panic!(
+                        "Owned catalogue child {name} PID{pid} exceeded150seconds; retained phase log"
+                    );
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            };
+            phases.push(serde_json::json!({"phase":name,"pid":pid,"success":status.success(),"elapsed_seconds":started.elapsed().as_secs_f64()}));
+            std::fs::write(
+                evidence.join("owned-processes.json"),
+                serde_json::to_vec_pretty(&phases).unwrap(),
+            )
+            .unwrap();
+            assert!(
+                status.success(),
+                "Owned catalogue {name} failed; inspect retained phase log"
+            );
+            assert!(!owned.path().join("ui.sock").exists());
+        }
+        let a: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(evidence.join("seed-state.json")).unwrap())
+                .unwrap();
+        let b: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(evidence.join("reopen-state.json")).unwrap())
+                .unwrap();
+        assert_ne!(a["pid"], b["pid"]);
+        assert_ne!(a["run"], b["run"]);
+        assert_eq!(
+            a["wire"], b["wire"],
+            "Actual OS restart changes no cached daemon rule fields"
+        );
+        let screenshots = std::fs::read_dir(&evidence)
+            .unwrap()
+            .filter_map(Result::ok)
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .filter(|n| n.ends_with(".png"))
+            .collect::<Vec<_>>();
+        std::fs::write(evidence.join("headless.json"),serde_json::to_vec_pretty(&serde_json::json!({"status":"passed","real_gpu":true,"scoped_socket_removed":true,"screenshots":screenshots,"proof_boundary":"Two owned OS processes and actual Kit catalogue controls; persisted filtering, offline prior-run status, unchanged daemon wire, independent permission response. No host daemon or policy changes."})).unwrap()).unwrap();
+        return;
+    }
+    let phase = phase.unwrap();
+    assert!(matches!(phase.as_str(), "seed" | "reopen"));
+    let owned = PathBuf::from(std::env::var_os("RUSTLEBLOWER_CATALOGUE_TEST_ROOT").unwrap());
+    let config = options(&owned);
+    let backend = Backend::start(config.clone()).unwrap();
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap();
+    let mut daemon = if phase == "seed" {
+        Some(runtime.block_on(async {
+            use hyper_util::rt::TokioIo;
+            let path = config.socket.clone();
+            let channel = tonic::transport::Endpoint::try_from("http://localhost")
+                .unwrap()
+                .connect_with_connector(tower::service_fn(move |_| {
+                    let path = path.clone();
+                    async move {
+                        tokio::net::UnixStream::connect(path)
+                            .await
+                            .map(TokioIo::new)
+                    }
+                }))
+                .await
+                .unwrap();
+            let mut daemon = protocol::ui_client::UiClient::new(channel);
+            daemon
+                .subscribe(protocol::ClientConfig {
+                    name: "catalogue-fixture".into(),
+                    rules: ["once", "30s", "5m", "always", "2h", "until restart"]
+                        .into_iter()
+                        .enumerate()
+                        .map(|(i, duration)| protocol::Rule {
+                            name: format!("catalogue.{i}"),
+                            description: format!("Owned {duration} catalogue rule"),
+                            duration: duration.into(),
+                            created: crate::history::now_nanos() / 1_000_000_000 - 10,
+                            enabled: true,
+                            action: "deny".into(),
+                            operator: Some(protocol::Operator {
+                                r#type: "simple".into(),
+                                operand: "process.path".into(),
+                                data: format!("/owned/catalogue-{i}"),
+                                ..Default::default()
+                            }),
+                            ..Default::default()
+                        })
+                        .collect(),
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
+            daemon
+        }))
+    } else {
+        None
+    };
+    let mut cx = context();
+    let mut view = None;
+    let main = cx
+        .open_window(size(px(1320.), px(980.)), |w, cx| {
+            let v = cx.new(|cx| Dashboard::new(backend.handle.clone(), config.clone(), w, cx));
+            view = Some(v.clone());
+            cx.new(|cx| gpui_kit::base::Root::new(v, w, cx))
+        })
+        .unwrap();
+    let main: AnyWindowHandle = main.into();
+    let view = view.unwrap();
+    cx.update_window(main, |_, w, cx| w.within("main-tabs").click(1usize, cx))
+        .unwrap();
+    for _ in 0..60 {
+        settle(&mut cx);
+        if backend.handle.catalogue_policy.snapshot().ready
+            && cx.read_entity(&view, |v, _| v.rules.page.rules.len())
+                == if phase == "seed" { 6 } else { 4 }
+        {
+            break;
+        }
+    }
+    if phase == "reopen" {
+        pick(&mut cx, main, "rules-cache-node", "catalogue-fixture");
+    }
+    settle(&mut cx);
+    let wire = cx.read_entity(&view, |v, _| {
+        v.rules
+            .page
+            .rules
+            .iter()
+            .map(crate::rules::document::rule_json)
+            .collect::<Vec<_>>()
+    });
+    if phase == "seed" {
+        assert_eq!(wire.len(), 6);
+        capture(&mut cx, main, &evidence.join("01-default-all-presets.png"));
+        let before = cx.update(|cx| cx.windows());
+        click(&mut cx, main, "rules-catalogue-preferences");
+        settle(&mut cx);
+        let preferences = cx.update(|cx| {
+            cx.windows()
+                .into_iter()
+                .find(|w| !before.contains(w))
+                .unwrap()
+        });
+        control(&mut cx, preferences, "catalogue-ignore");
+        control(&mut cx, preferences, "catalogue-threshold");
+        cx.update_window(preferences, |_, w, cx| {
+            w.press("down", cx);
+            w.press("enter", cx)
+        })
+        .unwrap();
+        settle(&mut cx);
+        control(&mut cx, preferences, "catalogue-review");
+        capture(
+            &mut cx,
+            preferences,
+            &evidence.join("02-exact-filter-review.png"),
+        );
+        assert_eq!(
+            cx.read_entity(&view, |v, _| v.rules.page.rules.len()),
+            6,
+            "Review leaves catalogue unchanged"
+        );
+        control(&mut cx, preferences, "catalogue-keep-editing");
+        control(&mut cx, preferences, "catalogue-review");
+        control(&mut cx, preferences, "catalogue-confirm");
+        for _ in 0..60 {
+            settle(&mut cx);
+            if backend
+                .handle
+                .catalogue_policy
+                .snapshot()
+                .settings
+                .threshold
+                == Preset::FiveMinutes
+                && cx.read_entity(&view, |v, _| v.rules.page.rules.len()) == 4
+            {
+                break;
+            }
+        }
+        assert_eq!(
+            backend
+                .handle
+                .catalogue_policy
+                .snapshot()
+                .settings
+                .threshold,
+            Preset::FiveMinutes
+        );
+        assert_eq!(
+            cx.read_entity(&view, |v, _| v
+                .rules
+                .page
+                .rules
+                .iter()
+                .map(|r| r.name.clone())
+                .collect::<Vec<_>>()),
+            ["catalogue.2", "catalogue.3", "catalogue.4", "catalogue.5"]
+        );
+        capture(&mut cx, main, &evidence.join("03-short-presets-hidden.png"));
+        click(&mut cx, main, "rules-catalogue-preferences");
+        assert_eq!(
+            cx.update(|cx| cx.windows()).len(),
+            before.len() + 1,
+            "Actual opener reuses the preferences singleton"
+        );
+        let mut client = daemon.take().unwrap();
+        let ask = runtime.spawn(async move {
+            client
+                .ask_rule(protocol::Connection {
+                    process_path: "/owned/catalogue-permission".into(),
+                    ..Default::default()
+                })
+                .await
+                .unwrap()
+                .into_inner()
+        });
+        let mut popup = None;
+        for _ in 0..60 {
+            settle(&mut cx);
+            popup = cx.read_entity(&view, |v, _| v.prompt_window);
+            if popup.is_some() {
+                break;
+            }
+        }
+        let popup = popup.unwrap();
+        capture(
+            &mut cx,
+            popup,
+            &evidence.join("04-permission-with-catalogue-preferences.png"),
+        );
+        click(&mut cx, popup, "deny-once");
+        assert_eq!(runtime.block_on(ask).unwrap().action, "deny");
+        let pref_path = crate::rules::catalogue_policy::path_for(&config.database);
+        let old_revision = backend.handle.catalogue_policy.snapshot().revision.clone();
+        control(&mut cx, preferences, "catalogue-ignore");
+        control(&mut cx, preferences, "catalogue-review");
+        let mut external = b"\n".to_vec();
+        external.extend(std::fs::read(&pref_path).unwrap());
+        std::fs::write(&pref_path, &external).unwrap();
+        control(&mut cx, preferences, "catalogue-confirm");
+        assert_eq!(std::fs::read(&pref_path).unwrap(), external);
+        assert_eq!(
+            backend.handle.catalogue_policy.snapshot().revision,
+            old_revision
+        );
+        assert_eq!(cx.read_entity(&view, |v, _| v.rules.page.rules.len()), 4);
+        capture(
+            &mut cx,
+            preferences,
+            &evidence.join("05-stale-review-refused.png"),
+        );
+        control(&mut cx, preferences, "catalogue-reload");
+        for _ in 0..60 {
+            settle(&mut cx);
+            if backend.handle.catalogue_policy.snapshot().revision != old_revision {
+                break;
+            }
+        }
+        assert_ne!(
+            backend.handle.catalogue_policy.snapshot().revision,
+            old_revision
+        );
+        control(&mut cx, preferences, "catalogue-close");
+    } else {
+        assert_eq!(wire.len(), 4);
+        assert!(cx.read_entity(&view, |v, _| {
+            v.rules
+                .page
+                .origins
+                .values()
+                .all(|o| *o == Origin::Restored)
+        }));
+        assert_eq!(
+            cx.read_entity(&view, |v, _| v.rules.page.cache_status["catalogue.5"]
+                .status),
+            Status::ExpiredAtUiRestart
+        );
+        assert!(cx.read_entity(&view, |v, _| v.rules.page.rules.iter().all(|r| r.enabled)));
+        capture(
+            &mut cx,
+            main,
+            &evidence.join("06-real-process-restart-offline-status.png"),
+        );
+    }
+    let visible_wire = cx.read_entity(&view, |v, _| {
+        v.rules
+            .page
+            .rules
+            .iter()
+            .map(crate::rules::document::rule_json)
+            .collect::<Vec<_>>()
+    });
+    let state = serde_json::json!({"pid":std::process::id(),"run":backend.handle.catalogue_run.unwrap().0,"wire":visible_wire,"settings":backend.handle.catalogue_policy.snapshot().settings});
+    std::fs::write(
+        evidence.join(format!("{phase}-state.json")),
+        serde_json::to_vec_pretty(&state).unwrap(),
+    )
+    .unwrap();
+    drop(view);
+    drop(cx);
+    drop(daemon);
+    backend.join();
+    drop(runtime);
+    assert!(!config.socket.exists());
+}
+#[test]
+fn headless_highlighting() {
+    use gpui::InputEvent as _;
+    const GREEN: [u8; 3] = [17, 221, 119];
+    const MAGENTA: [u8; 3] = [219, 23, 163];
+    const BLUE: [u8; 3] = [19, 36, 238];
+    const CYAN: [u8; 3] = [9, 173, 213];
+    fn colored(
+        path: &Path,
+        color: [u8; 3],
+        area: Option<(gpui::Bounds<gpui::Pixels>, gpui::Size<gpui::Pixels>)>,
+    ) -> usize {
+        let image = image::open(path).unwrap().to_rgba8();
+        let (left, top, right, bottom) = area
+            .map(|(b, v)| {
+                let sx = image.width() as f32 / f32::from(v.width);
+                let sy = image.height() as f32 / f32::from(v.height);
+                (
+                    (f32::from(b.left()) * sx).ceil().max(0.) as u32,
+                    (f32::from(b.top()) * sy).ceil().max(0.) as u32,
+                    (f32::from(b.right()) * sx).floor().max(0.) as u32,
+                    (f32::from(b.bottom()) * sy).floor().max(0.) as u32,
+                )
+            })
+            .unwrap_or((0, 0, image.width(), image.height()));
+        image
+            .enumerate_pixels()
+            .filter(|(x, y, p)| {
+                *x >= left
+                    && *x < right
+                    && *y >= top
+                    && *y < bottom
+                    && p.0[..3].iter().zip(color).all(|(a, b)| a.abs_diff(b) <= 1)
+            })
+            .count()
+    }
+    fn row(
+        cx: &mut HeadlessAppContext,
+        w: AnyWindowHandle,
+        id: impl Into<gpui::ElementId>,
+    ) -> (gpui::Bounds<gpui::Pixels>, gpui::Size<gpui::Pixels>) {
+        let id = id.into();
+        cx.update_window(w, |_, w, cx| {
+            w.render_frame(cx);
+            (w.find(id).bounds(), w.viewport_size())
+        })
+        .unwrap()
+    }
+    fn wait(
+        cx: &mut HeadlessAppContext,
+        h: &crate::highlighting::Handle,
+        p: impl Fn(&crate::highlighting::Snapshot) -> bool,
+    ) {
+        for _ in 0..60 {
+            settle(cx);
+            if p(&h.snapshot()) && !cx.update(|cx| super::highlighting::pending(cx)) {
+                return;
+            }
+        }
+        panic!("Expected highlighting snapshot: {:?}", h.snapshot());
+    }
+    fn reveal(cx: &mut HeadlessAppContext, w: AnyWindowHandle, id: &'static str) {
+        for _ in 0..32 {
+            let delta = cx
+                .update_window(w, |_, w, cx| {
+                    w.render_frame(cx);
+                    let body = w.find("history-tools-panel").bounds();
+                    let target = w.find(id).bounds();
+                    if target.center().y < body.top() + px(8.) {
+                        Some(120.)
+                    } else if target.center().y > body.bottom() - px(8.) {
+                        Some(-120.)
+                    } else {
+                        None
+                    }
+                })
+                .unwrap();
+            let Some(delta) = delta else { return };
+            cx.update_window(w, |_, w, cx| {
+                let position = w.find("history-tools-panel").bounds().center();
+                w.dispatch_event(
+                    gpui::MouseMoveEvent {
+                        position,
+                        pressed_button: None,
+                        modifiers: Default::default(),
+                    }
+                    .to_platform_input(),
+                    cx,
+                );
+                w.render_frame(cx);
+                w.dispatch_event(
+                    gpui::ScrollWheelEvent {
+                        position,
+                        delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.), px(delta))),
+                        ..Default::default()
+                    }
+                    .to_platform_input(),
+                    cx,
+                );
+                w.render_frame(cx);
+            })
+            .unwrap();
+            settle(cx);
+        }
+        panic!("Highlight history control {id} unreachable")
+    }
+    let evidence = evidence();
+    let dir = tempfile::tempdir().unwrap();
+    let config = options(dir.path());
+    let backend = Backend::start(config.clone()).unwrap();
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap();
+    let mut daemon = runtime.block_on(async {
+        use hyper_util::rt::TokioIo;
+        let path = config.socket.clone();
+        let channel = tonic::transport::Endpoint::try_from("http://localhost")
+            .unwrap()
+            .connect_with_connector(tower::service_fn(move |_| {
+                let path = path.clone();
+                async move {
+                    tokio::net::UnixStream::connect(path)
+                        .await
+                        .map(TokioIo::new)
+                }
+            }))
+            .await
+            .unwrap();
+        let mut daemon = protocol::ui_client::UiClient::new(channel);
+        daemon
+            .subscribe(protocol::ClientConfig {
+                name: "highlight-fixture".into(),
+                rules: (0..2)
+                    .map(|i| protocol::Rule {
+                        name: format!("highlight.{i}"),
+                        description: "Owned highlight rule".into(),
+                        enabled: true,
+                        action: "deny".into(),
+                        duration: "always".into(),
+                        operator: Some(protocol::Operator {
+                            r#type: "simple".into(),
+                            operand: "process.path".into(),
+                            data: format!("/owned/highlight-rule-{i}"),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    })
+                    .collect(),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        daemon
+    });
+    backend.handle.history.ingest(
+        "highlight-fixture".into(),
+        ["cell", "row"]
+            .into_iter()
+            .enumerate()
+            .map(|(i, kind)| protocol::Event {
+                unixnano: crate::history::now_nanos() + i as i64,
+                connection: Some(protocol::Connection {
+                    process_path: format!("/owned/highlight-{kind}"),
+                    dst_host: "owned-highlight.test".into(),
+                    dst_port: 443,
+                    protocol: "tcp".into(),
+                    ..Default::default()
+                }),
+                rule: Some(protocol::Rule {
+                    action: "deny".into(),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            })
+            .collect(),
+        "owned-highlight",
+    );
+    runtime.block_on(backend.handle.history.flush()).unwrap();
+    let mut cx = context();
+    let mut view = None;
+    let main = cx
+        .open_window(size(px(1240.), px(940.)), |w, cx| {
+            let v = cx.new(|cx| Dashboard::new(backend.handle.clone(), config.clone(), w, cx));
+            view = Some(v.clone());
+            cx.new(|cx| gpui_kit::base::Root::new(v, w, cx))
+        })
+        .unwrap();
+    let main: AnyWindowHandle = main.into();
+    let view = view.unwrap();
+    wait(&mut cx, &backend.handle.highlighting, |s| s.ready);
+    for _ in 0..50 {
+        settle(&mut cx);
+        if cx.read_entity(&view, |v, _| v.history.page.rows.len()) == 2 {
+            break;
+        }
+    }
+    let cell_index = cx.read_entity(&view, |v, _| {
+        v.history
+            .page
+            .rows
+            .iter()
+            .position(|r| r.process == "/owned/highlight-cell")
+            .unwrap()
+    });
+    let row_index = cx.read_entity(&view, |v, _| {
+        v.history
+            .page
+            .rows
+            .iter()
+            .position(|r| r.process == "/owned/highlight-row")
+            .unwrap()
+    });
+    let baseline = evidence.join("01-default-no-custom-highlights.png");
+    capture(&mut cx, main, &baseline);
+    assert!(colored(&baseline, GREEN, None) < 10 && colored(&baseline, MAGENTA, None) < 10);
+    let path = crate::highlighting::path_for(&config.database);
+    let profile = serde_json::json!({"version":1,"settings":{"profiles":[{"view":"history","enabled":true,"cells":[{"cols":["process"],"text":["/owned/highlight-cell"],"color":"#000000","bgcolor":"#11dd77","alignment":["hcenter"],"margins":[2,1]}],"rows":[{"cols":["process"],"text":["highlight-row"],"bgcolor":"#1324ee"},{"cols":["process"],"text":["highlight-row"],"color":"#ffffff","bgcolor":"#db17a3"}]},{"view":"rules","enabled":true,"cells":[{"cols":["name"],"text":["highlight.0","highlight.1"],"color":"#000000","bgcolor":"#09add5"}],"rows":[]}]}});
+    std::fs::write(&path, serde_json::to_vec_pretty(&profile).unwrap()).unwrap();
+    click(&mut cx, main, "highlighting-reload");
+    wait(&mut cx, &backend.handle.highlighting, |s| {
+        s.ready && s.warning.is_none() && s.profiles.len() == 2
+    });
+    let active = evidence.join("02-history-cell-row-precedence.png");
+    capture(&mut cx, main, &active);
+    let cell_area = row(&mut cx, main, ("history-row", cell_index));
+    let row_area = row(&mut cx, main, ("history-row", row_index));
+    assert!(colored(&active, GREEN, Some(cell_area)) > 50);
+    assert!(colored(&active, MAGENTA, Some(row_area)) > 50);
+    assert!(
+        colored(&active, BLUE, Some(row_area)) < 10,
+        "Later row rule replaces earlier background"
+    );
+    cx.update_window(main, |_, w, cx| w.click(("history-row", cell_index), cx))
+        .unwrap();
+    settle(&mut cx);
+    assert_eq!(
+        row(&mut cx, main, ("history-row", cell_index)),
+        cell_area,
+        "Selection does not move sampled history row"
+    );
+    let selected = evidence.join("03-history-selection-suppresses-style.png");
+    capture(&mut cx, main, &selected);
+    assert!(colored(&selected, GREEN, Some(cell_area)) < 10);
+    assert!(colored(&selected, MAGENTA, Some(row_area)) > 50);
+    cx.update_window(main, |_, w, cx| w.within("main-tabs").click(1usize, cx))
+        .unwrap();
+    for _ in 0..50 {
+        settle(&mut cx);
+        if cx.read_entity(&view, |v, _| v.rules.page.rules.len()) == 2 {
+            break;
+        }
+    }
+    let rules = evidence.join("04-rule-cells-highlighted.png");
+    capture(&mut cx, main, &rules);
+    let rule_area = row(&mut cx, main, ("rule-row", 0usize));
+    assert!(colored(&rules, CYAN, Some(rule_area)) > 50);
+    cx.update_window(main, |_, w, cx| w.click(("rule-row", 0usize), cx))
+        .unwrap();
+    settle(&mut cx);
+    // Rule selection exposes the action toolbar, so sample the row after layout.
+    let selected_rule_area = row(&mut cx, main, ("rule-row", 0usize));
+    let selected = evidence.join("05-rule-selection-suppresses-style.png");
+    capture(&mut cx, main, &selected);
+    assert!(colored(&selected, CYAN, Some(selected_rule_area)) < 10);
+    assert!(
+        colored(&selected, CYAN, None) > 50,
+        "Unselected rule keeps its custom style"
+    );
+    let revision = backend.handle.highlighting.snapshot().revision.clone();
+    let invalid = b"{invalid owned highlighting file preserved}";
+    std::fs::write(&path, invalid).unwrap();
+    click(&mut cx, main, "highlighting-reload");
+    wait(&mut cx, &backend.handle.highlighting, |s| {
+        s.warning.is_some()
+    });
+    assert_eq!(std::fs::read(&path).unwrap(), invalid);
+    assert_eq!(backend.handle.highlighting.snapshot().revision, revision);
+    let last_good = evidence.join("06-invalid-reload-keeps-last-good.png");
+    capture(&mut cx, main, &last_good);
+    assert!(colored(&last_good, CYAN, None) > 50);
+    let ask = runtime.spawn(async move {
+        daemon
+            .ask_rule(protocol::Connection {
+                process_path: "/owned/highlight-permission".into(),
+                ..Default::default()
+            })
+            .await
+            .unwrap()
+            .into_inner()
+    });
+    let mut popup = None;
+    for _ in 0..60 {
+        settle(&mut cx);
+        popup = cx.read_entity(&view, |v, _| v.prompt_window);
+        if popup.is_some() {
+            break;
+        }
+    }
+    let popup = popup.unwrap();
+    capture(
+        &mut cx,
+        popup,
+        &evidence.join("07-permission-under-highlight-file-error.png"),
+    );
+    click(&mut cx, popup, "deny-once");
+    assert_eq!(runtime.block_on(ask).unwrap().action, "deny");
+    std::fs::write(&path, serde_json::to_vec_pretty(&profile).unwrap()).unwrap();
+    click(&mut cx, main, "highlighting-reload");
+    wait(&mut cx, &backend.handle.highlighting, |s| {
+        s.warning.is_none()
+    });
+    cx.update_window(main, |_, w, cx| w.within("main-tabs").click(0usize, cx))
+        .unwrap();
+    settle(&mut cx);
+    cx.update_window(main, |_, w, cx| {
+        w.press("ctrl-f", cx);
+        w.press("ctrl-a", cx);
+        w.input("/owned/highlight", cx)
+    })
+    .unwrap();
+    settle(&mut cx);
+    let before = cx.update(|cx| cx.windows());
+    click(&mut cx, main, "history-tools");
+    settle(&mut cx);
+    let tools = cx.update(|cx| {
+        cx.windows()
+            .into_iter()
+            .find(|w| !before.contains(w))
+            .unwrap()
+    });
+    cx.update_window(tools, |_, w, cx| {
+        w.within("history-tools-tabs").click(1usize, cx)
+    })
+    .unwrap();
+    settle(&mut cx);
+    reveal(&mut cx, tools, "history-table-mode");
+    click(&mut cx, tools, "history-table-mode");
+    reveal(&mut cx, tools, "history-columns-save");
+    click(&mut cx, tools, "history-columns-save");
+    settle(&mut cx);
+    click(&mut cx, tools, "history-tools-close");
+    settle(&mut cx);
+    let table = evidence.join("08-pinned-table-profile-paint.png");
+    capture(&mut cx, main, &table);
+    assert!(colored(&table, GREEN, None) > 50 && colored(&table, MAGENTA, None) > 50);
+    let mut disabled = profile.clone();
+    for p in disabled["settings"]["profiles"].as_array_mut().unwrap() {
+        p["enabled"] = false.into()
+    }
+    std::fs::write(&path, serde_json::to_vec_pretty(&disabled).unwrap()).unwrap();
+    click(&mut cx, main, "highlighting-reload");
+    wait(&mut cx, &backend.handle.highlighting, |s| {
+        s.warning.is_none() && s.settings.profiles.iter().all(|p| !p.enabled)
+    });
+    let cleared = evidence.join("09-disabled-profiles-clear-paint.png");
+    capture(&mut cx, main, &cleared);
+    assert!(colored(&cleared, GREEN, None) < 10 && colored(&cleared, MAGENTA, None) < 10);
+    std::fs::write(evidence.join("highlight-pixel-proof.json"),serde_json::to_vec_pretty(&serde_json::json!({"rgb_channel_tolerance":1,"reason":"one8-bit quantization step after color/renderer roundtrip","history_cell_pixels":colored(&active,GREEN,Some(cell_area)),"history_later_row_pixels":colored(&active,MAGENTA,Some(row_area)),"overridden_blue_pixels":colored(&active,BLUE,Some(row_area)),"selected_history_custom_pixels":colored(&evidence.join("03-history-selection-suppresses-style.png"),GREEN,Some(cell_area)),"selected_rule_custom_pixels":colored(&evidence.join("05-rule-selection-suppresses-style.png"),CYAN,Some(selected_rule_area)),"rule_bounds_before_selection":format!("{rule_area:?}"),"rule_bounds_after_selection":format!("{selected_rule_area:?}"),"table_cell_pixels":colored(&table,GREEN,None),"table_row_pixels":colored(&table,MAGENTA,None),"disabled_cell_pixels":colored(&cleared,GREEN,None),"disabled_row_pixels":colored(&cleared,MAGENTA,None)})).unwrap()).unwrap();
+    drop(view);
+    drop(cx);
+    backend.join();
+    drop(runtime);
+    assert!(!config.socket.exists());
+    let screenshots = (1..=9)
+        .map(|n| {
+            std::fs::read_dir(&evidence)
+                .unwrap()
+                .filter_map(Result::ok)
+                .map(|e| e.file_name().to_string_lossy().to_string())
+                .find(|f| f.starts_with(&format!("{n:02}-")) && f.ends_with(".png"))
+                .unwrap()
+        })
+        .collect::<Vec<_>>();
+    std::fs::write(evidence.join("headless.json"),serde_json::to_vec_pretty(&serde_json::json!({"status":"passed","real_gpu":true,"scoped_socket_removed":true,"screenshots":screenshots,"proof_boundary":"Actual owned file profile plus native Reload, painted History cards exactcell/laterrow precedence, actual History/Rules selection suppresses custom style, invalid reload keeps lastgood bytes/styles, permission independent under profile error, pinned Kit history DataTable actual paint and disabled-profile clearing. PNG count checks use observed row bounds and atmost one8-bit RGB quantum. Other style view categories, source integer-column import mapping, native compositor, real daemon enforcement and package/RSS remain separate."})).unwrap()).unwrap();
+}
+
+#[test]
+fn headless_raw_downloads() {
+    use crate::raw_downloads::{Snapshot, Status};
+    use gpui::InputEvent as _;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    fn reveal(cx: &mut HeadlessAppContext, w: AnyWindowHandle, id: &'static str) {
+        for _ in 0..32 {
+            let direction = cx
+                .update_window(w, |_, w, cx| {
+                    w.render_frame(cx);
+                    let body = w.find("raw-downloads-scroll").bounds();
+                    let target = w.find(id).bounds();
+                    if target.center().y < body.top() + px(8.) {
+                        Some(120.)
+                    } else if target.center().y > body.bottom() - px(8.) {
+                        Some(-120.)
+                    } else {
+                        None
+                    }
+                })
+                .unwrap();
+            let Some(direction) = direction else { return };
+            cx.update_window(w, |_, w, cx| {
+                let position = w.find("raw-downloads-scroll").bounds().center();
+                w.dispatch_event(
+                    gpui::MouseMoveEvent {
+                        position,
+                        pressed_button: None,
+                        modifiers: Default::default(),
+                    }
+                    .to_platform_input(),
+                    cx,
+                );
+                w.render_frame(cx);
+                w.dispatch_event(
+                    gpui::ScrollWheelEvent {
+                        position,
+                        delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.), px(direction))),
+                        ..Default::default()
+                    }
+                    .to_platform_input(),
+                    cx,
+                );
+                w.render_frame(cx);
+            })
+            .unwrap();
+            settle(cx);
+        }
+        panic!("Raw control {id} must be reachable by actual wheel input");
+    }
+    fn control(cx: &mut HeadlessAppContext, w: AnyWindowHandle, id: &'static str) {
+        let footer = cx
+            .update_window(w, |_, w, _| {
+                w.find(id).path().contains(&"settings-footer".into())
+            })
+            .unwrap();
+        if !footer {
+            reveal(cx, w, id);
+        }
+        click(cx, w, id);
+        settle(cx);
+    }
+
+    fn input(cx: &mut HeadlessAppContext, w: AnyWindowHandle, id: &'static str, value: &str) {
+        reveal(cx, w, id);
+        fill(cx, w, id, value);
+    }
+    fn state(
+        cx: &mut HeadlessAppContext,
+        h: &crate::raw_downloads::Handle,
+        p: impl Fn(&Snapshot) -> bool,
+    ) -> Snapshot {
+        for _ in 0..80 {
+            settle(cx);
+            let s = h.snapshot();
+            if p(&s) {
+                settle(cx);
+                settle(cx);
+                return s;
+            }
+        }
+        panic!("Expected raw worker state, got {:?}", h.snapshot());
+    }
+    fn opened(cx: &mut HeadlessAppContext, main: AnyWindowHandle) -> AnyWindowHandle {
+        let before = cx.update(|cx| cx.windows());
+        click(cx, main, "raw-download-preferences");
+        settle(cx);
+        cx.update(|cx| {
+            cx.windows()
+                .into_iter()
+                .find(|w| !before.contains(w))
+                .unwrap()
+        })
+    }
+    let evidence = evidence();
+    let dir = tempfile::tempdir().unwrap();
+    let config = options(dir.path());
+    let mapping = std::fs::read_to_string("/proc/self/uid_map").unwrap();
+    let fields = mapping.split_whitespace().collect::<Vec<_>>();
+    assert!(
+        fields.len() == 3 && fields[0] == "0" && fields[1] != "0" && fields[2] == "1",
+        "Run raw GPU through owned_net.py"
+    );
+    let links = std::process::Command::new("ip")
+        .args(["-j", "link", "show"])
+        .output()
+        .unwrap();
+    let links: Vec<serde_json::Value> = serde_json::from_slice(&links.stdout).unwrap();
+    assert!(links.len() == 1 && links[0]["ifname"] == "lo");
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap();
+    type Response = (u16, Vec<u8>, bool);
+    let responses = Arc::new(Mutex::new(std::collections::VecDeque::<Response>::new()));
+    let hits = Arc::new(AtomicUsize::new(0));
+    let hold = Arc::new(AtomicBool::new(false));
+    let listener = runtime
+        .block_on(tokio::net::TcpListener::bind("127.0.0.1:0"))
+        .unwrap();
+    let url = format!("http://{}/raw", listener.local_addr().unwrap());
+    let (queue, count, held) = (responses.clone(), hits.clone(), hold.clone());
+    let http = runtime.spawn(async move {
+        while let Ok((mut socket, _)) = listener.accept().await {
+            let (queue, count, held) = (queue.clone(), count.clone(), held.clone());
+            tokio::spawn(async move {
+                let mut bytes = [0; 4096];
+                let n = socket.read(&mut bytes).await.unwrap_or(0);
+                assert!(bytes[..n].starts_with(b"GET /raw "));
+                count.fetch_add(1, Ordering::SeqCst);
+                let (code, body, wait) = queue
+                    .lock()
+                    .unwrap()
+                    .pop_front()
+                    .expect("Unexpected raw HTTP");
+                while wait && held.load(Ordering::Acquire) {
+                    tokio::time::sleep(Duration::from_millis(5)).await;
+                }
+                let header = format!(
+                    "HTTP/1.1 {code} owned\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                let _ = socket.write_all(header.as_bytes()).await;
+                let _ = socket.write_all(&body).await;
+            });
+        }
+    });
+    let backend = Backend::start(config.clone()).unwrap();
+    let raw = backend.handle.raw_downloads.clone();
+    let mut notices = backend.handle.desktop_notices.take_receiver().unwrap();
+    let mut daemon = runtime.block_on(async {
+        use hyper_util::rt::TokioIo;
+        let path = config.socket.clone();
+        let channel = tonic::transport::Endpoint::try_from("http://localhost")
+            .unwrap()
+            .connect_with_connector(tower::service_fn(move |_| {
+                let path = path.clone();
+                async move {
+                    tokio::net::UnixStream::connect(path)
+                        .await
+                        .map(TokioIo::new)
+                }
+            }))
+            .await
+            .unwrap();
+        let mut daemon = protocol::ui_client::UiClient::new(channel);
+        daemon
+            .subscribe(protocol::ClientConfig {
+                name: "raw-download-fixture".into(),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        daemon
+    });
+    let destination = dir.path().join("owned-resource.bin");
+    let profile = dir.path().join("owned-profile.json");
+    let document = serde_json::json!({"unknown_outer":{"keep":1},"actions":{"future_action":true,"downloader":{"enabled":true,"unknown_downloader":"retained","config":[{"name":"Owned raw group","interval":"7","units":"hours","unknown_group":99,"notify":{"success":{"desktop":"Owned raw published"},"error":{"desktop":"Owned raw failed"}},"urls":[{"name":"Owned resource","enabled":true,"remote":url,"localfile":destination,"unknown_resource":[1,2]}]}]}}});
+    std::fs::write(&profile, serde_json::to_vec_pretty(&document).unwrap()).unwrap();
+    let mut cx = context();
+    let (main, view) = cx.update(|cx| {
+        gpui_kit::open_window(super::dashboard_options(), cx, |w, cx| {
+            cx.new(|cx| Dashboard::new(backend.handle.clone(), config.clone(), w, cx))
+        })
+        .unwrap()
+    });
+    let (tray, _tray_actions, _availability) = super::tray::Client::fixture();
+    let (notifier, actions) = super::desktop_notifications::Client::fixture();
+    cx.update_entity(&view, |v, _| {
+        v.tray = Some(tray);
+        v.desktop_notifications = Some(notifier)
+    });
+    state(&mut cx, &raw, |s| s.ready);
+    let mut w = opened(&mut cx, main);
+    assert!(!raw.snapshot().settings.enabled);
+    assert_eq!(hits.load(Ordering::SeqCst), 0);
+    capture(&mut cx, w, &evidence.join("01-raw-default-disabled.png"));
+    input(&mut cx, w, "raw-profile-path", profile.to_str().unwrap());
+    control(&mut cx, w, "raw-import");
+    for _ in 0..60 {
+        settle(&mut cx);
+        if cx
+            .update_window(w, |_, w, _| w.try_find("raw-interval-0").is_some())
+            .unwrap()
+        {
+            break;
+        }
+    }
+    assert!(raw.snapshot().settings.groups.is_empty());
+    assert!(!crate::raw_downloads::path_for(&config.database).exists());
+    assert!(!destination.exists());
+    assert_eq!(hits.load(Ordering::SeqCst), 0);
+    control(&mut cx, w, "raw-save");
+    capture(
+        &mut cx,
+        w,
+        &evidence.join("02-import-off-review-exact-paths.png"),
+    );
+    control(&mut cx, w, "raw-dismiss-review");
+    assert!(!crate::raw_downloads::path_for(&config.database).exists());
+    input(&mut cx, w, "raw-interval-0", "0");
+    control(&mut cx, w, "raw-save");
+    assert!(
+        cx.update_window(w, |_, w, _| w.try_find("raw-confirm").is_none())
+            .unwrap()
+    );
+    capture(
+        &mut cx,
+        w,
+        &evidence.join("03-invalid-raw-interval-refused.png"),
+    );
+    input(&mut cx, w, "raw-interval-0", "300");
+    reveal(&mut cx, w, "raw-unit-0");
+    click(&mut cx, w, "raw-unit-0");
+    settle(&mut cx);
+    cx.update_window(w, |_, w, cx| {
+        w.press("up", cx);
+        w.press("enter", cx)
+    })
+    .unwrap();
+    settle(&mut cx);
+    control(&mut cx, w, "raw-enabled");
+    control(&mut cx, w, "raw-save");
+    capture(&mut cx, w, &evidence.join("04-reviewed-raw-settings.png"));
+    control(&mut cx, w, "raw-confirm");
+    state(&mut cx, &raw, |s| {
+        s.settings.enabled && s.settings.groups.len() == 1
+    });
+    assert_eq!(raw.snapshot().settings.groups[0].interval, "300");
+    assert_eq!(
+        raw.snapshot().settings.groups[0].units,
+        crate::raw_downloads::Unit::Minutes
+    );
+    assert_eq!(
+        hits.load(Ordering::SeqCst),
+        0,
+        "First interval is not immediate"
+    );
+    control(&mut cx, w, "raw-close");
+    w = opened(&mut cx, main);
+    capture(&mut cx, w, &evidence.join("05-raw-saved-reopened.png"));
+    let saved_profile = evidence.join("exported-profile.json");
+    input(
+        &mut cx,
+        w,
+        "raw-profile-path",
+        saved_profile.to_str().unwrap(),
+    );
+    control(&mut cx, w, "raw-export");
+    for _ in 0..60 {
+        settle(&mut cx);
+        if saved_profile.exists() {
+            break;
+        }
+    }
+    let exported: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&saved_profile).unwrap()).unwrap();
+    assert_eq!(exported["unknown_outer"], document["unknown_outer"]);
+    assert_eq!(exported["actions"]["future_action"], true);
+    let group = &exported["actions"]["downloader"]["config"][0];
+    assert_eq!(group["unknown_group"], 99);
+    assert_eq!(
+        group["urls"][0]["unknown_resource"],
+        serde_json::json!([1, 2])
+    );
+    assert_eq!(exported["actions"]["downloader"]["enabled"], true);
+    let exported_bytes = std::fs::read(&saved_profile).unwrap();
+    control(&mut cx, w, "raw-export");
+    assert_eq!(std::fs::read(&saved_profile).unwrap(), exported_bytes);
+    capture(
+        &mut cx,
+        w,
+        &evidence.join("06-raw-export-preserves-unknown-and-existing.png"),
+    );
+    control(&mut cx, w, "raw-run-0");
+    control(&mut cx, w, "raw-dismiss-review");
+    assert_eq!(hits.load(Ordering::SeqCst), 0);
+    const BODY: &[u8] = b"owned\0binary\n127.0.0.1 stays raw\xff";
+    responses
+        .lock()
+        .unwrap()
+        .push_back((200, BODY.to_vec(), false));
+    control(&mut cx, w, "raw-run-0");
+    control(&mut cx, w, "raw-confirm");
+    state(&mut cx, &raw, |s| !s.busy && s.completed_runs == 1);
+    assert_eq!(std::fs::read(&destination).unwrap(), BODY);
+    std::fs::copy(&destination, evidence.join("published-owned-resource.bin")).unwrap();
+    assert_eq!(raw.snapshot().reports[0].status, Status::Published);
+    let notice = notices.try_recv().unwrap();
+    assert_eq!(
+        notice.target,
+        crate::desktop_notifications::Target::RawDownloads
+    );
+    assert_eq!(notice.summary, "Owned raw published");
+    capture(
+        &mut cx,
+        w,
+        &evidence.join("07-raw-exact-binary-publication-notice.png"),
+    );
+    responses
+        .lock()
+        .unwrap()
+        .push_back((500, b"owned failure".to_vec(), false));
+    control(&mut cx, w, "raw-run-0");
+    control(&mut cx, w, "raw-confirm");
+    state(&mut cx, &raw, |s| !s.busy && s.completed_runs == 2);
+    assert_eq!(std::fs::read(&destination).unwrap(), BODY);
+    assert_eq!(raw.snapshot().reports[0].status, Status::Failed);
+    assert_eq!(notices.try_recv().unwrap().summary, "Owned raw failed");
+    capture(
+        &mut cx,
+        w,
+        &evidence.join("08-raw-error-preserves-last-good.png"),
+    );
+    hold.store(true, Ordering::Release);
+    responses
+        .lock()
+        .unwrap()
+        .push_back((200, b"cancelled replacement".to_vec(), true));
+    control(&mut cx, w, "raw-run-0");
+    control(&mut cx, w, "raw-confirm");
+    state(&mut cx, &raw, |s| s.busy);
+    for _ in 0..60 {
+        settle(&mut cx);
+        if hits.load(Ordering::SeqCst) == 3 {
+            break;
+        }
+    }
+    assert_eq!(hits.load(Ordering::SeqCst), 3);
+    let ask = runtime.spawn(async move {
+        daemon
+            .ask_rule(protocol::Connection {
+                process_path: "/owned/raw-held-permission".into(),
+                ..Default::default()
+            })
+            .await
+            .unwrap()
+            .into_inner()
+    });
+    let mut popup = None;
+    for _ in 0..60 {
+        settle(&mut cx);
+        popup = cx.read_entity(&view, |v, _| v.prompt_window);
+        if popup.is_some() {
+            break;
+        }
+    }
+    let popup = popup.unwrap();
+    click(&mut cx, popup, "deny-once");
+    assert_eq!(runtime.block_on(ask).unwrap().action, "deny");
+    assert!(raw.snapshot().busy);
+    capture(
+        &mut cx,
+        w,
+        &evidence.join("09-permission-during-held-raw-get.png"),
+    );
+    control(&mut cx, w, "raw-cancel");
+    state(&mut cx, &raw, |s| !s.busy && s.completed_runs == 3);
+    assert_eq!(std::fs::read(&destination).unwrap(), BODY);
+    assert_eq!(raw.snapshot().reports[0].status, Status::Cancelled);
+    assert!(notices.try_recv().is_err());
+    hold.store(false, Ordering::Release);
+    capture(
+        &mut cx,
+        w,
+        &evidence.join("10-cancel-raw-keeps-last-good.png"),
+    );
+    control(&mut cx, w, "raw-run-0");
+    let path = crate::raw_downloads::path_for(&config.database);
+    let mut external: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    external["settings"]["groups"][0]["interval"] = "5".into();
+    let external = serde_json::to_vec_pretty(&external).unwrap();
+    std::fs::write(&path, &external).unwrap();
+    control(&mut cx, w, "raw-confirm");
+    assert_eq!(hits.load(Ordering::SeqCst), 3);
+    assert_eq!(std::fs::read(&path).unwrap(), external);
+    assert_eq!(std::fs::read(&destination).unwrap(), BODY);
+    capture(
+        &mut cx,
+        w,
+        &evidence.join("11-frozen-run-revision-refused.png"),
+    );
+    control(&mut cx, w, "raw-reload");
+    state(&mut cx, &raw, |s| s.settings.groups[0].interval == "5");
+    control(&mut cx, w, "raw-close");
+    cx.update_window(main, |_, w, cx| {
+        assert!(view.update(cx, |v, _| v.should_close_dashboard(w)));
+        w.remove_window()
+    })
+    .unwrap();
+    settle(&mut cx);
+    let before = cx.update(|cx| cx.windows());
+    actions
+        .try_send(crate::desktop_notifications::Target::RawDownloads)
+        .unwrap();
+    settle(&mut cx);
+    let candidates = cx.update(|cx| cx.windows());
+    w = candidates
+        .into_iter()
+        .find(|candidate| {
+            !before.contains(candidate)
+                && cx
+                    .update_window(*candidate, |_, w, _| w.try_find("raw-save").is_some())
+                    .unwrap_or(false)
+        })
+        .unwrap();
+    let count = cx.update(|cx| cx.windows().len());
+    actions
+        .try_send(crate::desktop_notifications::Target::RawDownloads)
+        .unwrap();
+    settle(&mut cx);
+    assert_eq!(cx.update(|cx| cx.windows().len()), count);
+    assert!(cx.read_entity(&view, |v, _| v.main_window.is_none()));
+    capture(
+        &mut cx,
+        w,
+        &evidence.join("12-raw-notice-opens-from-hidden-singleton.png"),
+    );
+    control(&mut cx, w, "raw-enabled");
+    control(&mut cx, w, "raw-save");
+    control(&mut cx, w, "raw-confirm");
+    state(&mut cx, &raw, |s| !s.settings.enabled);
+    assert_eq!(std::fs::read(&destination).unwrap(), BODY);
+    control(&mut cx, w, "raw-close");
+    drop(view);
+    drop(cx);
+    drop(raw);
+    http.abort();
+    backend.join();
+    drop(runtime);
+    assert!(!config.socket.exists());
+    let screenshots = (1..=12)
+        .map(|n| {
+            std::fs::read_dir(&evidence)
+                .unwrap()
+                .filter_map(Result::ok)
+                .map(|e| e.file_name().to_string_lossy().to_string())
+                .find(|f| f.starts_with(&format!("{n:02}-")) && f.ends_with(".png"))
+                .unwrap()
+        })
+        .collect::<Vec<_>>();
+    std::fs::write(evidence.join("headless.json"),serde_json::to_vec_pretty(&serde_json::json!({"status":"passed","real_gpu":true,"scoped_socket_removed":true,"screenshots":screenshots,"proof_boundary":"Actual native profile stage OFF/review/cancel/invalid/save/reopen, selected count/unit, exact binary publication/error/cancel last-good preservation, unknown-preserving saved-profile export and existing-file refusal, frozen RunNow revision, actual permission during held owned GET, real worker mailbox notices plus synthetic hidden-dashboard RawDownloads callback/singleton. Owned namespace HTTP and temporary files only, no system daemon/policy, external endpoint, native compositor or package claim."})).unwrap()).unwrap();
+}
+
+#[test]
+fn headless_reputation() {
+    use crate::reputation::{Status, Worker};
+    use gpui::InputEvent as _;
+    use std::os::unix::fs::PermissionsExt;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    type Client = protocol::ui_client::UiClient<tonic::transport::Channel>;
+    fn prompt_report(cx: &mut HeadlessAppContext, prompt: AnyWindowHandle) {
+        let mut trace = Vec::new();
+        for attempt in 0..30 {
+            let (direction,sample) = cx
+                .update_window(prompt, |_, w, cx| {
+                    w.render_frame(cx);
+                    let body = w.find("prompt-content").bounds();
+                    let target = w.find("prompt-reputation-details").bounds();
+                    let direction = if target.top() < body.top() {
+                        Some(120.)
+                    } else if target.bottom() > body.bottom() {
+                        Some(-120.)
+                    } else {
+                        None
+                    };
+                    (direction,serde_json::json!({"attempt":attempt,"body":format!("{body:?}"),"target":format!("{target:?}"),"target_visible":w.find("prompt-reputation-details").visible(),"target_disabled":w.find("prompt-reputation-details").disabled(),"viewport":format!("{:?}",w.viewport_size()),"direction":direction}))
+                })
+                .unwrap();
+            trace.push(sample);
+            let Some(direction) = direction else {
+                click(cx, prompt, "prompt-reputation-details");
+                settle(cx);
+                return;
+            };
+            cx.update_window(prompt, |_, w, cx| {
+                let position = w.find("prompt-content").bounds().center();
+                w.dispatch_event(
+                    gpui::MouseMoveEvent {
+                        position,
+                        pressed_button: None,
+                        modifiers: Default::default(),
+                    }
+                    .to_platform_input(),
+                    cx,
+                );
+                w.render_frame(cx);
+                w.dispatch_event(
+                    gpui::ScrollWheelEvent {
+                        position,
+                        delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.), px(direction))),
+                        ..Default::default()
+                    }
+                    .to_platform_input(),
+                    cx,
+                );
+                w.render_frame(cx);
+            })
+            .unwrap();
+            settle(cx);
+        }
+        let evidence = evidence();
+        capture(cx, prompt, &evidence.join("unreachable-prompt-report.png"));
+        std::fs::write(
+            evidence.join("prompt-report-scroll-trace.json"),
+            serde_json::to_vec_pretty(&trace).unwrap(),
+        )
+        .unwrap();
+        panic!(
+            "Captured report button must be reachable inside actual prompt scroll viewport; retained bounds trace"
+        );
+    }
+
+    fn ready(cx: &mut HeadlessAppContext, w: AnyWindowHandle, id: &'static str) {
+        for _ in 0..60 {
+            settle(cx);
+            if cx
+                .update_window(w, |_, w, _| {
+                    w.try_find(id)
+                        .is_some_and(|e| e.visible() && e.disabled() != Some(true))
+                })
+                .unwrap()
+            {
+                return;
+            }
+        }
+        panic!("Reputation control {id} never ready")
+    }
+    fn result(
+        cx: &mut HeadlessAppContext,
+        w: AnyWindowHandle,
+        status: Status,
+    ) -> crate::reputation::ResultSet {
+        for _ in 0..60 {
+            settle(cx);
+            if let Some(r) = cx
+                .update_window(w, |_, w, cx| super::reputation_view::test_result(w, cx))
+                .unwrap()
+                && r.status == status
+            {
+                return r;
+            }
+        }
+        panic!("Expected reputation result {status:?}")
+    }
+    fn probe(cx: &mut HeadlessAppContext, w: AnyWindowHandle) -> (bool, bool) {
+        cx.update_window(w, |_, w, cx| {
+            gpui_kit::base::Root::read(w, cx)
+                .view()
+                .clone()
+                .downcast::<PromptWindow>()
+                .unwrap()
+                .read(cx)
+                .reputation_status()
+        })
+        .unwrap()
+    }
+    fn warning(cx: &mut HeadlessAppContext, w: AnyWindowHandle, emphasized: bool) {
+        for _ in 0..50 {
+            settle(cx);
+            if probe(cx, w) == (true, emphasized) {
+                return;
+            }
+        }
+        panic!(
+            "Expected warning emphasis {emphasized}, actual {:?}",
+            probe(cx, w)
+        )
+    }
+    fn asking(
+        runtime: &tokio::runtime::Runtime,
+        daemon: &Client,
+        name: &str,
+    ) -> tokio::task::JoinHandle<protocol::Rule> {
+        let mut daemon = daemon.clone();
+        let name = name.to_string();
+        runtime.spawn(async move {
+            daemon
+                .ask_rule(protocol::Connection {
+                    process_path: format!("/owned/{name}"),
+                    dst_host: format!("{name}.test"),
+                    protocol: "tcp".into(),
+                    ..Default::default()
+                })
+                .await
+                .unwrap()
+                .into_inner()
+        })
+    }
+    fn popup(cx: &mut HeadlessAppContext, v: &gpui::Entity<Dashboard>) -> AnyWindowHandle {
+        for _ in 0..60 {
+            settle(cx);
+            if let Some(w) = cx.read_entity(v, |v, _| v.prompt_window) {
+                return w;
+            }
+        }
+        panic!("Expected real permission popup")
+    }
+    fn manual(cx: &mut HeadlessAppContext, w: AnyWindowHandle, value: &str) {
+        click(cx, w, "rep-tab-results");
+        settle(cx);
+        reveal(cx, w, "rep-query".into());
+        fill(cx, w, "rep-query", value);
+        reveal(cx, w, "rep-check".into());
+        click(cx, w, "rep-check")
+    }
+    fn reveal(cx: &mut HeadlessAppContext, window: AnyWindowHandle, id: gpui::ElementId) {
+        for _ in 0..32 {
+            let direction = cx
+                .update_window(window, |_, w, cx| {
+                    w.render_frame(cx);
+                    let body = w.find("rep-scroll").bounds();
+                    let target = w.find(id.clone()).bounds();
+                    if target.center().y < body.top() + px(8.) {
+                        Some(120.)
+                    } else if target.center().y > body.bottom() - px(8.) {
+                        Some(-120.)
+                    } else {
+                        None
+                    }
+                })
+                .unwrap();
+            let Some(direction) = direction else { return };
+            cx.update_window(window, |_, w, cx| {
+                let body = w.find("rep-scroll").bounds();
+                w.dispatch_event(
+                    gpui::MouseMoveEvent {
+                        position: body.center(),
+                        pressed_button: None,
+                        modifiers: Default::default(),
+                    }
+                    .to_platform_input(),
+                    cx,
+                );
+                w.render_frame(cx);
+                w.dispatch_event(
+                    gpui::ScrollWheelEvent {
+                        position: body.center(),
+                        delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.), px(direction))),
+                        ..Default::default()
+                    }
+                    .to_platform_input(),
+                    cx,
+                );
+                w.render_frame(cx);
+            })
+            .unwrap();
+            settle(cx);
+        }
+        panic!("Reputation control {id:?} must be reachable by wheel input");
+    }
+
+    const KEY: &str = "owned-reputation-gpu-key-0123456789abcdef";
+    fn payload(warning: bool) -> String {
+        serde_json::json!({"data":{"attributes":{"last_analysis_stats":{"malicious":if warning{10}else{0},"suspicious":0,"harmless":60,"undetected":3},"total_votes":{"malicious":0,"harmless":0},"reputation":0,"echo":KEY}}}).to_string()
+    }
+    let evidence = evidence();
+    let dir = tempfile::tempdir().unwrap();
+    let config = options(dir.path());
+    let backend = Backend::start(config.clone()).unwrap();
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap();
+    let keyfile = dir.path().join("dummy-api-key");
+    std::fs::write(&keyfile, KEY).unwrap();
+    std::fs::set_permissions(&keyfile, std::fs::Permissions::from_mode(0o600)).unwrap();
+    type Response = (u16, String, bool);
+    let responses = Arc::new(Mutex::new(std::collections::VecDeque::<Response>::new()));
+    let hits = Arc::new(AtomicUsize::new(0));
+    let hold = Arc::new(AtomicBool::new(false));
+    let paths = Arc::new(Mutex::new(Vec::<String>::new()));
+    let(base,http)=runtime.block_on(async{let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();let base=format!("http://{}/",listener.local_addr().unwrap());let(queue,hits,hold,paths)=(responses.clone(),hits.clone(),hold.clone(),paths.clone());let task=tokio::spawn(async move{while let Ok((mut socket,_))=listener.accept().await{let mut bytes=[0u8;8192];let count=socket.read(&mut bytes).await.unwrap_or(0);{let mut paths=paths.lock().unwrap();assert!(paths.len()<32);paths.push(String::from_utf8_lossy(&bytes[..count]).lines().next().unwrap_or("").to_string());}hits.fetch_add(1,Ordering::SeqCst);let(status,body,held)=queue.lock().unwrap().pop_front().expect("Unexpected owned reputation HTTP request");while held&&hold.load(Ordering::Acquire){tokio::time::sleep(Duration::from_millis(5)).await;}let wire=format!("HTTP/1.1 {status} owned\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len());let _=socket.write_all(wire.as_bytes()).await;}});(base,task)});
+    let worker =
+        Worker::start_fixture(crate::reputation::path_for(&config.database), &base).unwrap();
+    let reputation = worker.handle();
+    let mut handle = backend.handle.clone();
+    handle.reputation = reputation.clone();
+    let daemon = runtime.block_on(async {
+        use hyper_util::rt::TokioIo;
+        let path = config.socket.clone();
+        let channel = tonic::transport::Endpoint::try_from("http://localhost")
+            .unwrap()
+            .connect_with_connector(tower::service_fn(move |_| {
+                let path = path.clone();
+                async move {
+                    tokio::net::UnixStream::connect(path)
+                        .await
+                        .map(TokioIo::new)
+                }
+            }))
+            .await
+            .unwrap();
+        let mut c = Client::new(channel);
+        c.subscribe(protocol::ClientConfig {
+            name: "reputation-fixture".into(),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+        c
+    });
+    let mut cx = context();
+    let (main, view) = cx.update(|cx| {
+        gpui_kit::open_window(super::dashboard_options(), cx, |w, cx| {
+            cx.new(|cx| Dashboard::new(handle.clone(), config.clone(), w, cx))
+        })
+        .unwrap()
+    });
+    settle(&mut cx);
+    let before = cx.update(|cx| cx.windows());
+    click(&mut cx, main, "reputation-preferences");
+    settle(&mut cx);
+    let w = cx.update(|cx| {
+        cx.windows()
+            .into_iter()
+            .find(|w| !before.contains(w))
+            .unwrap()
+    });
+    ready(&mut cx, w, "rep-save");
+    assert!(!reputation.snapshot().settings.enabled);
+    assert_eq!(hits.load(Ordering::SeqCst), 0);
+    capture(
+        &mut cx,
+        w,
+        &evidence.join("01-reputation-default-disabled.png"),
+    );
+    reveal(&mut cx, w, "rep-timeout".into());
+    fill(&mut cx, w, "rep-timeout", "0");
+    click(&mut cx, w, "rep-save");
+    settle(&mut cx);
+    assert!(!crate::reputation::path_for(&config.database).exists());
+    capture(
+        &mut cx,
+        w,
+        &evidence.join("02-invalid-reputation-settings.png"),
+    );
+    fill(&mut cx, w, "rep-timeout", "10");
+    fill(&mut cx, w, "rep-budget", "30");
+    fill(&mut cx, w, "rep-threshold", "3");
+    reveal(&mut cx, w, "rep-key-file".into());
+    fill(&mut cx, w, "rep-key-file", keyfile.to_str().unwrap());
+    for id in [
+        "rep-enabled",
+        "rep-ips",
+        "rep-hashes",
+        "rep-suspicious",
+        "rep-community",
+        "rep-reputation",
+    ] {
+        reveal(&mut cx, w, id.into());
+        click(&mut cx, w, id)
+    }
+    reveal(&mut cx, w, "rep-excluded-domains-add".into());
+    click(&mut cx, w, "rep-excluded-domains-add");
+    settle(&mut cx);
+    reveal(&mut cx, w, "rep-excluded-domains-0".into());
+    fill(&mut cx, w, "rep-excluded-domains-0", "skip.test");
+    reveal(&mut cx, w, "rep-excluded-ips-add".into());
+    click(&mut cx, w, "rep-excluded-ips-add");
+    settle(&mut cx);
+    reveal(&mut cx, w, "rep-excluded-ips-0".into());
+    fill(&mut cx, w, "rep-excluded-ips-0", "10.");
+    click(&mut cx, w, "rep-save");
+    ready(&mut cx, w, "rep-save");
+    let saved = reputation.snapshot().settings;
+    assert!(
+        saved.enabled
+            && saved.domains
+            && !saved.ips
+            && !saved.hashes
+            && saved.use_suspicious
+            && saved.use_community_score
+            && saved.use_reputation
+    );
+    assert_eq!(saved.timeout_seconds, 10);
+    assert_eq!(saved.request_budget, 30);
+    assert_eq!(saved.minimum_threshold, 3);
+    assert_eq!(saved.excluded_domains, vec!["skip.test"]);
+    assert_eq!(saved.excluded_ips, vec!["10."]);
+    assert_eq!(hits.load(Ordering::SeqCst), 0);
+    let path = crate::reputation::path_for(&config.database);
+    let bytes = std::fs::read(&path).unwrap();
+    assert!(!String::from_utf8_lossy(&bytes).contains(KEY));
+    click(&mut cx, w, "rep-close");
+    settle(&mut cx);
+    let before = cx.update(|cx| cx.windows());
+    click(&mut cx, main, "reputation-preferences");
+    settle(&mut cx);
+    let w = cx.update(|cx| {
+        cx.windows()
+            .into_iter()
+            .find(|w| !before.contains(w))
+            .unwrap()
+    });
+    ready(&mut cx, w, "rep-save");
+    reveal(&mut cx, w, "rep-threshold".into());
+    assert_eq!(
+        cx.update_window(w, |_, w, _| w
+            .find("rep-threshold")
+            .value()
+            .unwrap()
+            .to_string())
+            .unwrap(),
+        "3"
+    );
+    capture(
+        &mut cx,
+        w,
+        &evidence.join("03-reputation-settings-reopened.png"),
+    );
+    manual(&mut cx, w, "skip.test");
+    result(&mut cx, w, Status::Excluded);
+    assert_eq!(hits.load(Ordering::SeqCst), 0);
+    capture(
+        &mut cx,
+        w,
+        &evidence.join("04-reputation-exclusion-no-network.png"),
+    );
+    responses
+        .lock()
+        .unwrap()
+        .push_back((200, payload(true), false));
+    manual(&mut cx, w, "manual-warning.test");
+    let report = result(&mut cx, w, Status::Complete);
+    assert_eq!(report.reports.len(), 1);
+    assert_eq!(
+        report.reports[0].verdict,
+        crate::reputation::Verdict::Warning
+    );
+    assert!(!report.reports[0].details.contains(KEY));
+    reveal(&mut cx, w, "rep-details-0".into());
+    click(&mut cx, w, "rep-details-0");
+    settle(&mut cx);
+    reveal(&mut cx, w, "rep-copy-0".into());
+    click(&mut cx, w, "rep-copy-0");
+    let excerpt = cx.update(|cx| cx.read_from_clipboard().unwrap().text().unwrap());
+    assert!(excerpt.contains("last_analysis_stats"));
+    assert!(!excerpt.contains(KEY));
+    capture(
+        &mut cx,
+        w,
+        &evidence.join("05-reputation-report-redacted-excerpt.png"),
+    );
+    responses
+        .lock()
+        .unwrap()
+        .push_back((500, "{}".into(), false));
+    manual(&mut cx, w, "limited.test");
+    result(&mut cx, w, Status::Failed);
+    capture(
+        &mut cx,
+        w,
+        &evidence.join("06-reputation-service-error.png"),
+    );
+    hold.store(true, Ordering::Release);
+    responses
+        .lock()
+        .unwrap()
+        .push_back((200, payload(true), true));
+    manual(&mut cx, w, "manual-held.test");
+    result(&mut cx, w, Status::Checking);
+    reveal(&mut cx, w, "rep-cancel".into());
+    ready(&mut cx, w, "rep-cancel");
+    click(&mut cx, w, "rep-cancel");
+    result(&mut cx, w, Status::Cancelled);
+    hold.store(false, Ordering::Release);
+    capture(
+        &mut cx,
+        w,
+        &evidence.join("07-cancel-held-reputation-check.png"),
+    );
+    click(&mut cx, w, "rep-tab-settings");
+    settle(&mut cx);
+    let mut external: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    external["settings"]["minimum_threshold"] = 4.into();
+    let external = serde_json::to_vec_pretty(&external).unwrap();
+    std::fs::write(&path, &external).unwrap();
+    reveal(&mut cx, w, "rep-threshold".into());
+    fill(&mut cx, w, "rep-threshold", "5");
+    click(&mut cx, w, "rep-save");
+    ready(&mut cx, w, "rep-save");
+    assert_eq!(std::fs::read(&path).unwrap(), external);
+    assert_eq!(reputation.snapshot().settings.minimum_threshold, 3);
+    capture(
+        &mut cx,
+        w,
+        &evidence.join("08-stale-reputation-settings-refused.png"),
+    );
+    reveal(&mut cx, w, "rep-reload".into());
+    click(&mut cx, w, "rep-reload");
+    ready(&mut cx, w, "rep-save");
+    assert_eq!(reputation.snapshot().settings.minimum_threshold, 4);
+    click(&mut cx, w, "rep-close");
+    settle(&mut cx);
+    let before_hits = hits.load(Ordering::SeqCst);
+    hold.store(true, Ordering::Release);
+    responses
+        .lock()
+        .unwrap()
+        .push_back((200, payload(true), true));
+    let ask = asking(&runtime, &daemon, "held-prompt");
+    let prompt = popup(&mut cx, &view);
+    for _ in 0..30 {
+        settle(&mut cx);
+        if hits.load(Ordering::SeqCst) > before_hits {
+            break;
+        }
+    }
+    assert!(hits.load(Ordering::SeqCst) > before_hits);
+    assert_eq!(probe(&mut cx, prompt), (false, false));
+    capture(
+        &mut cx,
+        prompt,
+        &evidence.join("09-permission-during-held-reputation.png"),
+    );
+    click(&mut cx, prompt, "deny-once");
+    assert_eq!(runtime.block_on(ask).unwrap().action, "deny");
+    hold.store(false, Ordering::Release);
+    settle(&mut cx);
+    responses
+        .lock()
+        .unwrap()
+        .push_back((200, payload(true), false));
+    let ask = asking(&runtime, &daemon, "early-warning");
+    let prompt = popup(&mut cx, &view);
+    warning(&mut cx, prompt, true);
+    let fallback = backend.handle.preferences.snapshot();
+    capture(
+        &mut cx,
+        prompt,
+        &evidence.join("10-untouched-warning-reject-once.png"),
+    );
+    let footer_bounds = cx
+        .update_window(prompt, |_, w, cx| {
+            w.render_frame(cx);
+            [
+                w.find("reputation-reject-once").bounds(),
+                w.find("prompt-more").bounds(),
+            ]
+        })
+        .unwrap();
+    for _ in 0..3 {
+        cx.update_window(prompt, |_, w, cx| {
+            let position = w.find("prompt-content").bounds().center();
+            w.dispatch_event(
+                gpui::MouseMoveEvent {
+                    position,
+                    pressed_button: None,
+                    modifiers: Default::default(),
+                }
+                .to_platform_input(),
+                cx,
+            );
+            w.render_frame(cx);
+            w.dispatch_event(
+                gpui::ScrollWheelEvent {
+                    position,
+                    delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.), px(-180.))),
+                    ..Default::default()
+                }
+                .to_platform_input(),
+                cx,
+            );
+            w.render_frame(cx);
+        })
+        .unwrap();
+        settle(&mut cx);
+    }
+    cx.update_window(prompt, |_, w, cx| {
+        w.render_frame(cx);
+        let after = [
+            w.find("reputation-reject-once").bounds(),
+            w.find("prompt-more").bounds(),
+        ];
+        assert_eq!(
+            after, footer_bounds,
+            "Decision and advanced-details footer stay fixed while actual content scrolls"
+        );
+        for bounds in after {
+            assert!(
+                bounds.top() >= px(0.)
+                    && bounds.left() >= px(0.)
+                    && bounds.bottom() <= w.viewport_size().height
+                    && bounds.right() <= w.viewport_size().width,
+                "Whole footer controls stay inside viewport: {bounds:?}"
+            );
+        }
+    })
+    .unwrap();
+    std::fs::write(evidence.join("prompt-footer-scroll.json"),serde_json::to_vec_pretty(&serde_json::json!({"actual_wheel_events":3,"footer_positions_unchanged":true,"entire_reject_and_more_bounds_inside_viewport":true})).unwrap()).unwrap();
+    click(&mut cx, prompt, "reputation-reject-once");
+    let reply = runtime.block_on(ask).unwrap();
+    assert_eq!(reply.action, "reject");
+    assert_eq!(reply.duration, "once");
+    assert_eq!(backend.handle.preferences.snapshot(), fallback);
+    settle(&mut cx);
+    hold.store(true, Ordering::Release);
+    responses
+        .lock()
+        .unwrap()
+        .push_back((200, payload(true), true));
+    let ask = asking(&runtime, &daemon, "late-warning");
+    let prompt = popup(&mut cx, &view);
+    click(&mut cx, prompt, "prompt-more");
+    pick(&mut cx, prompt, "prompt-duration", "5 minutes");
+    assert!(backend.handle.prompts.snapshot()[0].reviewing);
+    hold.store(false, Ordering::Release);
+    warning(&mut cx, prompt, false);
+    capture(
+        &mut cx,
+        prompt,
+        &evidence.join("11-late-warning-preserves-review.png"),
+    );
+    let before = cx.update(|cx| cx.windows());
+    prompt_report(&mut cx, prompt);
+    settle(&mut cx);
+    let inspect = cx.update(|cx| {
+        cx.windows()
+            .into_iter()
+            .find(|w| !before.contains(w))
+            .unwrap()
+    });
+    let captured = result(&mut cx, inspect, Status::Complete).capture;
+    let count = cx.update(|cx| cx.windows().len());
+    prompt_report(&mut cx, prompt);
+    settle(&mut cx);
+    assert_eq!(cx.update(|cx| cx.windows().len()), count);
+    assert!(cx.update_window(inspect, |_, _, _| ()).is_ok());
+    capture(
+        &mut cx,
+        inspect,
+        &evidence.join("12-captured-inspection-singleton.png"),
+    );
+    click(&mut cx, prompt, "allow-selected");
+    let reply = runtime.block_on(ask).unwrap();
+    assert_eq!(reply.action, "allow");
+    assert_eq!(reply.duration, "5m");
+    settle(&mut cx);
+    responses
+        .lock()
+        .unwrap()
+        .push_back((200, payload(true), false));
+    let ask = asking(&runtime, &daemon, "next-capture");
+    let prompt = popup(&mut cx, &view);
+    warning(&mut cx, prompt, true);
+    let before = cx.update(|cx| cx.windows());
+    prompt_report(&mut cx, prompt);
+    settle(&mut cx);
+    let next = cx.update(|cx| {
+        cx.windows()
+            .into_iter()
+            .find(|w| !before.contains(w))
+            .unwrap()
+    });
+    let new_capture = result(&mut cx, next, Status::Complete).capture;
+    assert_ne!(new_capture, captured);
+    assert!(cx.update_window(inspect, |_, _, _| ()).is_err());
+    capture(
+        &mut cx,
+        next,
+        &evidence.join("13-new-capture-replaces-inspection.png"),
+    );
+    click(&mut cx, prompt, "deny-once");
+    runtime.block_on(ask).unwrap();
+    click(&mut cx, next, "rep-close");
+    settle(&mut cx);
+    hold.store(true, Ordering::Release);
+    responses
+        .lock()
+        .unwrap()
+        .push_back((200, payload(true), true));
+    let before_hits = hits.load(Ordering::SeqCst);
+    let ask = asking(&runtime, &daemon, "old-capture-held");
+    let prompt = popup(&mut cx, &view);
+    for _ in 0..30 {
+        settle(&mut cx);
+        if hits.load(Ordering::SeqCst) > before_hits {
+            break;
+        }
+    }
+    assert!(
+        hits.load(Ordering::SeqCst) > before_hits,
+        "Old captured HTTP request actually started"
+    );
+    click(&mut cx, prompt, "deny-once");
+    runtime.block_on(ask).unwrap();
+    responses
+        .lock()
+        .unwrap()
+        .push_back((200, payload(false), false));
+    let ask = asking(&runtime, &daemon, "new-capture-clean");
+    let prompt = popup(&mut cx, &view);
+    hold.store(false, Ordering::Release);
+    for _ in 0..50 {
+        settle(&mut cx);
+        if cx
+            .update_window(prompt, |_, w, _| {
+                w.try_find("prompt-reputation-details")
+                    .is_some_and(|e| e.disabled() != Some(true))
+            })
+            .unwrap()
+        {
+            break;
+        }
+    }
+    assert_eq!(probe(&mut cx, prompt), (false, false));
+    let before = cx.update(|cx| cx.windows());
+    prompt_report(&mut cx, prompt);
+    settle(&mut cx);
+    let clean = cx.update(|cx| {
+        cx.windows()
+            .into_iter()
+            .find(|w| !before.contains(w))
+            .unwrap()
+    });
+    let clean_report = result(&mut cx, clean, Status::Complete);
+    assert_eq!(
+        clean_report.reports[0].subject.value(),
+        "new-capture-clean.test"
+    );
+    assert_eq!(
+        clean_report.reports[0].verdict,
+        crate::reputation::Verdict::NotFlagged
+    );
+    capture(
+        &mut cx,
+        prompt,
+        &evidence.join("14-old-result-isolated-from-next-prompt.png"),
+    );
+    click(&mut cx, prompt, "deny-once");
+    runtime.block_on(ask).unwrap();
+    click(&mut cx, clean, "rep-close");
+    settle(&mut cx);
+    responses
+        .lock()
+        .unwrap()
+        .push_back((200, payload(true), false));
+    let ask = asking(&runtime, &daemon, "disable-warning");
+    let prompt = popup(&mut cx, &view);
+    warning(&mut cx, prompt, true);
+    let before = cx.update(|cx| cx.windows());
+    click(&mut cx, main, "reputation-preferences");
+    settle(&mut cx);
+    let w = cx.update(|cx| {
+        cx.windows()
+            .into_iter()
+            .find(|w| !before.contains(w))
+            .unwrap()
+    });
+    click(&mut cx, w, "rep-tab-settings");
+    reveal(&mut cx, w, "rep-enabled".into());
+    click(&mut cx, w, "rep-enabled");
+    click(&mut cx, w, "rep-save");
+    ready(&mut cx, w, "rep-save");
+    for _ in 0..30 {
+        settle(&mut cx);
+        if probe(&mut cx, prompt) == (false, false) {
+            break;
+        }
+    }
+    assert_eq!(probe(&mut cx, prompt), (false, false));
+    assert!(!reputation.snapshot().settings.enabled);
+    capture(
+        &mut cx,
+        prompt,
+        &evidence.join("15-disable-clears-current-warning.png"),
+    );
+    click(&mut cx, prompt, "deny-once");
+    runtime.block_on(ask).unwrap();
+    let hits = hits.load(Ordering::SeqCst);
+    manual(&mut cx, w, "disabled-manual.test");
+    result(&mut cx, w, Status::Disabled);
+    assert_eq!(hits, paths.lock().unwrap().len());
+    assert!(
+        paths
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|p| p.starts_with("GET /api/v3/domains/") && !p.contains(KEY))
+    );
+    std::fs::write(
+        evidence.join("saved-reputation-preferences.json"),
+        std::fs::read(&path).unwrap(),
+    )
+    .unwrap();
+    click(&mut cx, w, "rep-close");
+    drop(view);
+    drop(cx);
+    drop(daemon);
+    worker.join();
+    http.abort();
+    drop(runtime);
+    drop(handle);
+    backend.join();
+    assert!(!config.socket.exists());
+    std::fs::write(evidence.join("headless.json"),serde_json::to_vec_pretty(&serde_json::json!({"status":"passed","real_gpu":true,"scoped_socket_removed":true,"screenshots":["01-reputation-default-disabled.png","02-invalid-reputation-settings.png","03-reputation-settings-reopened.png","04-reputation-exclusion-no-network.png","05-reputation-report-redacted-excerpt.png","06-reputation-service-error.png","07-cancel-held-reputation-check.png","08-stale-reputation-settings-refused.png","09-permission-during-held-reputation.png","10-untouched-warning-reject-once.png","11-late-warning-preserves-review.png","12-captured-inspection-singleton.png","13-new-capture-replaces-inspection.png","14-old-result-isolated-from-next-prompt.png","15-disable-clears-current-warning.png"],"proof_boundary":"Actual native settings save/reopen/validation/exclusions/stale/reload; owned GET-only HTTP reports/redacted detail/copy/service-error/cancel; real permission while HTTP held; untouched Reject once, late warning preserves selected5m review and fallback; captured singleton/newcapture isolation and old held-result exclusion; disabling clears current warning. Dummy0600keyfile and fixed owned loopback endpoint only. No official VirusTotal/API key/upload/browser report-link click, real system daemon or native compositor proof."})).unwrap()).unwrap();
+}
+
+#[test]
+fn headless_language() {
+    use crate::appearance::{ColorMode, DensityScale, Store};
+    use crate::i18n::LanguageChoice;
+    use gpui::InputEvent as _;
+    fn finish(cx: &mut HeadlessAppContext) {
+        for _ in 0..50 {
+            settle(cx);
+            if !cx.update(|cx| super::appearance::test_state(cx).0) {
+                return;
+            }
+        }
+        panic!("Appearance I/O did not finish");
+    }
+    fn reveal(cx: &mut HeadlessAppContext, window: AnyWindowHandle, id: &'static str) {
+        use gpui::InputEvent as _;
+        for _ in 0..32 {
+            let direction = cx
+                .update_window(window, |_, window, cx| {
+                    window.render_frame(cx);
+                    let clip = window.find("appearance-content").bounds();
+                    let top = clip.top() + window.rem_size() * 4.;
+                    let bottom = clip.bottom() - px(8.);
+                    match window.try_find(id) {
+                        Some(target)
+                            if target.bounds().center().y >= top
+                                && target.bounds().center().y <= bottom =>
+                        {
+                            None
+                        }
+                        Some(target) if target.bounds().center().y < top => Some(120.),
+                        _ => Some(-120.),
+                    }
+                })
+                .unwrap();
+            let Some(direction) = direction else {
+                return;
+            };
+            cx.update_window(window, |_, window, cx| {
+                let viewport = window.viewport_size();
+                let position = gpui::point(viewport.width * 0.75, viewport.height * 0.50);
+                window.dispatch_event(
+                    gpui::MouseMoveEvent {
+                        position,
+                        pressed_button: None,
+                        modifiers: Default::default(),
+                    }
+                    .to_platform_input(),
+                    cx,
+                );
+                window.render_frame(cx);
+                window.dispatch_event(
+                    gpui::ScrollWheelEvent {
+                        position,
+                        delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.), px(direction))),
+                        ..Default::default()
+                    }
+                    .to_platform_input(),
+                    cx,
+                );
+                window.render_frame(cx);
+            })
+            .unwrap();
+            settle(cx);
+        }
+        panic!("{id} must be reachable inside Settings by wheel input");
+    }
+    fn appearance_click(cx: &mut HeadlessAppContext, window: AnyWindowHandle, id: &'static str) {
+        if id != "appearance-close" {
+            reveal(cx, window, id);
+        }
+        let visible = cx
+            .update_window(window, |_, w, _| {
+                let target = w.find(id);
+                eprintln!(
+                    "Language action {id}: bounds={:?}, visible={}, viewport={:?}",
+                    target.bounds(),
+                    target.visible(),
+                    w.viewport_size()
+                );
+                target.visible()
+            })
+            .unwrap();
+        if !visible {
+            capture(
+                cx,
+                window,
+                &evidence().join(format!("unreachable-{id}.png")),
+            );
+        }
+        click(cx, window, id);
+        if id != "appearance-close" && id != "appearance-reload" {
+            settle(cx);
+            click(cx, window, "appearance-save");
+        }
+    }
+    fn reveal_body(
+        cx: &mut HeadlessAppContext,
+        window: AnyWindowHandle,
+        body_id: &'static str,
+        id: gpui::ElementId,
+    ) {
+        for _ in 0..32 {
+            let direction = cx
+                .update_window(window, |_, w, cx| {
+                    w.render_frame(cx);
+                    let body = w.find(body_id).bounds();
+                    let target = w.find(id.clone()).bounds();
+                    if target.center().y < body.top() + px(8.) {
+                        Some(120.)
+                    } else if target.center().y > body.bottom() - px(8.) {
+                        Some(-120.)
+                    } else {
+                        None
+                    }
+                })
+                .unwrap();
+            let Some(direction) = direction else { return };
+            cx.update_window(window, |_, w, cx| {
+                let body = w.find(body_id).bounds();
+                w.dispatch_event(
+                    gpui::MouseMoveEvent {
+                        position: body.center(),
+                        pressed_button: None,
+                        modifiers: Default::default(),
+                    }
+                    .to_platform_input(),
+                    cx,
+                );
+                w.render_frame(cx);
+                w.dispatch_event(
+                    gpui::ScrollWheelEvent {
+                        position: body.center(),
+                        delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.), px(direction))),
+                        ..Default::default()
+                    }
+                    .to_platform_input(),
+                    cx,
+                );
+                w.render_frame(cx);
+            })
+            .unwrap();
+            settle(cx);
+        }
+        panic!("Rule control {id:?} must be reachable by wheel input");
+    }
+
+    fn condition(
+        cx: &mut HeadlessAppContext,
+        w: AnyWindowHandle,
+        body: &'static str,
+        field: &str,
+        op: &str,
+        value: &str,
+    ) {
+        let (field_id, comparison_id, value_id, add) = if body == "rule-filter-body" {
+            (
+                "rule-filter-field",
+                "rule-filter-comparison",
+                "rule-filter-value",
+                "rule-filter-add",
+            )
+        } else {
+            (
+                "history-filter-field",
+                "history-filter-comparison",
+                "history-filter-value",
+                "history-filter-add",
+            )
+        };
+        reveal_body(cx, w, body, field_id.into());
+        pick(cx, w, field_id, field);
+        reveal_body(cx, w, body, comparison_id.into());
+        pick(cx, w, comparison_id, op);
+        reveal_body(cx, w, body, value_id.into());
+        fill(cx, w, value_id, value);
+        reveal_body(cx, w, body, add.into());
+        click(cx, w, add);
+        settle(cx);
+    }
+    fn open(
+        cx: &mut HeadlessAppContext,
+        backend: &Backend,
+        config: &Config,
+    ) -> (AnyWindowHandle, gpui::Entity<Dashboard>) {
+        cx.update(|cx| super::appearance::init(&config.database, cx));
+        let (w, v) = cx.update(|cx| {
+            gpui_kit::open_window(super::dashboard_options(), cx, |w, cx| {
+                cx.new(|cx| Dashboard::new(backend.handle.clone(), config.clone(), w, cx))
+            })
+            .unwrap()
+        });
+        finish(cx);
+        (w, v)
+    }
+    let evidence = evidence();
+    let dir = tempfile::tempdir().unwrap();
+    let config = options(dir.path());
+    let backend = Backend::start(config.clone()).unwrap();
+    let store = Store::new(&config.database);
+    let saved = store
+        .save_preferences(
+            &store.load().unwrap(),
+            ColorMode::Dark,
+            DensityScale::new(2).unwrap(),
+        )
+        .unwrap();
+    store
+        .save_language(&saved, LanguageChoice::try_from("en".to_string()).unwrap())
+        .unwrap();
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap();
+    let (daemon, _notification_sender, _notification_stream) = runtime.block_on(async {
+        use hyper_util::rt::TokioIo;
+        let path = config.socket.clone();
+        let channel = tonic::transport::Endpoint::try_from("http://localhost")
+            .unwrap()
+            .connect_with_connector(tower::service_fn(move |_| {
+                let path = path.clone();
+                async move {
+                    tokio::net::UnixStream::connect(path)
+                        .await
+                        .map(TokioIo::new)
+                }
+            }))
+            .await
+            .unwrap();
+        let mut client = protocol::ui_client::UiClient::new(channel);
+        client
+            .subscribe(protocol::ClientConfig {
+                name: "language-fixture".into(),
+                rules: (0..3)
+                    .map(|i| protocol::Rule {
+                        name: format!("language.{i}"),
+                        enabled: i != 1,
+                        action: if i == 2 { "allow" } else { "deny" }.into(),
+                        duration: "always".into(),
+                        operator: Some(protocol::Operator {
+                            r#type: "simple".into(),
+                            operand: "process.path".into(),
+                            data: format!("/owned/language-{i}"),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    })
+                    .collect(),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        let (tx, rx) = tokio::sync::mpsc::channel(1);
+        let stream = client
+            .notifications(tokio_stream::wrappers::ReceiverStream::new(rx))
+            .await
+            .unwrap()
+            .into_inner();
+        (client, tx, stream)
+    });
+    backend.handle.history.ingest(
+        "language-fixture".into(),
+        (0..3)
+            .map(|i| protocol::Event {
+                unixnano: crate::history::now_nanos() + i,
+                connection: Some(protocol::Connection {
+                    process_path: format!("/owned/language-{i}"),
+                    process_cwd: if i == 2 { "/other" } else { "/work" }.into(),
+                    dst_port: if i == 1 { 80 } else { 443 },
+                    ..Default::default()
+                }),
+                rule: Some(protocol::Rule {
+                    action: "allow".into(),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            })
+            .collect(),
+        "observed",
+    );
+    runtime.block_on(backend.handle.history.flush()).unwrap();
+    let mut cx = context();
+    let (main, view) = open(&mut cx, &backend, &config);
+    assert_eq!(crate::i18n::current().locale.as_str(), "en");
+    cx.update_window(main, |_, w, cx| w.within("main-tabs").click(1usize, cx))
+        .unwrap();
+    settle(&mut cx);
+    cx.update_window(main, |_, w, cx| w.click(("rule-row", 0usize), cx))
+        .unwrap();
+    click(&mut cx, main, "rule-edit");
+    settle(&mut cx);
+    let editor = cx.read_entity(&view, |v, _| v.rules.editor_window.unwrap());
+    fill(&mut cx, editor, "editor-name", "language-unsaved");
+    fill(
+        &mut cx,
+        editor,
+        "editor-description",
+        "Preserve while changing language",
+    );
+    click(&mut cx, main, "appearance-preferences");
+    let settings = cx.read_entity(&view, |v, _| v.settings_window.unwrap());
+    let before = store.load().unwrap();
+    appearance_click(&mut cx, settings, "appearance-language-fr");
+    finish(&mut cx);
+    let saved = store.load().unwrap();
+    assert_eq!(
+        saved.language,
+        LanguageChoice::try_from("fr".to_string()).unwrap()
+    );
+    assert_eq!(saved.mode, before.mode);
+    assert_eq!(saved.density, before.density);
+    assert_eq!(saved.palette, before.palette);
+    assert_eq!(crate::i18n::current().locale.as_str(), "en");
+    capture(
+        &mut cx,
+        settings,
+        &evidence.join("01-language-save-requires-restart.png"),
+    );
+    assert_eq!(
+        cx.update_window(editor, |_, w, _| w
+            .find("editor-name")
+            .value()
+            .unwrap()
+            .to_string())
+            .unwrap(),
+        "language-unsaved"
+    );
+    capture(
+        &mut cx,
+        editor,
+        &evidence.join("02-language-preserves-unsaved-editor.png"),
+    );
+    drop(view);
+    drop(cx);
+    let mut cx = context();
+    let (main, view) = open(&mut cx, &backend, &config);
+    assert_eq!(crate::i18n::current().locale.as_str(), "fr");
+    assert_eq!(
+        gpui_kit::component::_rust_i18n_translate("fr", "Input.Copy").to_string(),
+        "Copier"
+    );
+    assert!(
+        cx.update_window(main, |_, w, _| w
+            .within("main-tabs")
+            .find(0usize)
+            .label()
+            .unwrap()
+            .contains("Historique"))
+            .unwrap()
+    );
+    click(&mut cx, main, "appearance-preferences");
+    let settings = cx.read_entity(&view, |v, _| v.settings_window.unwrap());
+    appearance_click(&mut cx, settings, "appearance-language-fr");
+    finish(&mut cx);
+    capture(
+        &mut cx,
+        settings,
+        &evidence.join("03-fresh-context-french-appearance.png"),
+    );
+    click(&mut cx, settings, "appearance-close");
+    cx.update_window(main, |_, w, cx| w.within("main-tabs").click(1usize, cx))
+        .unwrap();
+    settle(&mut cx);
+    click(&mut cx, main, "rule-filter-open");
+    settle(&mut cx);
+    let filters = cx.read_entity(&view, |v, _| v.rules.filter_window.unwrap());
+    condition(
+        &mut cx,
+        filters,
+        "rule-filter-body",
+        "Activée",
+        "Est égal à",
+        "1",
+    );
+    condition(
+        &mut cx,
+        filters,
+        "rule-filter-body",
+        "Action",
+        "Est égal à",
+        "deny",
+    );
+    click(&mut cx, filters, "rule-filter-apply");
+    for _ in 0..50 {
+        settle(&mut cx);
+        if cx.read_entity(&view, |v, _| {
+            v.rules.page.rules.len() == 1 && v.rules.page.rules[0].name == "language.0"
+        }) {
+            break;
+        }
+    }
+    assert_eq!(
+        cx.read_entity(&view, |v, _| v
+            .rules
+            .page
+            .rules
+            .iter()
+            .map(|r| r.name.clone())
+            .collect::<Vec<_>>()),
+        vec!["language.0"]
+    );
+    capture(
+        &mut cx,
+        filters,
+        &evidence.join("04-french-rule-field-enums.png"),
+    );
+    click(&mut cx, filters, "rule-filter-close");
+    cx.update_window(main, |_, w, cx| w.within("main-tabs").click(0usize, cx))
+        .unwrap();
+    settle(&mut cx);
+    let before = cx.update(|cx| cx.windows());
+    click(&mut cx, main, "history-tools");
+    settle(&mut cx);
+    let tools = cx.update(|cx| {
+        cx.windows()
+            .into_iter()
+            .find(|w| !before.contains(w))
+            .unwrap()
+    });
+    condition(
+        &mut cx,
+        tools,
+        "history-tools-panel",
+        "Dossier de travail",
+        "Contient",
+        "/work",
+    );
+    condition(
+        &mut cx,
+        tools,
+        "history-tools-panel",
+        "Port de destination",
+        "Au moins / à partir de",
+        "443",
+    );
+    reveal_body(
+        &mut cx,
+        tools,
+        "history-tools-panel",
+        "history-filter-apply".into(),
+    );
+    click(&mut cx, tools, "history-filter-apply");
+    for _ in 0..50 {
+        settle(&mut cx);
+        if cx.read_entity(&view, |v, _| {
+            v.history.page.rows.len() == 1 && v.history.page.rows[0].process == "/owned/language-0"
+        }) {
+            break;
+        }
+    }
+    assert_eq!(
+        cx.read_entity(&view, |v, _| v
+            .history
+            .page
+            .rows
+            .iter()
+            .map(|r| r.process.clone())
+            .collect::<Vec<_>>()),
+        vec!["/owned/language-0"]
+    );
+    capture(
+        &mut cx,
+        tools,
+        &evidence.join("05-french-history-field-enums.png"),
+    );
+    capture(
+        &mut cx,
+        main,
+        &evidence.join("06-french-filtered-dashboard.png"),
+    );
+    drop(view);
+    drop(cx);
+    let saved = store.load().unwrap();
+    store
+        .save_language(&saved, LanguageChoice::try_from("zz".to_string()).unwrap())
+        .unwrap();
+    let missing_bytes = std::fs::read(&store.path).unwrap();
+    let mut cx = context();
+    let (main, view) = open(&mut cx, &backend, &config);
+    assert_eq!(crate::i18n::current().locale.as_str(), "en");
+    assert!(crate::i18n::current().warning.is_some());
+    assert_eq!(std::fs::read(&store.path).unwrap(), missing_bytes);
+    click(&mut cx, main, "appearance-preferences");
+    let settings = cx.read_entity(&view, |v, _| v.settings_window.unwrap());
+    reveal(&mut cx, settings, "appearance-language-system");
+    capture(
+        &mut cx,
+        settings,
+        &evidence.join("07-missing-language-fallback.png"),
+    );
+    appearance_click(&mut cx, settings, "appearance-language-system");
+    finish(&mut cx);
+    assert_eq!(store.load().unwrap().language, LanguageChoice::System);
+    capture(
+        &mut cx,
+        settings,
+        &evidence.join("08-missing-language-explicit-system-repair.png"),
+    );
+    // Select each completed catalogue through the real saved-language control,
+    // then let production startup activate it in a fresh GPUI context.
+    let mut view = view;
+    let mut settings = settings;
+    for (id, button, frame) in [
+        ("de", "appearance-language-de", "09-german-catalogue.png"),
+        ("es", "appearance-language-es", "10-spanish-catalogue.png"),
+        ("ja", "appearance-language-ja", "11-japanese-catalogue.png"),
+    ] {
+        let previous = crate::i18n::current().locale.clone();
+        appearance_click(&mut cx, settings, button);
+        finish(&mut cx);
+        assert_eq!(
+            store.load().unwrap().language,
+            LanguageChoice::try_from(id.to_owned()).unwrap()
+        );
+        assert_eq!(crate::i18n::current().locale, previous);
+        drop(view);
+        drop(cx);
+        cx = context();
+        let (main, next_view) = open(&mut cx, &backend, &config);
+        view = next_view;
+        assert_eq!(crate::i18n::current().locale.as_str(), id);
+        let (translated, total) = crate::i18n::current().coverage();
+        assert_eq!(translated, total);
+        let history_title = crate::i18n::tr("History");
+        assert_ne!(history_title, "History");
+        assert!(
+            cx.update_window(main, |_, w, _| w
+                .within("main-tabs")
+                .find(0usize)
+                .label()
+                .unwrap()
+                .contains(history_title.as_str()))
+                .unwrap()
+        );
+        capture(&mut cx, main, &evidence.join(frame));
+        click(&mut cx, main, "appearance-preferences");
+        settings = cx.read_entity(&view, |v, _| v.settings_window.unwrap());
+    }
+    drop(view);
+    drop(cx);
+    drop(_notification_stream);
+    drop(_notification_sender);
+    drop(daemon);
+    drop(runtime);
+    backend.join();
+    assert!(!config.socket.exists());
+    std::fs::write(evidence.join("headless.json"),serde_json::to_vec_pretty(&serde_json::json!({"status":"passed","real_gpu":true,"scoped_socket_removed":true,"screenshots":["01-language-save-requires-restart.png","02-language-preserves-unsaved-editor.png","03-fresh-context-french-appearance.png","04-french-rule-field-enums.png","05-french-history-field-enums.png","06-french-filtered-dashboard.png","07-missing-language-fallback.png","08-missing-language-explicit-system-repair.png","09-german-catalogue.png","10-spanish-catalogue.png","11-japanese-catalogue.png"],"proof_boundary":"Actual language choice persists without changing active session locale or unsaved rule editor; fresh GPUI context executes startup appearance load and activates French/Kit Copy; actual translated rule and history Selects preserve stable numeric/text field enums and exact filtered rows; missing saved language falls back without file rewrite until explicit System repair. Actual saved German/Spanish/Japanese choices and fresh GPUI startup activate complete catalogues and paint translated navigation; original French draft/typed field and missing-language fallback assertions remain. Owned backend/database; no real daemon, OS process restart, external catalogue install or whole-application visual/native-speaker review proof."})).unwrap()).unwrap();
+}
+
+#[test]
+fn headless_updates() {
+    use crate::updates::{Outcome, Target, Unit, Worker};
+    use gpui::InputEvent as _;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    fn ready(cx: &mut HeadlessAppContext, w: AnyWindowHandle, id: &'static str) {
+        for _ in 0..60 {
+            settle(cx);
+            if cx
+                .update_window(w, |_, w, _| {
+                    w.try_find(id)
+                        .is_some_and(|e| e.visible() && e.disabled() != Some(true))
+                })
+                .unwrap()
+            {
+                return;
+            }
+        }
+        panic!("Updates control {id} did not become ready");
+    }
+    fn choose(cx: &mut HeadlessAppContext, w: AnyWindowHandle, id: &'static str, key: &str) {
+        click(cx, w, id);
+        settle(cx);
+        cx.update_window(w, |_, w, cx| {
+            w.press(key, cx);
+            w.press("enter", cx)
+        })
+        .unwrap();
+        settle(cx);
+    }
+    fn state(
+        cx: &mut HeadlessAppContext,
+        h: &crate::updates::Handle,
+        test: impl Fn(&crate::updates::State) -> bool,
+    ) {
+        for _ in 0..80 {
+            settle(cx);
+            if test(&h.state()) {
+                return;
+            }
+        }
+        panic!("Update state deadline: {:?}", h.state());
+    }
+    fn reveal(cx: &mut HeadlessAppContext, window: AnyWindowHandle, id: gpui::ElementId) {
+        for _ in 0..32 {
+            let direction = cx
+                .update_window(window, |_, w, cx| {
+                    w.render_frame(cx);
+                    let body = w.find("updates-scroll").bounds();
+                    let target = w.find(id.clone()).bounds();
+                    if target.center().y < body.top() + px(8.) {
+                        Some(120.)
+                    } else if target.center().y > body.bottom() - px(8.) {
+                        Some(-120.)
+                    } else {
+                        None
+                    }
+                })
+                .unwrap();
+            let Some(direction) = direction else { return };
+            cx.update_window(window, |_, w, cx| {
+                let body = w.find("updates-scroll").bounds();
+                w.dispatch_event(
+                    gpui::MouseMoveEvent {
+                        position: body.center(),
+                        pressed_button: None,
+                        modifiers: Default::default(),
+                    }
+                    .to_platform_input(),
+                    cx,
+                );
+                w.render_frame(cx);
+                w.dispatch_event(
+                    gpui::ScrollWheelEvent {
+                        position: body.center(),
+                        delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.), px(direction))),
+                        ..Default::default()
+                    }
+                    .to_platform_input(),
+                    cx,
+                );
+                w.render_frame(cx);
+            })
+            .unwrap();
+            settle(cx);
+        }
+        panic!("Updates control {id:?} must be reachable by wheel input");
+    }
+
+    let evidence = evidence();
+    let dir = tempfile::tempdir().unwrap();
+    let config = options(dir.path());
+    let backend = Backend::start(config.clone()).unwrap();
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap();
+    type Response = (u16, String, bool);
+    let responses = Arc::new(Mutex::new(std::collections::VecDeque::<Response>::new()));
+    let hits = Arc::new(AtomicUsize::new(0));
+    let hold = Arc::new(AtomicBool::new(false));
+    let paths = Arc::new(Mutex::new(Vec::<String>::new()));
+    let (base,http)=runtime.block_on(async{
+        let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();let base=format!("http://{}/",listener.local_addr().unwrap());
+        let (queue,hits,hold,paths)=(responses.clone(),hits.clone(),hold.clone(),paths.clone());
+        let task=tokio::spawn(async move{while let Ok((mut socket,_))=listener.accept().await{
+            let mut bytes=[0u8;8192];let count=socket.read(&mut bytes).await.unwrap_or(0);
+            {let mut paths=paths.lock().unwrap();assert!(paths.len()<16);paths.push(String::from_utf8_lossy(&bytes[..count]).lines().next().unwrap_or("").to_string());}
+            hits.fetch_add(1,Ordering::SeqCst);let (status,body,held)=queue.lock().unwrap().pop_front().expect("Unexpected fixture HTTP request");
+            while held&&hold.load(Ordering::Acquire){tokio::time::sleep(Duration::from_millis(5)).await;}
+            let wire=format!("HTTP/1.1 {status} owned\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len());let _=socket.write_all(wire.as_bytes()).await;
+        }});(base,task)
+    });
+    let notices = Arc::new(Mutex::new(Vec::<crate::updates::Notice>::new()));
+    let out = notices.clone();
+    let worker = Worker::start_fixture(
+        crate::updates::path_for(&config.database),
+        Some(Arc::new(move |notice| {
+            let mut notices = out.lock().unwrap();
+            assert!(notices.len() < 8);
+            notices.push(notice);
+        })),
+        &base,
+    )
+    .unwrap();
+    let updates = worker.handle();
+    let mut handle = backend.handle.clone();
+    handle.updates = updates.clone();
+    let daemon = runtime.block_on(async {
+        use hyper_util::rt::TokioIo;
+        let path = config.socket.clone();
+        let channel = tonic::transport::Endpoint::try_from("http://localhost")
+            .unwrap()
+            .connect_with_connector(tower::service_fn(move |_| {
+                let path = path.clone();
+                async move {
+                    tokio::net::UnixStream::connect(path)
+                        .await
+                        .map(TokioIo::new)
+                }
+            }))
+            .await
+            .unwrap();
+        let mut daemon = protocol::ui_client::UiClient::new(channel);
+        daemon
+            .subscribe(protocol::ClientConfig {
+                name: "updates-fixture".into(),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        daemon
+    });
+    let mut cx = context();
+    let (main, view) = cx.update(|cx| {
+        gpui_kit::open_window(super::dashboard_options(), cx, |w, cx| {
+            cx.new(|cx| Dashboard::new(handle.clone(), config.clone(), w, cx))
+        })
+        .unwrap()
+    });
+    let (tray, _tray_actions, _availability) = super::tray::Client::fixture();
+    let (notifier, actions) = super::desktop_notifications::Client::fixture();
+    cx.update_entity(&view, |v, _| {
+        v.tray = Some(tray);
+        v.desktop_notifications = Some(notifier)
+    });
+    settle(&mut cx);
+    click(&mut cx, main, "updates-preferences");
+    settle(&mut cx);
+    let w = cx.read_entity(&view, |v, _| v.settings_window.unwrap());
+    ready(&mut cx, w, "updates-save");
+    assert!(!updates.state().settings.enabled);
+    assert_eq!(hits.load(Ordering::SeqCst), 0);
+    capture(
+        &mut cx,
+        w,
+        &evidence.join("01-update-defaults-no-network.png"),
+    );
+    reveal(&mut cx, w, "updates-interval".into());
+    fill(&mut cx, w, "updates-interval", "0");
+    click(&mut cx, w, "updates-save");
+    settle(&mut cx);
+    assert!(!crate::updates::path_for(&config.database).exists());
+    capture(&mut cx, w, &evidence.join("02-invalid-update-interval.png"));
+    fill(&mut cx, w, "updates-interval", "2");
+    choose(&mut cx, w, "updates-unit", "up");
+    choose(&mut cx, w, "updates-target", "down");
+    click(&mut cx, w, "updates-on-start");
+    click(&mut cx, w, "updates-prereleases");
+    click(&mut cx, w, "updates-enabled");
+    click(&mut cx, w, "updates-save");
+    ready(&mut cx, w, "updates-save");
+    assert!(updates.state().settings.enabled);
+    assert!(!updates.state().settings.check_on_start);
+    assert_eq!(updates.state().settings.unit, Unit::Minutes);
+    assert_eq!(updates.state().settings.interval, 2);
+    assert_eq!(updates.state().settings.target, Target::SelectedDaemon);
+    assert!(updates.state().settings.include_prereleases);
+    click(&mut cx, w, "updates-close");
+    settle(&mut cx);
+    click(&mut cx, main, "updates-preferences");
+    settle(&mut cx);
+    let w = cx.read_entity(&view, |v, _| v.settings_window.unwrap());
+    ready(&mut cx, w, "updates-save");
+    assert_eq!(
+        cx.update_window(w, |_, w, _| w
+            .find("updates-interval")
+            .value()
+            .unwrap()
+            .to_string())
+            .unwrap(),
+        "2"
+    );
+    capture(
+        &mut cx,
+        w,
+        &evidence.join("03-update-preferences-reopened.png"),
+    );
+    click(&mut cx, w, "updates-check");
+    state(&mut cx, &updates, |s| {
+        s.outcome == Outcome::UnknownCurrentVersion
+    });
+    assert_eq!(hits.load(Ordering::SeqCst), 0);
+    capture(
+        &mut cx,
+        w,
+        &evidence.join("04-unreported-daemon-no-network.png"),
+    );
+    reveal(&mut cx, w, "updates-target".into());
+    choose(&mut cx, w, "updates-target", "up");
+    click(&mut cx, w, "updates-prereleases");
+    click(&mut cx, w, "updates-enabled");
+    click(&mut cx, w, "updates-save");
+    ready(&mut cx, w, "updates-save");
+    responses
+        .lock()
+        .unwrap()
+        .push_back((200, r#"{"tag_name":"v0.9.0"}"#.into(), false));
+    click(&mut cx, w, "updates-check");
+    state(&mut cx, &updates, |s| s.outcome == Outcome::Available);
+    assert_eq!(notices.lock().unwrap().len(), 1);
+    assert_eq!(updates.state().latest.as_deref(), Some("0.9.0"));
+    assert!(
+        !updates.state().settings.enabled,
+        "Manual check works while automatic checks are off"
+    );
+    click(&mut cx, w, "updates-close");
+    settle(&mut cx);
+    click(&mut cx, main, "updates-preferences");
+    settle(&mut cx);
+    let w = cx.read_entity(&view, |v, _| v.settings_window.unwrap());
+    ready(&mut cx, w, "updates-check");
+    assert_eq!(updates.state().outcome, Outcome::Available);
+    assert_eq!(updates.state().latest.as_deref(), Some("0.9.0"));
+    assert_eq!(
+        hits.load(Ordering::SeqCst),
+        1,
+        "Reopen preserves delivered result without network"
+    );
+    capture(&mut cx, w, &evidence.join("05-newer-official-release.png"));
+    responses.lock().unwrap().push_back((
+        200,
+        format!(r#"{{"tag_name":"v{}"}}"#, env!("CARGO_PKG_VERSION")),
+        false,
+    ));
+    ready(&mut cx, w, "updates-check");
+    click(&mut cx, w, "updates-check");
+    state(&mut cx, &updates, |s| s.outcome == Outcome::Current);
+    capture(&mut cx, w, &evidence.join("06-current-release.png"));
+    responses
+        .lock()
+        .unwrap()
+        .push_back((429, "{}".into(), false));
+    ready(&mut cx, w, "updates-check");
+    click(&mut cx, w, "updates-check");
+    state(&mut cx, &updates, |s| s.outcome == Outcome::RateLimited);
+    capture(
+        &mut cx,
+        w,
+        &evidence.join("07-release-check-rate-limited.png"),
+    );
+    hold.store(true, Ordering::Release);
+    responses
+        .lock()
+        .unwrap()
+        .push_back((200, r#"{"tag_name":"v0.9.1"}"#.into(), true));
+    ready(&mut cx, w, "updates-check");
+    click(&mut cx, w, "updates-check");
+    state(&mut cx, &updates, |s| s.busy);
+    let mut asking = daemon.clone();
+    let ask = runtime.spawn(async move {
+        asking
+            .ask_rule(protocol::Connection {
+                process_path: "/owned/updates-held-permission".into(),
+                ..Default::default()
+            })
+            .await
+            .unwrap()
+            .into_inner()
+    });
+    settle(&mut cx);
+    let popup = cx.read_entity(&view, |v, _| v.prompt_window.unwrap());
+    click(&mut cx, popup, "deny-once");
+    assert_eq!(runtime.block_on(ask).unwrap().action, "deny");
+    assert!(updates.state().busy);
+    capture(
+        &mut cx,
+        w,
+        &evidence.join("08-permission-during-held-release.png"),
+    );
+    click(&mut cx, w, "updates-close");
+    settle(&mut cx);
+    cx.update_window(main, |_, w, cx| {
+        assert!(view.update(cx, |v, _| v.should_close_dashboard(w)));
+        w.remove_window()
+    })
+    .unwrap();
+    settle(&mut cx);
+    actions
+        .try_send(crate::desktop_notifications::Target::Updates)
+        .unwrap();
+    settle(&mut cx);
+    let w = cx.read_entity(&view, |v, _| v.settings_window.unwrap());
+    assert!(
+        updates.state().busy,
+        "Opening a notice preserves in-flight release check"
+    );
+    actions
+        .try_send(crate::desktop_notifications::Target::Updates)
+        .unwrap();
+    settle(&mut cx);
+    assert_eq!(cx.read_entity(&view, |v, _| v.settings_window.unwrap()), w);
+    ready(&mut cx, w, "updates-cancel");
+    click(&mut cx, w, "updates-cancel");
+    state(&mut cx, &updates, |s| s.outcome == Outcome::Cancelled);
+    hold.store(false, Ordering::Release);
+    capture(
+        &mut cx,
+        w,
+        &evidence.join("09-cancel-and-notice-window-reuse.png"),
+    );
+    ready(&mut cx, w, "updates-save");
+    let path = crate::updates::path_for(&config.database);
+    let mut doc: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    doc["settings"]["interval"] = 3.into();
+    let external = serde_json::to_vec_pretty(&doc).unwrap();
+    std::fs::write(&path, &external).unwrap();
+    reveal(&mut cx, w, "updates-interval".into());
+    fill(&mut cx, w, "updates-interval", "4");
+    click(&mut cx, w, "updates-save");
+    ready(&mut cx, w, "updates-save");
+    assert_eq!(std::fs::read(&path).unwrap(), external);
+    assert_eq!(updates.state().settings.interval, 2);
+    capture(
+        &mut cx,
+        w,
+        &evidence.join("10-stale-update-save-refused.png"),
+    );
+    click(&mut cx, w, "updates-reload");
+    ready(&mut cx, w, "updates-save");
+    assert_eq!(updates.state().settings.interval, 3);
+    reveal(&mut cx, w, "updates-enabled".into());
+    click(&mut cx, w, "updates-save");
+    ready(&mut cx, w, "updates-save");
+    assert!(!updates.state().settings.enabled);
+    assert_eq!(hits.load(Ordering::SeqCst), 4);
+    let saved = std::fs::read(&path).unwrap();
+    std::fs::write(evidence.join("saved-update-preferences.json"), &saved).unwrap();
+    assert!(
+        paths
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|p| p.starts_with("GET /releases/latest "))
+    );
+    capture(&mut cx, w, &evidence.join("11-disabled-saved-updates.png"));
+    click(&mut cx, w, "updates-close");
+    drop(view);
+    drop(cx);
+    drop(daemon);
+    worker.join();
+    http.abort();
+    drop(runtime);
+    drop(handle);
+    backend.join();
+    assert!(!config.socket.exists());
+    std::fs::write(evidence.join("headless.json"),serde_json::to_vec_pretty(&serde_json::json!({"status":"passed","real_gpu":true,"scoped_socket_removed":true,"screenshots":["01-update-defaults-no-network.png","02-invalid-update-interval.png","03-update-preferences-reopened.png","04-unreported-daemon-no-network.png","05-newer-official-release.png","06-current-release.png","07-release-check-rate-limited.png","08-permission-during-held-release.png","09-cancel-and-notice-window-reuse.png","10-stale-update-save-refused.png","11-disabled-saved-updates.png"],"proof_boundary":"Actual Kit release preferences controls/save/reopen/invalid/stale/reload, owned network HTTP available/current/rate-limit/cancel, no traffic before opt-in/manual check or with unknown daemon version, real permission reply while HTTP held, synthetic Updates callback preserves in-flight job and reuses window, exact persisted preferences. Fixed loopback-only test endpoint; no official network, package download/install, release-page click or host banner/native compositor proof."})).unwrap()).unwrap();
+}
+
+#[test]
+fn headless_rules_advanced() {
+    use gpui::InputEvent as _;
+    fn reveal(cx: &mut HeadlessAppContext, window: AnyWindowHandle, id: gpui::ElementId) {
+        for _ in 0..32 {
+            let direction = cx
+                .update_window(window, |_, w, cx| {
+                    w.render_frame(cx);
+                    let body = w.find("rule-filter-body").bounds();
+                    let target = w.find(id.clone()).bounds();
+                    if target.center().y < body.top() + px(8.) {
+                        Some(120.)
+                    } else if target.center().y > body.bottom() - px(8.) {
+                        Some(-120.)
+                    } else {
+                        None
+                    }
+                })
+                .unwrap();
+            let Some(direction) = direction else { return };
+            cx.update_window(window, |_, w, cx| {
+                let body = w.find("rule-filter-body").bounds();
+                w.dispatch_event(
+                    gpui::MouseMoveEvent {
+                        position: body.center(),
+                        pressed_button: None,
+                        modifiers: Default::default(),
+                    }
+                    .to_platform_input(),
+                    cx,
+                );
+                w.render_frame(cx);
+                w.dispatch_event(
+                    gpui::ScrollWheelEvent {
+                        position: body.center(),
+                        delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.), px(direction))),
+                        ..Default::default()
+                    }
+                    .to_platform_input(),
+                    cx,
+                );
+                w.render_frame(cx);
+            })
+            .unwrap();
+            settle(cx);
+        }
+        panic!("Rule control {id:?} must be reachable by wheel input");
+    }
+    fn control(cx: &mut HeadlessAppContext, w: AnyWindowHandle, id: impl Into<gpui::ElementId>) {
+        let id = id.into();
+        if !matches!(&id, gpui::ElementId::Name(name) if matches!(name.as_ref(), "rule-filter-apply" | "rule-filter-clear" | "rule-filter-close"))
+        {
+            reveal(cx, w, id.clone());
+        }
+        cx.update_window(w, |_, w, cx| w.click(id, cx)).unwrap();
+        settle(cx);
+    }
+    fn condition(
+        cx: &mut HeadlessAppContext,
+        w: AnyWindowHandle,
+        field: &str,
+        comparison: &str,
+        value: &str,
+    ) {
+        reveal(cx, w, "rule-filter-field".into());
+        pick(cx, w, "rule-filter-field", field);
+        reveal(cx, w, "rule-filter-comparison".into());
+        pick(cx, w, "rule-filter-comparison", comparison);
+        reveal(cx, w, "rule-filter-value".into());
+        fill(cx, w, "rule-filter-value", value);
+        control(cx, w, "rule-filter-add");
+    }
+
+    fn rows(cx: &mut HeadlessAppContext, view: &gpui::Entity<Dashboard>, wanted: &[usize]) {
+        let wanted = wanted
+            .iter()
+            .map(|i| format!("advanced.{i}"))
+            .collect::<std::collections::BTreeSet<_>>();
+        for _ in 0..60 {
+            settle(cx);
+            if cx.read_entity(view, |v, _| {
+                v.rules
+                    .page
+                    .rules
+                    .iter()
+                    .map(|r| r.name.clone())
+                    .collect::<std::collections::BTreeSet<_>>()
+            }) == wanted
+            {
+                return;
+            }
+        }
+        panic!(
+            "Expected {wanted:?}, actual {:?}",
+            cx.read_entity(view, |v, _| v
+                .rules
+                .page
+                .rules
+                .iter()
+                .map(|r| r.name.clone())
+                .collect::<Vec<_>>())
+        );
+    }
+    let evidence = evidence();
+    let dir = tempfile::tempdir().unwrap();
+    let config = options(dir.path());
+    let backend = Backend::start(config.clone()).unwrap();
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap();
+    let mut fixtures = (0..6)
+        .map(|i| protocol::Rule {
+            name: format!("advanced.{i}"),
+            created: 100 + i,
+            description: if i % 2 == 0 { "team blue" } else { "team red" }.into(),
+            enabled: i != 1,
+            action: if i < 3 { "deny" } else { "allow" }.into(),
+            duration: "always".into(),
+            operator: Some(protocol::Operator {
+                r#type: "simple".into(),
+                operand: "process.path".into(),
+                data: format!("/owned/advanced-{i}"),
+                ..Default::default()
+            }),
+            ..Default::default()
+        })
+        .collect::<Vec<_>>();
+    fixtures[4].operator = Some(protocol::Operator {
+        r#type: "list".into(),
+        operand: "list".into(),
+        list: vec![protocol::Operator {
+            r#type: "list".into(),
+            list: vec![
+                protocol::Operator {
+                    operand: "dest.host".into(),
+                    data: "leaf.deep.test".into(),
+                    ..Default::default()
+                },
+                protocol::Operator {
+                    operand: "dest.port".into(),
+                    data: "8443".into(),
+                    ..Default::default()
+                },
+                protocol::Operator {
+                    r#type: "simple".into(),
+                    operand: "process.path".into(),
+                    data: "/owned/advanced-4".into(),
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        }],
+        ..Default::default()
+    });
+    let daemon = runtime.block_on(async {
+        use hyper_util::rt::TokioIo;
+        let path = config.socket.clone();
+        let channel = tonic::transport::Endpoint::try_from("http://localhost")
+            .unwrap()
+            .connect_with_connector(tower::service_fn(move |_| {
+                let path = path.clone();
+                async move {
+                    tokio::net::UnixStream::connect(path)
+                        .await
+                        .map(TokioIo::new)
+                }
+            }))
+            .await
+            .unwrap();
+        let mut client = protocol::ui_client::UiClient::new(channel);
+        client
+            .subscribe(protocol::ClientConfig {
+                name: "rule-search-fixture".into(),
+                rules: fixtures.clone(),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        client
+    });
+    let mut cx = context();
+    let mut view = None;
+    let main = cx
+        .open_window(size(px(1240.), px(940.)), |w, cx| {
+            let v = cx.new(|cx| Dashboard::new(backend.handle.clone(), config.clone(), w, cx));
+            view = Some(v.clone());
+            cx.new(|cx| gpui_kit::base::Root::new(v, w, cx))
+        })
+        .unwrap();
+    let main: AnyWindowHandle = main.into();
+    let view = view.unwrap();
+    settle(&mut cx);
+    cx.update_window(main, |_, w, cx| w.within("main-tabs").click(1usize, cx))
+        .unwrap();
+    rows(&mut cx, &view, &[0, 1, 2, 3, 4, 5]);
+    // Header input must change the background global order, not just visible cells.
+    for (button, expected, frame) in [
+        (
+            "rules-sort-added",
+            vec![105, 104, 103, 102, 101, 100],
+            "15-added-newest-first.png",
+        ),
+        (
+            "rules-sort-added",
+            vec![100, 101, 102, 103, 104, 105],
+            "16-added-oldest-first.png",
+        ),
+        (
+            "rules-sort-name",
+            vec![100, 101, 102, 103, 104, 105],
+            "17-added-name-order.png",
+        ),
+    ] {
+        click(&mut cx, main, button);
+        for _ in 0..60 {
+            settle(&mut cx);
+            if cx.read_entity(&view, |v, _| {
+                v.rules
+                    .page
+                    .rules
+                    .iter()
+                    .map(|rule| rule.created)
+                    .collect::<Vec<_>>()
+                    == expected
+            }) {
+                break;
+            }
+        }
+        assert_eq!(
+            cx.read_entity(&view, |v, _| v
+                .rules
+                .page
+                .rules
+                .iter()
+                .map(|rule| rule.created)
+                .collect::<Vec<_>>()),
+            expected
+        );
+        cx.update_window(main, |_, w, _| {
+            let header = w.find("rules-sort-added").bounds();
+            let cell = w.find(("rule-added", 0usize)).bounds();
+            assert!(cell.size.width > px(100.));
+            assert!(
+                (cell.left() - header.left()).abs() < px(2.),
+                "Added header {header:?}, cell {cell:?}"
+            );
+            assert!(
+                header.right() < w.viewport_size().width - px(200.),
+                "Action/status column must follow Added"
+            );
+            assert!(cell.right() <= w.viewport_size().width);
+        })
+        .unwrap();
+        capture(&mut cx, main, &evidence.join(frame));
+    }
+    click(&mut cx, main, "rule-filter-open");
+    settle(&mut cx);
+    let tools = cx.read_entity(&view, |v, _| v.rules.filter_window.unwrap());
+    condition(&mut cx, tools, "Enabled", "Exact match", "2");
+    capture(
+        &mut cx,
+        tools,
+        &evidence.join("01-invalid-boolean-refused.png"),
+    );
+    control(&mut cx, tools, "rule-filter-apply");
+    rows(&mut cx, &view, &[0, 1, 2, 3, 4, 5]);
+    assert!(
+        cx.update_window(tools, |_, w, _| w
+            .try_find(("rule-filter-remove", 0usize))
+            .is_none())
+            .unwrap()
+    );
+    control(&mut cx, tools, "rule-filter-root-mode");
+    condition(&mut cx, tools, "Action", "Exact match", "deny");
+    condition(&mut cx, tools, "Enabled", "Exact match", "1");
+    control(&mut cx, tools, "rule-filter-new-group");
+    condition(&mut cx, tools, "Description", "Ends with", "blue");
+    condition(
+        &mut cx,
+        tools,
+        "Created (UTC)",
+        "At least / at or after",
+        "104",
+    );
+    capture(&mut cx, tools, &evidence.join("02-two-rule-groups.png"));
+    control(&mut cx, tools, "rule-filter-apply");
+    rows(&mut cx, &view, &[0, 2, 4]);
+    capture(&mut cx, main, &evidence.join("03-exact-rule-matches.png"));
+    control(&mut cx, tools, ("rule-filter-group-mode", 1usize));
+    control(&mut cx, tools, "rule-filter-apply");
+    rows(&mut cx, &view, &[0, 2, 4, 5]);
+    capture(
+        &mut cx,
+        main,
+        &evidence.join("04-inner-any-rule-matches.png"),
+    );
+    control(&mut cx, tools, ("rule-filter-group-mode", 1usize));
+    control(&mut cx, tools, "rule-filter-root-mode");
+    control(&mut cx, tools, "rule-filter-apply");
+    rows(&mut cx, &view, &[]);
+    capture(&mut cx, main, &evidence.join("05-root-all-empty.png"));
+    control(&mut cx, tools, "rule-filter-root-mode");
+    control(&mut cx, tools, "rule-filter-apply");
+    rows(&mut cx, &view, &[0, 2, 4]);
+    for invalid in [
+        "1 OR 1 OR 2 OR 3 OR 4",
+        "1 AND 2 AND 3 AND 9",
+        "1 OR 2 OR 3 OR 4; DROP TABLE rules",
+    ] {
+        reveal(&mut cx, tools, "rule-filter-formula".into());
+        fill(&mut cx, tools, "rule-filter-formula", invalid);
+        control(&mut cx, tools, "rule-filter-apply");
+        rows(&mut cx, &view, &[0, 2, 4]);
+    }
+    capture(
+        &mut cx,
+        tools,
+        &evidence.join("09-invalid-rule-formulas-refused.png"),
+    );
+    reveal(&mut cx, tools, "rule-filter-formula".into());
+    fill(
+        &mut cx,
+        tools,
+        "rule-filter-formula",
+        "4 OR (1 AND (3 OR 2))",
+    );
+    control(&mut cx, tools, "rule-filter-apply");
+    rows(&mut cx, &view, &[0, 2, 4, 5]);
+    reveal(&mut cx, tools, "rule-filter-root-mode".into());
+    let group_label = cx
+        .update_window(tools, |_, w, _| {
+            w.find("rule-filter-root-mode").label().map(str::to_owned)
+        })
+        .unwrap();
+    control(&mut cx, tools, "rule-filter-root-mode");
+    assert_eq!(
+        cx.update_window(tools, |_, w, _| w
+            .find("rule-filter-root-mode")
+            .label()
+            .map(str::to_owned))
+            .unwrap(),
+        group_label
+    );
+
+    capture(&mut cx, main, &evidence.join("10-nested-rule-formula.png"));
+    click(&mut cx, tools, "rule-filter-close");
+    settle(&mut cx);
+    click(&mut cx, main, "rule-filter-open");
+    settle(&mut cx);
+    let tools = cx.read_entity(&view, |v, _| v.rules.filter_window.unwrap());
+    reveal(&mut cx, tools, "rule-filter-formula".into());
+    control(&mut cx, tools, "rule-filter-formula");
+    cx.update_window(tools, |_, w, cx| {
+        w.press("ctrl-a", cx);
+        w.press("ctrl-c", cx);
+    })
+    .unwrap();
+    assert_eq!(
+        cx.update(|cx| cx.read_from_clipboard().unwrap().text().unwrap()),
+        "4 OR (1 AND (3 OR 2))"
+    );
+    reveal(&mut cx, tools, "rule-filter-root-mode".into());
+    let group_label = cx
+        .update_window(tools, |_, w, _| {
+            w.find("rule-filter-root-mode").label().map(str::to_owned)
+        })
+        .unwrap();
+    control(&mut cx, tools, "rule-filter-root-mode");
+    assert_eq!(
+        cx.update_window(tools, |_, w, _| w
+            .find("rule-filter-root-mode")
+            .label()
+            .map(str::to_owned))
+            .unwrap(),
+        group_label
+    );
+
+    capture(
+        &mut cx,
+        tools,
+        &evidence.join("06-reopened-rule-groups.png"),
+    );
+    condition(&mut cx, tools, "Rule name", "Exact match", "never-apply");
+    reveal(&mut cx, tools, "rule-filter-root-mode".into());
+    let group_label = cx
+        .update_window(tools, |_, w, _| {
+            w.find("rule-filter-root-mode").label().map(str::to_owned)
+        })
+        .unwrap();
+    control(&mut cx, tools, "rule-filter-root-mode");
+    assert_ne!(
+        cx.update_window(tools, |_, w, _| w
+            .find("rule-filter-root-mode")
+            .label()
+            .map(str::to_owned))
+            .unwrap(),
+        group_label
+    );
+    control(&mut cx, tools, "rule-filter-root-mode");
+
+    click(&mut cx, tools, "rule-filter-close");
+    settle(&mut cx);
+
+    rows(&mut cx, &view, &[0, 2, 4, 5]);
+    click(&mut cx, main, "rules-export");
+    settle(&mut cx);
+    let export_window = cx.read_entity(&view, |v, _| v.rules.editor_window.unwrap());
+    let output = evidence.join("matching-rules.json");
+    fill(
+        &mut cx,
+        export_window,
+        "transfer-path",
+        output.to_str().unwrap(),
+    );
+    click(&mut cx, export_window, "transfer-export-file");
+    for _ in 0..60 {
+        settle(&mut cx);
+        if output.exists() {
+            break;
+        }
+    }
+    let mut got: Vec<serde_json::Value> =
+        serde_json::from_slice(&std::fs::read(&output).unwrap()).unwrap();
+    got.sort_by(|a, b| a["name"].as_str().cmp(&b["name"].as_str()));
+    assert_eq!(
+        got,
+        [0, 2, 4, 5]
+            .into_iter()
+            .map(|i| crate::rules::document::rule_json(&fixtures[i]))
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        crate::rules::transfer::Import::from_path(&output).is_err(),
+        "Read-only export retains nested wire; flat daemon mutation admission remains separately refused"
+    );
+    capture(
+        &mut cx,
+        export_window,
+        &evidence.join("07-filtered-rule-export.png"),
+    );
+    click(&mut cx, export_window, "transfer-close");
+    settle(&mut cx);
+    click(&mut cx, main, "rule-filter-open");
+    settle(&mut cx);
+    let tools = cx.read_entity(&view, |v, _| v.rules.filter_window.unwrap());
+    control(&mut cx, tools, ("rule-filter-remove", 2usize));
+    reveal(&mut cx, tools, "rule-filter-root-mode".into());
+    let group_label = cx
+        .update_window(tools, |_, w, _| {
+            w.find("rule-filter-root-mode").label().map(str::to_owned)
+        })
+        .unwrap();
+    control(&mut cx, tools, "rule-filter-root-mode");
+    assert_ne!(
+        cx.update_window(tools, |_, w, _| w
+            .find("rule-filter-root-mode")
+            .label()
+            .map(str::to_owned))
+            .unwrap(),
+        group_label
+    );
+    control(&mut cx, tools, "rule-filter-root-mode");
+
+    control(&mut cx, tools, "rule-filter-apply");
+    rows(&mut cx, &view, &[0, 2, 4, 5]);
+    control(&mut cx, tools, "rule-filter-clear");
+    control(&mut cx, tools, "rule-filter-apply");
+    rows(&mut cx, &view, &[0, 1, 2, 3, 4, 5]);
+    assert!(
+        cx.update_window(tools, |_, w, _| w
+            .try_find(("rule-filter-remove", 0usize))
+            .is_none())
+            .unwrap()
+    );
+    capture(
+        &mut cx,
+        main,
+        &evidence.join("08-cleared-rule-conditions.png"),
+    );
+    condition(
+        &mut cx,
+        tools,
+        "Last received by UI (UTC)",
+        "At least / at or after",
+        "not-a-date",
+    );
+    control(&mut cx, tools, "rule-filter-apply");
+    rows(&mut cx, &view, &[0, 1, 2, 3, 4, 5]);
+    assert!(
+        cx.update_window(tools, |_, w, _| w
+            .try_find(("rule-filter-remove", 0usize))
+            .is_none())
+            .unwrap()
+    );
+    condition(
+        &mut cx,
+        tools,
+        "Last received by UI (UTC)",
+        "At least / at or after",
+        "0",
+    );
+    control(&mut cx, tools, "rule-filter-apply");
+    rows(&mut cx, &view, &[0, 1, 2, 3, 4, 5]);
+    capture(
+        &mut cx,
+        main,
+        &evidence.join("11-received-catalogue-filter.png"),
+    );
+    condition(
+        &mut cx,
+        tools,
+        "Any operator operand",
+        "Exact match",
+        "dest.host",
+    );
+    condition(&mut cx, tools, "Any operator data", "Contains", "leaf.deep");
+    control(&mut cx, tools, "rule-filter-apply");
+    rows(&mut cx, &view, &[4]);
+    capture(
+        &mut cx,
+        main,
+        &evidence.join("12-deep-operator-leaf-filter.png"),
+    );
+    click(&mut cx, main, "rules-export");
+    settle(&mut cx);
+    let export_window = cx.read_entity(&view, |v, _| v.rules.editor_window.unwrap());
+    let output = evidence.join("deep-tree-rules.json");
+    fill(
+        &mut cx,
+        export_window,
+        "transfer-path",
+        output.to_str().unwrap(),
+    );
+    click(&mut cx, export_window, "transfer-export-file");
+    for _ in 0..60 {
+        settle(&mut cx);
+        if output.exists() {
+            break;
+        }
+    }
+    let tree_export: Vec<serde_json::Value> =
+        serde_json::from_slice(&std::fs::read(&output).unwrap()).unwrap();
+    assert_eq!(
+        tree_export,
+        vec![crate::rules::document::rule_json(&fixtures[4])]
+    );
+    capture(
+        &mut cx,
+        export_window,
+        &evidence.join("13-deep-operator-whole-wire-export.png"),
+    );
+    click(&mut cx, export_window, "transfer-close");
+    settle(&mut cx);
+    control(&mut cx, tools, "rule-filter-clear");
+    condition(
+        &mut cx,
+        tools,
+        "Any operator data",
+        "Does not contain",
+        "leaf.deep",
+    );
+    control(&mut cx, tools, "rule-filter-apply");
+    rows(&mut cx, &view, &[0, 1, 2, 3, 5]);
+    capture(
+        &mut cx,
+        main,
+        &evidence.join("14-negative-tree-excludes-whole-rule.png"),
+    );
+    click(&mut cx, tools, "rule-filter-close");
+    drop(view);
+    drop(cx);
+    drop(daemon);
+    drop(runtime);
+    backend.join();
+    assert!(!config.socket.exists());
+    std::fs::write(evidence.join("headless.json"),serde_json::to_vec_pretty(&serde_json::json!({"status":"passed","real_gpu":true,"scoped_socket_removed":true,"screenshots":["01-invalid-boolean-refused.png","02-two-rule-groups.png","03-exact-rule-matches.png","04-inner-any-rule-matches.png","05-root-all-empty.png","06-reopened-rule-groups.png","07-filtered-rule-export.png","08-cleared-rule-conditions.png","09-invalid-rule-formulas-refused.png","10-nested-rule-formula.png","11-received-catalogue-filter.png","12-deep-operator-leaf-filter.png","13-deep-operator-whole-wire-export.png","14-negative-tree-excludes-whole-rule.png","15-added-newest-first.png","16-added-oldest-first.png","17-added-name-order.png"],"proof_boundary":"Actual Added UTC column/header input and newest/oldest/name sorting, native Kit rule filter controls, invalid bool refusal, two-level root/inner groups, invalid duplicate/out-of-range/SQL-like formula refusal, reordered nested formula with disabled groups, exact cached rule identities, staged Close preservation, reopen, matching whole-wire JSON export, remove partition and clear; actual received timestamp/date refusal, deep Any operand/data matching, exact whole nested protobuf export, negative sibling exclusion. Owned fixture/database and background GPU; no policy writes, real system daemon, kernel enforcement or native compositor proof."})).unwrap()).unwrap();
+}
+
+#[test]
+fn headless_history_advanced() {
+    use crate::history::{
+        query::{Group, Logic, Match},
+        settings::Store,
+    };
+    use gpui::InputEvent as _;
+    fn reveal(cx: &mut HeadlessAppContext, window: AnyWindowHandle, id: gpui::ElementId) {
+        for _ in 0..32 {
+            let direction = cx
+                .update_window(window, |_, w, cx| {
+                    w.render_frame(cx);
+                    let body = w.find("history-tools-panel").bounds();
+                    let target = w.find(id.clone()).bounds();
+                    if target.center().y < body.top() + px(8.) {
+                        Some(120.)
+                    } else if target.center().y > body.bottom() - px(8.) {
+                        Some(-120.)
+                    } else {
+                        None
+                    }
+                })
+                .unwrap();
+            let Some(direction) = direction else { return };
+            cx.update_window(window, |_, w, cx| {
+                let body = w.find("history-tools-panel").bounds();
+                w.dispatch_event(
+                    gpui::MouseMoveEvent {
+                        position: body.center(),
+                        pressed_button: None,
+                        modifiers: Default::default(),
+                    }
+                    .to_platform_input(),
+                    cx,
+                );
+                w.render_frame(cx);
+                w.dispatch_event(
+                    gpui::ScrollWheelEvent {
+                        position: body.center(),
+                        delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.), px(direction))),
+                        ..Default::default()
+                    }
+                    .to_platform_input(),
+                    cx,
+                );
+                w.render_frame(cx);
+            })
+            .unwrap();
+            settle(cx);
+        }
+        panic!("History control {id:?} must be reachable by wheel input");
+    }
+    fn control(cx: &mut HeadlessAppContext, w: AnyWindowHandle, id: impl Into<gpui::ElementId>) {
+        let id = id.into();
+        reveal(cx, w, id.clone());
+        cx.update_window(w, |_, w, cx| w.click(id, cx)).unwrap();
+        settle(cx);
+    }
+    fn condition(
+        cx: &mut HeadlessAppContext,
+        w: AnyWindowHandle,
+        field: &str,
+        comparison: &str,
+        value: &str,
+    ) {
+        reveal(cx, w, "history-filter-field".into());
+        pick(cx, w, "history-filter-field", field);
+        reveal(cx, w, "history-filter-comparison".into());
+        pick(cx, w, "history-filter-comparison", comparison);
+        reveal(cx, w, "history-filter-value".into());
+        fill(cx, w, "history-filter-value", value);
+        control(cx, w, "history-filter-add");
+    }
+    fn rows(cx: &mut HeadlessAppContext, v: &gpui::Entity<Dashboard>, expected: &[usize]) {
+        let wanted = expected
+            .iter()
+            .map(|i| format!("/owned/history-advanced-{i}"))
+            .collect::<std::collections::BTreeSet<_>>();
+        for _ in 0..50 {
+            settle(cx);
+            let actual = cx.read_entity(v, |v, _| {
+                v.history
+                    .page
+                    .rows
+                    .iter()
+                    .map(|r| r.process.clone())
+                    .collect::<std::collections::BTreeSet<_>>()
+            });
+            if actual == wanted {
+                return;
+            }
+        }
+        let actual = cx.read_entity(v, |v, _| {
+            v.history
+                .page
+                .rows
+                .iter()
+                .map(|r| r.process.clone())
+                .collect::<Vec<_>>()
+        });
+        panic!("Exact advanced history rows {wanted:?}, observed {actual:?}");
+    }
+    let evidence = evidence();
+    let dir = tempfile::tempdir().unwrap();
+    let config = options(dir.path());
+    let backend = Backend::start(config.clone()).unwrap();
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap();
+    let fixtures = [
+        ("/work/a", 443, "zero.demo"),
+        ("/work/a", 80, "one.test"),
+        ("/work/b", 80, "two.test"),
+        ("/work/b", 80, "three.demo"),
+        ("/work/a", 444, "four.test"),
+        ("/work/b", 443, "five.test"),
+    ];
+    backend.handle.history.ingest(
+        "advanced-history-fixture".into(),
+        fixtures
+            .iter()
+            .enumerate()
+            .map(|(i, (cwd, port, host))| protocol::Event {
+                unixnano: crate::history::now_nanos() + i as i64,
+                connection: Some(protocol::Connection {
+                    process_path: format!("/owned/history-advanced-{i}"),
+                    process_cwd: (*cwd).into(),
+                    dst_port: *port,
+                    dst_host: (*host).into(),
+                    protocol: "tcp".into(),
+                    ..Default::default()
+                }),
+                rule: Some(protocol::Rule {
+                    action: "allow".into(),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            })
+            .collect(),
+        "observed",
+    );
+    runtime.block_on(backend.handle.history.flush()).unwrap();
+    let mut cx = context();
+    let mut view = None;
+    let main = cx
+        .open_window(size(px(1240.), px(940.)), |window, cx| {
+            let v = cx.new(|cx| Dashboard::new(backend.handle.clone(), config.clone(), window, cx));
+            view = Some(v.clone());
+            cx.new(|cx| gpui_kit::base::Root::new(v, window, cx))
+        })
+        .unwrap();
+    let main: AnyWindowHandle = main.into();
+    let view = view.unwrap();
+    rows(&mut cx, &view, &[0, 1, 2, 3, 4, 5]);
+    let before = cx.update(|cx| cx.windows());
+    click(&mut cx, main, "history-tools");
+    settle(&mut cx);
+    let tools = cx.update(|cx| {
+        cx.windows()
+            .into_iter()
+            .find(|w| !before.contains(w))
+            .unwrap()
+    });
+    control(&mut cx, tools, "history-filter-root-mode");
+    condition(
+        &mut cx,
+        tools,
+        "Working directory",
+        "Starts with",
+        "/work/a",
+    );
+    condition(
+        &mut cx,
+        tools,
+        "Destination port",
+        "At least / at or after",
+        "443",
+    );
+    control(&mut cx, tools, "history-filter-new-group");
+    condition(
+        &mut cx,
+        tools,
+        "Working directory",
+        "Does not contain",
+        "/work/a",
+    );
+    condition(&mut cx, tools, "Destination host", "Ends with", ".test");
+    capture(
+        &mut cx,
+        tools,
+        &evidence.join("01-two-group-expression.png"),
+    );
+    control(&mut cx, tools, "history-filter-apply");
+    rows(&mut cx, &view, &[0, 2, 4, 5]);
+    let mut expected = Logic {
+        mode: Match::Any,
+        groups: vec![
+            Group {
+                count: 2,
+                mode: Match::All,
+            },
+            Group {
+                count: 2,
+                mode: Match::All,
+            },
+        ],
+        ..Default::default()
+    };
+    assert_eq!(
+        cx.read_entity(&view, |v, _| v.history.query.logic.clone()),
+        expected
+    );
+    assert!(
+        cx.read_entity(&view, |v, _| v
+            .history
+            .page
+            .rows
+            .iter()
+            .any(|r| r.port == 443 && r.metadata.cwd == "/work/a")),
+        "Inclusive boundary is present"
+    );
+    capture(
+        &mut cx,
+        main,
+        &evidence.join("02-exact-grouped-history.png"),
+    );
+    control(&mut cx, tools, ("history-filter-group-mode", 1usize));
+    control(&mut cx, tools, "history-filter-apply");
+    rows(&mut cx, &view, &[0, 1, 2, 3, 4, 5]);
+    capture(
+        &mut cx,
+        main,
+        &evidence.join("03-inner-any-expands-results.png"),
+    );
+    control(&mut cx, tools, ("history-filter-group-mode", 1usize));
+    control(&mut cx, tools, "history-filter-root-mode");
+    control(&mut cx, tools, "history-filter-apply");
+    rows(&mut cx, &view, &[]);
+    capture(&mut cx, main, &evidence.join("04-root-all-empty.png"));
+    control(&mut cx, tools, "history-filter-root-mode");
+    control(&mut cx, tools, "history-filter-apply");
+    rows(&mut cx, &view, &[0, 2, 4, 5]);
+    for invalid in [
+        "1 OR 1 OR 2 OR 3 OR 4",
+        "1 AND 2 AND 3 AND 9",
+        "1 OR 2 OR 3 OR 4; DROP TABLE events",
+    ] {
+        reveal(&mut cx, tools, "history-filter-formula".into());
+        fill(&mut cx, tools, "history-filter-formula", invalid);
+        control(&mut cx, tools, "history-filter-apply");
+        rows(&mut cx, &view, &[0, 2, 4, 5]);
+        assert_eq!(
+            cx.read_entity(&view, |v, _| v.history.query.logic.clone()),
+            expected
+        );
+    }
+    capture(
+        &mut cx,
+        tools,
+        &evidence.join("08-invalid-history-formulas-refused.png"),
+    );
+    reveal(&mut cx, tools, "history-filter-formula".into());
+    fill(
+        &mut cx,
+        tools,
+        "history-filter-formula",
+        "4 OR (1 AND (3 OR 2))",
+    );
+    control(&mut cx, tools, "history-filter-apply");
+    rows(&mut cx, &view, &[0, 1, 2, 4, 5]);
+    expected.formula = "4 OR (1 AND (3 OR 2))".into();
+    assert_eq!(
+        cx.read_entity(&view, |v, _| v.history.query.logic.clone()),
+        expected
+    );
+    reveal(&mut cx, tools, "history-filter-root-mode".into());
+    let group_label = cx
+        .update_window(tools, |_, w, _| {
+            w.find("history-filter-root-mode")
+                .label()
+                .map(str::to_owned)
+        })
+        .unwrap();
+    control(&mut cx, tools, "history-filter-root-mode");
+    assert_eq!(
+        cx.update_window(tools, |_, w, _| w
+            .find("history-filter-root-mode")
+            .label()
+            .map(str::to_owned))
+            .unwrap(),
+        group_label
+    );
+
+    capture(
+        &mut cx,
+        main,
+        &evidence.join("09-nested-history-formula.png"),
+    );
+    cx.update_window(tools, |_, w, cx| {
+        w.within("history-tools-tabs").click(1usize, cx)
+    })
+    .unwrap();
+    settle(&mut cx);
+    control(&mut cx, tools, "history-column-cwd");
+    control(&mut cx, tools, "history-columns-save");
+    cx.update_window(tools, |_, w, cx| {
+        w.within("history-tools-tabs").click(2usize, cx)
+    })
+    .unwrap();
+    settle(&mut cx);
+    let export = evidence.join("advanced-history.jsonl");
+    reveal(&mut cx, tools, "history-export-path".into());
+    fill(
+        &mut cx,
+        tools,
+        "history-export-path",
+        export.to_str().unwrap(),
+    );
+    reveal(&mut cx, tools, "history-export-format".into());
+    pick(&mut cx, tools, "history-export-format", "JSON Lines");
+    control(&mut cx, tools, "history-export-save");
+    for _ in 0..50 {
+        settle(&mut cx);
+        if export.exists() {
+            break;
+        }
+    }
+    let values = std::fs::read_to_string(&export)
+        .unwrap()
+        .lines()
+        .map(|l| serde_json::from_str::<serde_json::Value>(l).unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(values.len(), 5);
+    assert_eq!(
+        values
+            .iter()
+            .map(|v| v["process"].as_str().unwrap().to_owned())
+            .collect::<std::collections::BTreeSet<_>>(),
+        [0, 1, 2, 4, 5]
+            .into_iter()
+            .map(|i| format!("/owned/history-advanced-{i}"))
+            .collect()
+    );
+    assert!(
+        values
+            .iter()
+            .all(|v| matches!(v["cwd"].as_str(), Some("/work/a" | "/work/b")))
+    );
+    capture(&mut cx, tools, &evidence.join("05-grouped-json-export.png"));
+    let mut saved = None;
+    for _ in 0..50 {
+        settle(&mut cx);
+        let value = Store::open(&config.database).unwrap().snapshot();
+        if value.presentation.logic == expected && value.presentation.filters.len() == 4 {
+            saved = Some(value);
+            break;
+        }
+    }
+    let saved = saved.expect("Independent saved expression reopen");
+    std::fs::write(
+        evidence.join("saved-history-options.json"),
+        serde_json::to_vec_pretty(&saved).unwrap(),
+    )
+    .unwrap();
+    click(&mut cx, tools, "history-tools-close");
+    settle(&mut cx);
+    let before = cx.update(|cx| cx.windows());
+    click(&mut cx, main, "history-tools");
+    settle(&mut cx);
+    let tools = cx.update(|cx| {
+        cx.windows()
+            .into_iter()
+            .find(|w| !before.contains(w))
+            .unwrap()
+    });
+    reveal(&mut cx, tools, "history-filter-formula".into());
+    control(&mut cx, tools, "history-filter-formula");
+    cx.update_window(tools, |_, w, cx| {
+        w.press("ctrl-a", cx);
+        w.press("ctrl-c", cx);
+    })
+    .unwrap();
+    assert_eq!(
+        cx.update(|cx| cx.read_from_clipboard().unwrap().text().unwrap()),
+        "4 OR (1 AND (3 OR 2))"
+    );
+    reveal(&mut cx, tools, "history-filter-root-mode".into());
+    let group_label = cx
+        .update_window(tools, |_, w, _| {
+            w.find("history-filter-root-mode")
+                .label()
+                .map(str::to_owned)
+        })
+        .unwrap();
+    control(&mut cx, tools, "history-filter-root-mode");
+    assert_eq!(
+        cx.update_window(tools, |_, w, _| w
+            .find("history-filter-root-mode")
+            .label()
+            .map(str::to_owned))
+            .unwrap(),
+        group_label
+    );
+
+    capture(
+        &mut cx,
+        tools,
+        &evidence.join("06-reopened-grouped-expression.png"),
+    );
+    control(&mut cx, tools, ("history-filter-remove", 2usize));
+    control(&mut cx, tools, "history-filter-apply");
+    rows(&mut cx, &view, &[0, 1, 2, 4, 5]);
+    assert!(cx.read_entity(&view, |v, _| v.history.query.logic.formula.is_empty()));
+    assert_eq!(
+        cx.read_entity(&view, |v, _| v
+            .history
+            .query
+            .logic
+            .groups
+            .iter()
+            .map(|g| g.count)
+            .collect::<Vec<_>>()),
+        vec![2, 1]
+    );
+    control(&mut cx, tools, "history-filter-clear");
+    control(&mut cx, tools, "history-filter-apply");
+    rows(&mut cx, &view, &[0, 1, 2, 3, 4, 5]);
+    assert_eq!(
+        cx.read_entity(&view, |v, _| v.history.query.logic.clone()),
+        Logic::default()
+    );
+    capture(
+        &mut cx,
+        main,
+        &evidence.join("07-clear-restores-history.png"),
+    );
+    click(&mut cx, tools, "history-tools-close");
+    drop(view);
+    drop(cx);
+    drop(runtime);
+    backend.join();
+    assert!(!config.socket.exists());
+    std::fs::write(evidence.join("headless.json"),serde_json::to_vec_pretty(&serde_json::json!({"status":"passed","real_gpu":true,"scoped_socket_removed":true,"screenshots":["01-two-group-expression.png","02-exact-grouped-history.png","03-inner-any-expands-results.png","04-root-all-empty.png","05-grouped-json-export.png","06-reopened-grouped-expression.png","07-clear-restores-history.png","08-invalid-history-formulas-refused.png","09-nested-history-formula.png"],"proof_boundary":"Actual Kit CWD starts/not-contains, inclusive port and hostname suffix fields, new-group checkbox, root/inner All/Any controls, invalid duplicate/out-of-range/SQL-like formula refusal, reordered nested formula with disabled groups, exact production history row identities, independently reopened saved expression, selected CWD JSON export, removal partition and clear. Owned backend/database and background GPU; native compositor, old native Tab paths and kernel enforcement remain separate."})).unwrap()).unwrap();
+}
+
+#[test]
 fn headless_history_tools() {
     fn search(cx: &mut HeadlessAppContext, w: AnyWindowHandle, value: &str) {
         cx.update_window(w, |_, w, cx| w.press("ctrl-f", cx))
@@ -2724,8 +7196,8 @@ fn headless_gpu_user_flow() {
     click(&mut cx, details, "connection-copy");
     let copied = cx.update(|cx| cx.read_from_clipboard().unwrap().text().unwrap());
     assert!(
-        copied.contains("UID: 1000")
-            && copied.contains("PID: 4567")
+        copied.contains("User ID: 1000")
+            && copied.contains("Process ID: 4567")
             && copied.contains("Source: 192.0.2.10:50000")
             && copied.contains("/tmp/synthetic working directory")
     );
@@ -3206,7 +7678,7 @@ fn headless_gpu_user_flow() {
     cx.run_until_parked();
     click(&mut cx, dashboard.into(), "preferences");
     let owner = settings_owner.unwrap();
-    let preferences = cx.read_entity(&owner, |view, _| view.preferences_window.unwrap());
+    let preferences = cx.read_entity(&owner, |view, _| view.settings_window.unwrap());
     cx.update_window(dashboard.into(), |_, window, _| window.remove_window())
         .unwrap();
     drop(owner);
@@ -3457,6 +7929,109 @@ fn headless_gpu_user_flow() {
 #[test]
 fn headless_statistics() {
     use crate::statistics::{self, Kind};
+
+    use gpui::InputEvent as _;
+    fn output_control(
+        cx: &mut HeadlessAppContext,
+        w: AnyWindowHandle,
+        id: impl Into<gpui::ElementId>,
+    ) {
+        let id = id.into();
+        let footer = matches!(&id,gpui::ElementId::Name(name) if matches!(name.as_ref(),"statistics-export-close"|"statistics-export-stop"));
+        if !footer {
+            for _ in 0..32 {
+                let delta = cx
+                    .update_window(w, |_, w, cx| {
+                        w.render_frame(cx);
+                        let body = w.find("statistics-export-panel").bounds();
+                        let target = w.find(id.clone()).bounds();
+                        if target.center().y < body.top() + px(6.) {
+                            Some(100.)
+                        } else if target.center().y > body.bottom() - px(6.) {
+                            Some(-100.)
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap();
+                let Some(delta) = delta else { break };
+                cx.update_window(w, |_, w, cx| {
+                    let position = w.find("statistics-export-panel").bounds().center();
+                    w.dispatch_event(
+                        gpui::MouseMoveEvent {
+                            position,
+                            pressed_button: None,
+                            modifiers: Default::default(),
+                        }
+                        .to_platform_input(),
+                        cx,
+                    );
+                    w.render_frame(cx);
+                    w.dispatch_event(
+                        gpui::ScrollWheelEvent {
+                            position,
+                            delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.), px(delta))),
+                            ..Default::default()
+                        }
+                        .to_platform_input(),
+                        cx,
+                    );
+                    w.render_frame(cx);
+                })
+                .unwrap();
+                settle(cx);
+            }
+        }
+        cx.update_window(w, |_, w, cx| w.click(id, cx)).unwrap();
+        settle(cx);
+    }
+    fn mark(cx: &mut HeadlessAppContext, w: AnyWindowHandle, position_index: usize, shift: bool) {
+        cx.update_window(w, |_, w, cx| {
+            w.render_frame(cx);
+            let target = w.find(("statistics-mark", position_index));
+            assert!(target.visible());
+            let position = target.bounds().center();
+            let modifiers = gpui::Modifiers {
+                shift,
+                ..Default::default()
+            };
+            w.dispatch_event(
+                gpui::MouseMoveEvent {
+                    position,
+                    pressed_button: None,
+                    modifiers,
+                }
+                .to_platform_input(),
+                cx,
+            );
+            w.render_frame(cx);
+            w.dispatch_event(
+                gpui::MouseDownEvent {
+                    button: gpui::MouseButton::Left,
+                    position,
+                    modifiers,
+                    click_count: 1,
+                    first_mouse: false,
+                }
+                .to_platform_input(),
+                cx,
+            );
+            w.render_frame(cx);
+            w.dispatch_event(
+                gpui::MouseUpEvent {
+                    button: gpui::MouseButton::Left,
+                    position,
+                    modifiers,
+                    click_count: 1,
+                }
+                .to_platform_input(),
+                cx,
+            );
+            w.render_frame(cx);
+        })
+        .unwrap();
+        settle(cx);
+    }
     let evidence = evidence();
     let dir = tempfile::tempdir().unwrap();
     let config = options(dir.path());
@@ -3633,6 +8208,12 @@ fn headless_statistics() {
         cx.read_entity(&view, |view, _| view.statistics.page[0].key.clone()),
         "/bin/stats-000"
     );
+    mark(&mut cx, window, 0, false);
+    capture(
+        &mut cx,
+        window,
+        &evidence.join("11-statistics-first-mark.png"),
+    );
     click(&mut cx, window, "statistics-older");
     settle(&mut cx);
     assert_eq!(
@@ -3667,12 +8248,154 @@ fn headless_statistics() {
         window,
         &evidence.join("04-frozen-statistics-page.png"),
     );
+    mark(&mut cx, window, 200, true);
+    capture(
+        &mut cx,
+        window,
+        &evidence.join("12-statistics-cross-page-range.png"),
+    );
     click(&mut cx, window, "statistics-previous");
     settle(&mut cx);
     assert_eq!(
         cx.read_entity(&view, |view, _| view.statistics.page.len()),
         200
     );
+
+    let before_range = cx.update(|cx| cx.windows());
+    click(&mut cx, window, "statistics-export");
+    settle(&mut cx);
+    let range_output = cx.update(|cx| {
+        cx.windows()
+            .into_iter()
+            .find(|w| !before_range.contains(w))
+            .unwrap()
+    });
+    cx.update(|cx| {
+        cx.write_to_clipboard(gpui::ClipboardItem::new_string(
+            "owned-statistics-range-sentinel".into(),
+        ))
+    });
+    output_control(&mut cx, range_output, "statistics-copy-selected");
+    let mut range_csv = String::new();
+    for _ in 0..60 {
+        settle(&mut cx);
+        range_csv = cx.update(|cx| cx.read_from_clipboard().unwrap().text().unwrap());
+        if range_csv != "owned-statistics-range-sentinel" {
+            break;
+        }
+    }
+    assert_eq!(
+        range_csv.lines().count(),
+        202,
+        "Shift range spans positions0through200 acrosspages"
+    );
+    assert!(
+        range_csv.contains("/bin/stats-000")
+            && range_csv.contains("/bin/stats-200")
+            && !range_csv.contains("/bin/stats-201")
+    );
+    std::fs::write(evidence.join("selected-range-counters.csv"), &range_csv).unwrap();
+    output_control(&mut cx, range_output, "statistics-export-close");
+    click(&mut cx, window, "statistics-select-all");
+    settle(&mut cx);
+    mark(&mut cx, window, 0, false);
+    let windows_before = cx.update(|cx| cx.windows());
+    click(&mut cx, window, "statistics-export");
+    settle(&mut cx);
+    let selected = cx.update(|cx| {
+        cx.windows()
+            .into_iter()
+            .find(|w| !windows_before.contains(w))
+            .unwrap()
+    });
+    output_control(&mut cx, selected, ("statistics-export-column", 2usize));
+    output_control(&mut cx, selected, ("statistics-export-column", 3usize));
+    output_control(&mut cx, selected, "statistics-export-json");
+    let selected_path = evidence.join("selected-frozen-counters.jsonl");
+    output_control(&mut cx, selected, "statistics-export-path");
+    fill(
+        &mut cx,
+        selected,
+        "statistics-export-path",
+        selected_path.to_str().unwrap(),
+    );
+    output_control(&mut cx, selected, "statistics-export-selected");
+    for _ in 0..60 {
+        settle(&mut cx);
+        if selected_path.exists() {
+            break;
+        }
+    }
+    let selected_text = std::fs::read_to_string(&selected_path).unwrap();
+    let selected_rows = selected_text
+        .lines()
+        .map(|s| serde_json::from_str::<serde_json::Value>(s).unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(selected_rows.len(), 349);
+    assert!(
+        selected_rows
+            .iter()
+            .all(|r| r.as_object().unwrap().len() == 2
+                && r.get("value").is_some()
+                && r.get("hits").is_some())
+    );
+    assert!(!selected_rows.iter().any(|r| r["value"] == "/bin/stats-000"));
+    assert_eq!(
+        selected_rows
+            .iter()
+            .find(|r| r["value"] == "/bin/stats-200")
+            .unwrap()["hits"],
+        "201"
+    );
+    output_control(&mut cx, selected, "statistics-copy-selected");
+    for _ in 0..60 {
+        settle(&mut cx);
+        if cx
+            .update(|cx| cx.read_from_clipboard().and_then(|item| item.text()))
+            .as_deref()
+            == Some(selected_text.as_str())
+        {
+            break;
+        }
+    }
+    assert_eq!(
+        cx.update(|cx| cx.read_from_clipboard().unwrap().text().unwrap()),
+        selected_text
+    );
+    capture(
+        &mut cx,
+        selected,
+        &evidence.join("13-statistics-selected-frozen-output.png"),
+    );
+    let mut permission = daemon.clone();
+    let ask = runtime.spawn(async move {
+        permission
+            .ask_rule(protocol::Connection {
+                process_path: "/owned/statistics-selection-permission".into(),
+                ..Default::default()
+            })
+            .await
+            .unwrap()
+            .into_inner()
+    });
+    let mut popup = None;
+    for _ in 0..60 {
+        settle(&mut cx);
+        popup = cx.read_entity(&view, |v, _| v.prompt_window);
+        if popup.is_some() {
+            break;
+        }
+    }
+    let popup = popup.unwrap();
+    capture(
+        &mut cx,
+        popup,
+        &evidence.join("14-statistics-selected-output-permission.png"),
+    );
+    click(&mut cx, popup, "deny-once");
+    assert_eq!(runtime.block_on(ask).unwrap().action, "deny");
+    output_control(&mut cx, selected, "statistics-export-close");
+    std::fs::write(evidence.join("statistics-selection-proof.json"),serde_json::to_vec_pretty(&serde_json::json!({"frozen_counter_rows":350,"range_selected_rows":201,"selected_after_all_minus_one":349,"excluded":"/bin/stats-000","frozen_stats_200_hits":"201","new_report_stats_200_hits":"999","chosen_fields":["value","hits"],"clipboard_equals_file":true,"permission_deny":true})).unwrap()).unwrap();
     click(&mut cx, window, "statistics-latest");
     settle(&mut cx);
     click(&mut cx, window, "statistics-older");
@@ -3693,17 +8416,18 @@ fn headless_statistics() {
             .unwrap()
     });
     let csv = evidence.join("daemon-counters.csv");
+    output_control(&mut cx, export, "statistics-export-path");
     fill(
         &mut cx,
         export,
         "statistics-export-path",
         csv.to_str().unwrap(),
     );
-    click(&mut cx, export, "statistics-export-save");
+    output_control(&mut cx, export, "statistics-export-save");
     settle(&mut cx);
     let original = std::fs::read_to_string(&csv).unwrap();
     assert_eq!(original.lines().count(), 351);
-    click(&mut cx, export, "statistics-export-save");
+    output_control(&mut cx, export, "statistics-export-save");
     settle(&mut cx);
     assert_eq!(std::fs::read_to_string(&csv).unwrap(), original);
     capture(
@@ -3711,18 +8435,19 @@ fn headless_statistics() {
         export,
         &evidence.join("05-statistics-existing-export.png"),
     );
-    click(&mut cx, export, "statistics-export-json");
+    output_control(&mut cx, export, "statistics-export-json");
     let json = evidence.join("daemon-counters.jsonl");
+    output_control(&mut cx, export, "statistics-export-path");
     fill(
         &mut cx,
         export,
         "statistics-export-path",
         json.to_str().unwrap(),
     );
-    click(&mut cx, export, "statistics-export-save");
+    output_control(&mut cx, export, "statistics-export-save");
     settle(&mut cx);
     assert_eq!(std::fs::read_to_string(&json).unwrap().lines().count(), 350);
-    click(&mut cx, export, "statistics-export-copy");
+    output_control(&mut cx, export, "statistics-export-copy");
     settle(&mut cx);
     let copied = cx.update(|cx| cx.read_from_clipboard().unwrap().text().unwrap());
     assert_eq!(copied.lines().count(), 201);
@@ -3731,7 +8456,7 @@ fn headless_statistics() {
         export,
         &evidence.join("06-statistics-export-copy.png"),
     );
-    click(&mut cx, export, "statistics-export-close");
+    output_control(&mut cx, export, "statistics-export-close");
     settle(&mut cx);
     cx.update_window(window, |_, window, cx| {
         window.press("ctrl-f", cx);
@@ -3807,7 +8532,15 @@ fn headless_statistics() {
         )
         .unwrap()
         .unwrap();
-    assert!(history.rows.is_empty());
+    assert_eq!(
+        history.rows.len(),
+        1,
+        "Focused statistics reset removes its own history and preserves the unrelated permission event"
+    );
+    assert_eq!(
+        history.rows[0].process,
+        "/owned/statistics-selection-permission"
+    );
     capture(
         &mut cx,
         window,
@@ -3860,7 +8593,7 @@ fn headless_statistics() {
     drop(runtime);
     backend.join();
     assert!(!config.socket.exists());
-    let screenshots = (1..=10)
+    let mut screenshots = (1..=10)
         .zip([
             "statistics-applications",
             "statistics-chart",
@@ -3875,6 +8608,16 @@ fn headless_statistics() {
         ])
         .map(|(index, name)| format!("{index:02}-{name}.png"))
         .collect::<Vec<_>>();
+    screenshots.extend(
+        [
+            "11-statistics-first-mark.png",
+            "12-statistics-cross-page-range.png",
+            "13-statistics-selected-frozen-output.png",
+            "14-statistics-selected-output-permission.png",
+        ]
+        .into_iter()
+        .map(str::to_string),
+    );
     std::fs::write(evidence.join("actions.json"),serde_json::to_vec_pretty(&serde_json::json!({"flow":"Actual Kit tabs/selects/chart/list/reset/export controls, RPC absolute counters, frozen paging, CSV/JSON/clipboard, exact history drilldown and local baseline resets"})).unwrap()).unwrap();
     std::fs::write(evidence.join("headless.json"),serde_json::to_vec_pretty(&serde_json::json!({"status":"passed","real_gpu":true,"scoped_socket_removed":true,"screenshots":screenshots,"boundary":"Production GPUI input and gRPC counters against an isolated fixture; no system daemon or firewall changes"})).unwrap()).unwrap();
 }
@@ -4972,6 +9715,21 @@ fn headless_alerts() {
 
 #[test]
 fn headless_desktop_notifications() {
+    fn control_ready(cx: &mut HeadlessAppContext, window: AnyWindowHandle, id: &'static str) {
+        for _ in 0..50 {
+            settle(cx);
+            if cx
+                .update_window(window, |_, w, _| {
+                    w.try_find(id)
+                        .is_some_and(|e| e.visible() && e.disabled() != Some(true))
+                })
+                .unwrap()
+            {
+                return;
+            }
+        }
+        panic!("{id} did not become enabled after the asynchronous reply");
+    }
     let evidence = evidence();
     let dir = tempfile::tempdir().unwrap();
     let config = options(dir.path());
@@ -5074,6 +9832,145 @@ fn headless_desktop_notifications() {
         &evidence.join("02-notifications-enabled.png"),
     );
     click(&mut cx, preferences, "preferences-close");
+    let subscription_config = || {
+        runtime.block_on(async {
+            match backend
+                .handle
+                .subscriptions
+                .request(crate::subscriptions::Request::NotificationSettings)
+                .unwrap()
+                .await
+                .unwrap()
+                .unwrap()
+            {
+                crate::subscriptions::Reply::NotificationSettings(revision, config) => {
+                    (revision, config)
+                }
+                _ => panic!("Expected subscription notification settings"),
+            }
+        })
+    };
+    cx.update_window(window, |_, window, cx| window.press("ctrl-7", cx))
+        .unwrap();
+    settle(&mut cx);
+    assert!(!subscription_config().1.enabled);
+    control_ready(&mut cx, window, "subs-notifications");
+    click(&mut cx, window, "subs-notifications");
+    settle(&mut cx);
+    click(&mut cx, window, "subs-notify-enabled");
+    fill(
+        &mut cx,
+        window,
+        "subs-notify-success",
+        "Owned success message",
+    );
+    fill(
+        &mut cx,
+        window,
+        "subs-notify-error",
+        "Owned failure message",
+    );
+    capture(
+        &mut cx,
+        window,
+        &evidence.join("05-subscription-notice-settings.png"),
+    );
+    click(&mut cx, window, "subs-notify-save");
+    settle(&mut cx);
+    let saved = subscription_config().1;
+    assert!(saved.enabled);
+    assert_eq!(saved.success_message, "Owned success message");
+    assert_eq!(saved.error_message, "Owned failure message");
+    control_ready(&mut cx, window, "subs-notifications");
+    click(&mut cx, window, "subs-notifications");
+    settle(&mut cx);
+    fill(&mut cx, window, "subs-notify-success", "Unsaved back draft");
+    click(&mut cx, window, "subs-notify-cancel");
+    assert_eq!(
+        subscription_config().1,
+        saved,
+        "Back preserves saved notification configuration"
+    );
+    control_ready(&mut cx, window, "subs-notifications");
+    click(&mut cx, window, "subs-notifications");
+    settle(&mut cx);
+    fill(&mut cx, window, "subs-notify-success", "Stale local draft");
+    let (revision, mut external) = subscription_config();
+    external.success_message = "External saved success".into();
+    runtime.block_on(async {
+        backend
+            .handle
+            .subscriptions
+            .request(crate::subscriptions::Request::SaveNotificationSettings {
+                revision,
+                config: external.clone(),
+            })
+            .unwrap()
+            .await
+            .unwrap()
+            .unwrap();
+    });
+    click(&mut cx, window, "subs-notify-save");
+    settle(&mut cx);
+    assert_eq!(subscription_config().1, external);
+    assert!(
+        cx.update_window(window, |_, w, _| w.find("subs-notify-save").visible())
+            .unwrap(),
+        "Stale save retains the editable form"
+    );
+    capture(
+        &mut cx,
+        window,
+        &evidence.join("06-subscription-notice-stale-refused.png"),
+    );
+    click(&mut cx, window, "subs-notify-reload");
+    settle(&mut cx);
+    click(&mut cx, window, "subs-notify-success");
+    cx.update_window(window, |_, w, cx| {
+        w.press("ctrl-a", cx);
+        w.press("ctrl-c", cx);
+    })
+    .unwrap();
+    settle(&mut cx);
+    assert_eq!(
+        cx.update(|cx| cx.read_from_clipboard().unwrap().text().unwrap()),
+        "External saved success"
+    );
+    capture(
+        &mut cx,
+        window,
+        &evidence.join("07-subscription-notice-reloaded.png"),
+    );
+    cx.update_window(window, |_, w, cx| w.press("ctrl-enter", cx))
+        .unwrap();
+    control_ready(&mut cx, window, "subs-notifications");
+    assert!(
+        cx.update_window(window, |_, w, _| w.find("subs-notifications").visible())
+            .unwrap(),
+        "Ctrl+Enter returns to the catalogue after saving"
+    );
+    control_ready(&mut cx, window, "subs-notifications");
+    click(&mut cx, window, "subs-notifications");
+    settle(&mut cx);
+    click(&mut cx, window, "subs-notify-enabled");
+    capture(
+        &mut cx,
+        window,
+        &evidence.join("08-subscription-notice-disabled.png"),
+    );
+    click(&mut cx, window, "subs-notify-save");
+    settle(&mut cx);
+    assert_eq!(
+        subscription_config().1,
+        crate::subscriptions::notifications::Config::default()
+    );
+    control_ready(&mut cx, window, "subs-notifications");
+    click(&mut cx, window, "subs-notifications");
+    settle(&mut cx);
+    click(&mut cx, window, "subs-notify-enabled");
+    click(&mut cx, window, "subs-notify-save");
+    settle(&mut cx);
+    assert!(subscription_config().1.enabled);
     cx.update_window(window, |_, window, cx| window.press("ctrl-2", cx))
         .unwrap();
     settle(&mut cx);
@@ -5105,7 +10002,9 @@ fn headless_desktop_notifications() {
         popup,
         &evidence.join("03-notice-permission-hidden.png"),
     );
-    actions.try_send(()).unwrap();
+    actions
+        .try_send(crate::desktop_notifications::Target::Alerts)
+        .unwrap();
     settle(&mut cx);
     let restored = cx.read_entity(&view, |view, _| {
         assert!(view.screen == super::Screen::Alerts);
@@ -5121,6 +10020,197 @@ fn headless_desktop_notifications() {
         restored,
         &evidence.join("04-alert-action-restored.png"),
     );
+    cx.update_window(restored, |_, window, cx| {
+        assert!(view.update(cx, |view, _| view.should_close_dashboard(window)));
+        window.remove_window();
+    })
+    .unwrap();
+    settle(&mut cx);
+    actions
+        .try_send(crate::desktop_notifications::Target::Subscriptions)
+        .unwrap();
+    settle(&mut cx);
+    let restored = cx.read_entity(&view, |view, _| {
+        assert!(view.screen == super::Screen::Subscriptions);
+        view.main_window.unwrap()
+    });
+    assert_eq!(
+        backend.handle.prompts.snapshot().len(),
+        1,
+        "Subscription action never answers permission"
+    );
+    capture(
+        &mut cx,
+        restored,
+        &evidence.join("09-subscription-action-restored.png"),
+    );
+    click(&mut cx, popup, "deny-once");
+    assert_eq!(runtime.block_on(request).unwrap().action, "deny");
+    let preferences = cx
+        .update(|cx| super::preferences_view::open(backend.handle.clone(), cx))
+        .unwrap();
+    settle(&mut cx);
+    cx.update_window(preferences, |_, w, cx| {
+        w.within("preferences-tabs").click(3usize, cx)
+    })
+    .unwrap();
+    settle(&mut cx);
+    let current = crate::preferences::Store::open(&config.database)
+        .unwrap()
+        .snapshot();
+    assert!(current.missed_popup_notifications);
+    assert_eq!(
+        current.missed_popup_template,
+        crate::desktop_notifications::missed::DEFAULT_TEMPLATE
+    );
+    capture(
+        &mut cx,
+        preferences,
+        &evidence.join("10-missed-default-template.png"),
+    );
+    let encoded = r"%rule.action%|%conn.process%\n%node.hostname%\t\\literal";
+    let decoded = crate::desktop_notifications::missed::decode_input(encoded).unwrap();
+    fill(&mut cx, preferences, "preferences-missed-template", encoded);
+    click(&mut cx, preferences, "preferences-save");
+    control_ready(&mut cx, preferences, "preferences-save");
+    assert_eq!(
+        crate::preferences::Store::open(&config.database)
+            .unwrap()
+            .snapshot()
+            .missed_popup_template,
+        decoded
+    );
+    capture(
+        &mut cx,
+        preferences,
+        &evidence.join("11-missed-custom-preview.png"),
+    );
+    click(&mut cx, preferences, "preferences-close");
+    let preferences = cx
+        .update(|cx| super::preferences_view::open(backend.handle.clone(), cx))
+        .unwrap();
+    settle(&mut cx);
+    cx.update_window(preferences, |_, w, cx| {
+        w.within("preferences-tabs").click(3usize, cx)
+    })
+    .unwrap();
+    settle(&mut cx);
+    click(&mut cx, preferences, "preferences-missed-template");
+    cx.update_window(preferences, |_, w, cx| {
+        w.press("ctrl-a", cx);
+        w.press("ctrl-c", cx);
+    })
+    .unwrap();
+    settle(&mut cx);
+    assert_eq!(
+        cx.update(|cx| cx.read_from_clipboard().unwrap().text().unwrap()),
+        crate::desktop_notifications::missed::encode_input(&decoded)
+    );
+    capture(
+        &mut cx,
+        preferences,
+        &evidence.join("12-missed-template-reopened.png"),
+    );
+    click(&mut cx, preferences, "preferences-missed-notifications");
+    click(&mut cx, preferences, "preferences-save");
+    control_ready(&mut cx, preferences, "preferences-save");
+    let muted = crate::preferences::Store::open(&config.database)
+        .unwrap()
+        .snapshot();
+    assert!(!muted.missed_popup_notifications);
+    assert_eq!(muted.missed_popup_template, decoded);
+    capture(
+        &mut cx,
+        preferences,
+        &evidence.join("13-missed-notices-muted.png"),
+    );
+    fill(
+        &mut cx,
+        preferences,
+        "preferences-missed-template",
+        r"unsupported\q",
+    );
+    click(&mut cx, preferences, "preferences-save");
+    control_ready(&mut cx, preferences, "preferences-save");
+    assert_eq!(
+        crate::preferences::Store::open(&config.database)
+            .unwrap()
+            .snapshot(),
+        muted,
+        "Malformed escape cannot publish staged preferences"
+    );
+    capture(
+        &mut cx,
+        preferences,
+        &evidence.join("14-missed-invalid-escape-refused.png"),
+    );
+    click(&mut cx, preferences, "preferences-missed-reset");
+    click(&mut cx, preferences, "preferences-save");
+    control_ready(&mut cx, preferences, "preferences-save");
+    let reset = crate::preferences::Store::open(&config.database)
+        .unwrap()
+        .snapshot();
+    assert!(
+        !reset.missed_popup_notifications,
+        "Message reset preserves the mute choice"
+    );
+    assert_eq!(
+        reset.missed_popup_template,
+        crate::desktop_notifications::missed::DEFAULT_TEMPLATE
+    );
+    capture(
+        &mut cx,
+        preferences,
+        &evidence.join("15-missed-default-reset.png"),
+    );
+    click(&mut cx, preferences, "preferences-missed-notifications");
+    click(&mut cx, preferences, "preferences-save");
+    control_ready(&mut cx, preferences, "preferences-save");
+    assert!(
+        crate::preferences::Store::open(&config.database)
+            .unwrap()
+            .snapshot()
+            .missed_popup_notifications
+    );
+    click(&mut cx, preferences, "preferences-close");
+    let mut asking = daemon.clone();
+    let request = runtime.spawn(async move {
+        asking
+            .ask_rule(protocol::Connection {
+                process_path: "/owned/missed-control-permission".into(),
+                dst_host: "missed-control.example".into(),
+                ..Default::default()
+            })
+            .await
+            .unwrap()
+            .into_inner()
+    });
+    settle(&mut cx);
+    let popup = cx.read_entity(&view, |v, _| v.prompt_window.unwrap());
+    cx.update_window(restored, |_, w, cx| {
+        assert!(view.update(cx, |v, _| v.should_close_dashboard(w)));
+        w.remove_window();
+    })
+    .unwrap();
+    settle(&mut cx);
+    actions
+        .try_send(crate::desktop_notifications::Target::Rules)
+        .unwrap();
+    settle(&mut cx);
+    let restored = cx.read_entity(&view, |v, _| {
+        assert!(v.screen == super::Screen::Rules);
+        v.main_window.unwrap()
+    });
+    assert_eq!(
+        backend.handle.prompts.snapshot().len(),
+        1,
+        "Opening rules from a missed-popup notice never answers another request"
+    );
+    capture(
+        &mut cx,
+        restored,
+        &evidence.join("16-missed-action-restores-rules.png"),
+    );
     click(&mut cx, popup, "deny-once");
     assert_eq!(runtime.block_on(request).unwrap().action, "deny");
     drop(daemon);
@@ -5129,10 +10219,594 @@ fn headless_desktop_notifications() {
     drop(cx);
     backend.join();
     assert!(!config.socket.exists());
-    std::fs::write(evidence.join("headless.json"),serde_json::to_vec_pretty(&serde_json::json!({"status":"passed","real_gpu":true,"scoped_socket_removed":true,"screenshots":["01-notifications-muted.png","02-notifications-enabled.png","03-notice-permission-hidden.png","04-alert-action-restored.png"],"proof_boundary":"Actual Kit toggle/save, independent file reopen, archive while muted, production close boundary and notification callback restoration, real gRPC permission answered by GPUI input. Notification callback is synthetic; private-bus worker tests prove transport separately. No host desktop banner proof."})).unwrap()).unwrap();
+    std::fs::write(evidence.join("headless.json"),serde_json::to_vec_pretty(&serde_json::json!({"status":"passed","real_gpu":true,"scoped_socket_removed":true,"screenshots":["01-notifications-muted.png","02-notifications-enabled.png","03-notice-permission-hidden.png","04-alert-action-restored.png","05-subscription-notice-settings.png","06-subscription-notice-stale-refused.png","07-subscription-notice-reloaded.png","08-subscription-notice-disabled.png","09-subscription-action-restored.png","10-missed-default-template.png","11-missed-custom-preview.png","12-missed-template-reopened.png","13-missed-notices-muted.png","14-missed-invalid-escape-refused.png","15-missed-default-reset.png","16-missed-action-restores-rules.png"],"proof_boundary":"Actual general and subscription Kit toggles/save/reopen, custom fields, Back preservation, external metadata stale refusal, reload and Ctrl+Enter, disable-clears-source messages, archive while generally muted, missed-popup tab/default/custom escaped message/save/reopen/mute/invalid-escape refusal/reset, production close boundary and distinct Alerts/Blocklists/Rules callback restoration, two real gRPC permissions answered by GPUI input. Notification callbacks are synthetic; owned HTTP worker, actual missed-timeout RPC and private-bus tests prove production outcomes and transport separately. No host desktop banner proof."})).unwrap()).unwrap();
     std::fs::write(evidence.join("actions.json"),serde_json::to_vec_pretty(&["Disable desktop notifications through actual checkbox and Save; independently reopen preferences and retain SHOW_ALERT","Enable and save; close preferences and retain dashboard through production close boundary","Deliver real AskRule while dashboard absent; notification callback restores Alerts without answering","Deny once through actual GPUI input; require real reply and owned cleanup"]).unwrap()).unwrap();
 }
 
+#[test]
+fn headless_live_table() {
+    use crate::live::presentation::{self, Field};
+    use gpui::InputEvent as _;
+    fn control(cx: &mut HeadlessAppContext, w: AnyWindowHandle, id: impl Into<gpui::ElementId>) {
+        let id = id.into();
+        let close = matches!(&id,gpui::ElementId::Name(n) if n.as_ref()=="live-tools-close");
+        if !close {
+            for _ in 0..48 {
+                let delta = cx
+                    .update_window(w, |_, w, cx| {
+                        w.render_frame(cx);
+                        let body = w.find("live-tools-scroll").bounds();
+                        let target = w.find(id.clone()).bounds();
+                        if target.center().y < body.top() + px(6.) {
+                            Some(120.)
+                        } else if target.center().y > body.bottom() - px(6.) {
+                            Some(-120.)
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap();
+                let Some(delta) = delta else { break };
+                cx.update_window(w, |_, w, cx| {
+                    let position = w.find("live-tools-scroll").bounds().center();
+                    w.dispatch_event(
+                        gpui::MouseMoveEvent {
+                            position,
+                            pressed_button: None,
+                            modifiers: Default::default(),
+                        }
+                        .to_platform_input(),
+                        cx,
+                    );
+                    w.render_frame(cx);
+                    w.dispatch_event(
+                        gpui::ScrollWheelEvent {
+                            position,
+                            delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.), px(delta))),
+                            ..Default::default()
+                        }
+                        .to_platform_input(),
+                        cx,
+                    );
+                    w.render_frame(cx);
+                })
+                .unwrap();
+                settle(cx);
+            }
+        }
+        cx.update_window(w, |_, w, cx| w.click(id, cx)).unwrap();
+        settle(cx);
+    }
+    fn input(
+        cx: &mut HeadlessAppContext,
+        w: AnyWindowHandle,
+        id: impl Into<gpui::ElementId>,
+        text: &str,
+    ) {
+        let id = id.into();
+        control(cx, w, id.clone());
+        cx.update_window(w, |_, w, cx| {
+            w.press("ctrl-a", cx);
+            w.input(text, cx)
+        })
+        .unwrap();
+        settle(cx);
+    }
+    fn open(
+        cx: &mut HeadlessAppContext,
+        main: AnyWindowHandle,
+        id: &'static str,
+    ) -> AnyWindowHandle {
+        let before = cx.update(|cx| cx.windows());
+        click(cx, main, id);
+        settle(cx);
+        cx.update(|cx| {
+            cx.windows()
+                .into_iter()
+                .find(|w| !before.contains(w))
+                .unwrap()
+        })
+    }
+    fn mark(cx: &mut HeadlessAppContext, w: AnyWindowHandle, index: usize, shift: bool) {
+        cx.update_window(w, |_, w, cx| {
+            w.render_frame(cx);
+            let target = w.find(("live-mark", index as u64));
+            assert!(target.visible());
+            let position = target.bounds().center();
+            let modifiers = gpui::Modifiers {
+                shift,
+                ..Default::default()
+            };
+            w.dispatch_event(
+                gpui::MouseMoveEvent {
+                    position,
+                    pressed_button: None,
+                    modifiers,
+                }
+                .to_platform_input(),
+                cx,
+            );
+            w.render_frame(cx);
+            w.dispatch_event(
+                gpui::MouseDownEvent {
+                    button: gpui::MouseButton::Left,
+                    position,
+                    modifiers,
+                    click_count: 1,
+                    first_mouse: false,
+                }
+                .to_platform_input(),
+                cx,
+            );
+            w.render_frame(cx);
+            w.dispatch_event(
+                gpui::MouseUpEvent {
+                    button: gpui::MouseButton::Left,
+                    position,
+                    modifiers,
+                    click_count: 1,
+                }
+                .to_platform_input(),
+                cx,
+            );
+            w.render_frame(cx);
+        })
+        .unwrap();
+        settle(cx);
+    }
+    fn data(extra: bool) -> String {
+        let ports = (1..=650).chain(extra.then_some(999));
+        serde_json::json!({"Table":ports.map(|port|serde_json::json!({"PID":42,"Proto":6,"Iface":"owned0","Future":18446744073709551615_u64,"Socket":{"ID":{"Source":"192.0.2.1","Destination":"198.51.100.2","SourcePort":10000+port,"DestinationPort":port,"Cookie":[1,2]},"Family":2,"State":1,"UID":1000,"INode":5000+port,"RQueue":7,"WQueue":9}})).collect::<Vec<_>>(),"Processes":{"42":{"Path":"/owned/live-table","Comm":"owned-live"}}}).to_string()
+    }
+    fn file(cx: &mut HeadlessAppContext, p: &Path) {
+        for _ in 0..60 {
+            settle(cx);
+            if p.exists() {
+                return;
+            }
+        }
+        panic!("Missing captured Live output {}", p.display());
+    }
+    let evidence = evidence();
+    let dir = tempfile::tempdir().unwrap();
+    let config = options(dir.path());
+    let backend = Backend::start(config.clone()).unwrap();
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap();
+    let (daemon, replies, mut commands) = runtime.block_on(async {
+        use hyper_util::rt::TokioIo;
+        let socket = config.socket.clone();
+        let channel = tonic::transport::Endpoint::try_from("http://localhost")
+            .unwrap()
+            .connect_with_connector(tower::service_fn(move |_| {
+                let socket = socket.clone();
+                async move {
+                    tokio::net::UnixStream::connect(socket)
+                        .await
+                        .map(TokioIo::new)
+                }
+            }))
+            .await
+            .unwrap();
+        let mut daemon = protocol::ui_client::UiClient::new(channel);
+        daemon
+            .subscribe(protocol::ClientConfig {
+                name: "live-table-fixture".into(),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        let (tx, rx) = tokio::sync::mpsc::channel(8);
+        let commands = daemon
+            .notifications(tokio_stream::wrappers::ReceiverStream::new(rx))
+            .await
+            .unwrap()
+            .into_inner();
+        (daemon, tx, commands)
+    });
+    let mut cx = context();
+    let mut view = None;
+    let main = cx
+        .open_window(size(px(1320.), px(980.)), |w, cx| {
+            let v = cx.new(|cx| Dashboard::new(backend.handle.clone(), config.clone(), w, cx));
+            view = Some(v.clone());
+            cx.new(|cx| gpui_kit::base::Root::new(v, w, cx))
+        })
+        .unwrap();
+    let main: AnyWindowHandle = main.into();
+    let view = view.unwrap();
+    cx.update_window(main, |_, w, cx| w.press("ctrl-6", cx))
+        .unwrap();
+    for _ in 0..60 {
+        settle(&mut cx);
+        if backend.handle.live_presentation.snapshot().ready {
+            break;
+        }
+    }
+    let tools = open(&mut cx, main, "live-view-tools");
+    for index in 0..13u64 {
+        if ![6, 9].contains(&index) {
+            control(&mut cx, tools, ("live-column", index));
+        }
+    }
+    input(&mut cx, tools, ("live-width", 6u64), "333");
+    input(&mut cx, tools, ("live-width", 9u64), "111");
+    control(&mut cx, tools, "live-view-save");
+    for _ in 0..60 {
+        settle(&mut cx);
+        if backend
+            .handle
+            .live_presentation
+            .snapshot()
+            .settings
+            .columns
+            .len()
+            == 2
+        {
+            break;
+        }
+    }
+    let saved = backend.handle.live_presentation.snapshot();
+    assert_eq!(
+        saved.settings.columns,
+        [
+            presentation::Column {
+                field: Field::DestinationPort,
+                width: 333
+            },
+            presentation::Column {
+                field: Field::Pid,
+                width: 111
+            }
+        ]
+    );
+    assert!(!cx.read_entity(&view, |v, _| v.live.snapshot.running));
+    capture(
+        &mut cx,
+        tools,
+        &evidence.join("01-live-saved-two-columns.png"),
+    );
+    drop(saved);
+    control(&mut cx, tools, "live-tools-close");
+    click(&mut cx, main, "live-start");
+    let start = runtime.block_on(async {
+        tokio::time::timeout(Duration::from_secs(5), commands.message())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap()
+    });
+    assert!(
+        start.id > 10_000,
+        "OpenSnitch task stream requires an ID above10000"
+    );
+    assert_eq!(start.r#type, 13);
+    let spec: serde_json::Value = serde_json::from_str(&start.data).unwrap();
+    assert_eq!(spec["name"], "sockets-monitor");
+    let mut permission = daemon.clone();
+    let ask = runtime.spawn(async move {
+        permission
+            .ask_rule(protocol::Connection {
+                process_path: "/owned/live-table-permission".into(),
+                ..Default::default()
+            })
+            .await
+            .unwrap()
+            .into_inner()
+    });
+    let mut popup = None;
+    for _ in 0..60 {
+        settle(&mut cx);
+        popup = cx.read_entity(&view, |v, _| v.prompt_window);
+        if popup.is_some() {
+            break;
+        }
+    }
+    let popup = popup.unwrap();
+    capture(
+        &mut cx,
+        popup,
+        &evidence.join("02-live-held-update-permission.png"),
+    );
+    click(&mut cx, popup, "deny-once");
+    assert_eq!(runtime.block_on(ask).unwrap().action, "deny");
+    runtime
+        .block_on(replies.send(protocol::NotificationReply {
+            id: start.id,
+            data: data(false),
+            ..Default::default()
+        }))
+        .unwrap();
+    for _ in 0..60 {
+        settle(&mut cx);
+        if cx.read_entity(&view,|v,_|matches!(&v.live.parsed,Some(super::live_view::View::Sockets{data,..})if data.rows.len()==650)){break}
+    }
+    let head_width = cx
+        .update_window(main, |_, w, cx| {
+            w.render_frame(cx);
+            f32::from(
+                w.within("table")
+                    .find(("col-header", 0usize))
+                    .bounds()
+                    .size
+                    .width,
+            )
+        })
+        .unwrap();
+    assert_eq!(head_width, 333.);
+    // Pinned Kit cycles Default -> Descending -> Ascending -> Default.
+    // Two actual clicks reach Ascending from the initially unsorted header.
+    for _ in 0..2 {
+        cx.update_window(main, |_, w, cx| {
+            w.within("table").click(("icon-sort", 0usize), cx)
+        })
+        .unwrap();
+        settle(&mut cx);
+    }
+    assert_eq!(
+        cx.read_entity(&view, |v, _| {
+            let Some(super::live_view::View::Sockets { data, matches }) = &v.live.parsed else {
+                panic!()
+            };
+            Field::DestinationPort.text(&data.rows[matches[0]])
+        }),
+        "1"
+    );
+    capture(
+        &mut cx,
+        main,
+        &evidence.join("03-live-global-numeric-ascending.png"),
+    );
+    // Kit emits Default after Ascending. The always-sorted Live adapter must
+    // turn this into Descending, rather than refresh back to stuck Ascending.
+    cx.update_window(main, |_, w, cx| {
+        w.within("table").click(("icon-sort", 0usize), cx)
+    })
+    .unwrap();
+    settle(&mut cx);
+    assert_eq!(
+        cx.read_entity(&view, |v, _| {
+            let Some(super::live_view::View::Sockets { data, matches }) = &v.live.parsed else {
+                panic!()
+            };
+            Field::DestinationPort.text(&data.rows[matches[0]])
+        }),
+        "650"
+    );
+    capture(
+        &mut cx,
+        main,
+        &evidence.join("04-live-global-numeric-descending.png"),
+    );
+    mark(&mut cx, main, 649, false);
+    click(&mut cx, main, "live-next");
+    settle(&mut cx);
+    mark(&mut cx, main, 449, true);
+    capture(
+        &mut cx,
+        main,
+        &evidence.join("05-live-cross-page-range.png"),
+    );
+    let output = open(&mut cx, main, "live-selected-output");
+    let selected_csv = evidence.join("selected-live.csv");
+    input(
+        &mut cx,
+        output,
+        "live-output-path",
+        selected_csv.to_str().unwrap(),
+    );
+    control(&mut cx, output, "live-output-save");
+    file(&mut cx, &selected_csv);
+    let csv = std::fs::read_to_string(&selected_csv).unwrap();
+    assert_eq!(csv.lines().count(), 202);
+    assert_eq!(csv.lines().next().unwrap().split(',').count(), 2);
+    assert!(csv.lines().nth(1).unwrap().starts_with("\"650\""));
+    assert!(csv.lines().last().unwrap().starts_with("\"450\""));
+    control(&mut cx, output, "live-output-copy");
+    for _ in 0..60 {
+        settle(&mut cx);
+        if cx
+            .update(|cx| cx.read_from_clipboard().and_then(|i| i.text()))
+            .as_deref()
+            == Some(csv.as_str())
+        {
+            break;
+        }
+    }
+    assert_eq!(
+        cx.update(|cx| cx.read_from_clipboard().unwrap().text().unwrap()),
+        csv
+    );
+    capture(
+        &mut cx,
+        output,
+        &evidence.join("06-live-selected-csv-copy.png"),
+    );
+    runtime
+        .block_on(replies.send(protocol::NotificationReply {
+            id: start.id,
+            data: data(true),
+            ..Default::default()
+        }))
+        .unwrap();
+    for _ in 0..60 {
+        settle(&mut cx);
+        if cx.read_entity(&view,|v,_|matches!(&v.live.parsed,Some(super::live_view::View::Sockets{data,..})if data.rows.len()==651)){break}
+    }
+    let windows = cx.update(|cx| cx.windows());
+    click(&mut cx, main, "live-selected-output");
+    settle(&mut cx);
+    assert_eq!(
+        cx.update(|cx| cx.windows()),
+        windows,
+        "New parsed snapshot clears marks; disabled selected-output leaves captured window intact"
+    );
+    control(&mut cx, output, "live-output-copy");
+    settle(&mut cx);
+    assert_eq!(
+        cx.update(|cx| cx.read_from_clipboard().unwrap().text().unwrap()),
+        csv
+    );
+    control(&mut cx, output, "live-output-format");
+    cx.update_window(output, |_, w, cx| {
+        w.press("down", cx);
+        w.press("enter", cx)
+    })
+    .unwrap();
+    settle(&mut cx);
+    let selected_json = evidence.join("selected-live.json");
+    input(
+        &mut cx,
+        output,
+        "live-output-path",
+        selected_json.to_str().unwrap(),
+    );
+    control(&mut cx, output, "live-output-save");
+    file(&mut cx, &selected_json);
+    let json: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&selected_json).unwrap()).unwrap();
+    assert_eq!(json.as_array().unwrap().len(), 201);
+    assert!(json.as_array().unwrap().iter().all(|r| {
+        r["Socket"]["ID"]["DestinationPort"].as_u64().unwrap() >= 450
+            && r["Socket"]["ID"]["DestinationPort"] != 999
+    }));
+    assert_eq!(json[0]["Future"].as_u64(), Some(u64::MAX));
+    capture(
+        &mut cx,
+        output,
+        &evidence.join("07-live-captured-json-after-new-update.png"),
+    );
+    let all = open(&mut cx, main, "live-all-output");
+    assert!(!cx.update(|cx| cx.windows()).contains(&output));
+    let all_csv = evidence.join("all-live.csv");
+    input(&mut cx, all, "live-output-path", all_csv.to_str().unwrap());
+    control(&mut cx, all, "live-output-save");
+    file(&mut cx, &all_csv);
+    let all_text = std::fs::read_to_string(&all_csv).unwrap();
+    assert_eq!(all_text.lines().count(), 652);
+    assert!(all_text.contains("\"999\""));
+    capture(
+        &mut cx,
+        all,
+        &evidence.join("08-live-new-capture-all-output.png"),
+    );
+    control(&mut cx, all, "live-tools-close");
+    click(&mut cx, main, "live-pause");
+    let stop = runtime.block_on(async {
+        tokio::time::timeout(Duration::from_secs(5), commands.message())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap()
+    });
+    assert_eq!(stop.r#type, 14);
+    assert_eq!(stop.data, start.data);
+    let tools = open(&mut cx, main, "live-view-tools");
+    input(&mut cx, tools, ("live-width", 6u64), "444");
+    let path = presentation::path_for(&config.database);
+    let revision = backend.handle.live_presentation.snapshot().revision.clone();
+    let mut external = b"\n".to_vec();
+    external.extend(std::fs::read(&path).unwrap());
+    std::fs::write(&path, &external).unwrap();
+    control(&mut cx, tools, "live-view-save");
+    assert_eq!(std::fs::read(&path).unwrap(), external);
+    assert_eq!(
+        backend.handle.live_presentation.snapshot().revision,
+        revision
+    );
+    capture(
+        &mut cx,
+        tools,
+        &evidence.join("09-live-stale-settings-refused.png"),
+    );
+    control(&mut cx, tools, "live-tools-close");
+    click(&mut cx, main, "live-view-reload");
+    for _ in 0..60 {
+        settle(&mut cx);
+        if backend.handle.live_presentation.snapshot().revision != revision {
+            break;
+        }
+    }
+    assert_ne!(
+        backend.handle.live_presentation.snapshot().revision,
+        revision
+    );
+    std::fs::write(evidence.join("live-table-proof.json"),serde_json::to_vec_pretty(&serde_json::json!({"initial_rows":650,"new_rows":651,"selected_range_rows":201,"selected_columns":["destination-port","pid"],"actual_first_column_logical_width":head_width,"csv_clipboard_exact":true,"json_unknown_u64":u64::MAX,"new_capture_contains_999_old_capture_excludes_it":true,"commands":[{"type":start.r#type,"data":start.data},{"type":stop.r#type,"data":stop.data}]})).unwrap()).unwrap();
+    drop(view);
+    drop(cx);
+    drop(daemon);
+    drop(replies);
+    drop(commands);
+    backend.join();
+    assert!(!config.socket.exists());
+    let backend = Backend::start(config.clone()).unwrap();
+    let mut cx = context();
+    let mut reopened = None;
+    let main = cx
+        .open_window(size(px(1320.), px(980.)), |w, cx| {
+            let v = cx.new(|cx| Dashboard::new(backend.handle.clone(), config.clone(), w, cx));
+            reopened = Some(v.clone());
+            cx.new(|cx| gpui_kit::base::Root::new(v, w, cx))
+        })
+        .unwrap();
+    let main: AnyWindowHandle = main.into();
+    let view = reopened.unwrap();
+    cx.update_window(main, |_, w, cx| w.press("ctrl-6", cx))
+        .unwrap();
+    for _ in 0..60 {
+        settle(&mut cx);
+        if backend.handle.live_presentation.snapshot().ready {
+            break;
+        }
+    }
+    assert!(!cx.read_entity(&view, |v, _| v.live.snapshot.running));
+    let saved = backend.handle.live_presentation.snapshot();
+    assert_eq!(
+        saved.settings.columns,
+        [
+            presentation::Column {
+                field: Field::DestinationPort,
+                width: 333
+            },
+            presentation::Column {
+                field: Field::Pid,
+                width: 111
+            }
+        ]
+    );
+    drop(saved);
+    let tools = open(&mut cx, main, "live-view-tools");
+    control(&mut cx, tools, ("live-width", 6u64));
+    assert_eq!(
+        cx.update_window(tools, |_, w, _| w
+            .find(("live-width", 6u64))
+            .value()
+            .unwrap()
+            .to_string())
+            .unwrap(),
+        "333"
+    );
+    capture(
+        &mut cx,
+        tools,
+        &evidence.join("10-live-fresh-backend-saved-stopped.png"),
+    );
+    drop(view);
+    drop(cx);
+    backend.join();
+    drop(runtime);
+    assert!(!config.socket.exists());
+    let screenshots = std::fs::read_dir(&evidence)
+        .unwrap()
+        .filter_map(Result::ok)
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .filter(|n| n.ends_with(".png"))
+        .collect::<Vec<_>>();
+    std::fs::write(evidence.join("headless.json"),serde_json::to_vec_pretty(&serde_json::json!({"status":"passed","real_gpu":true,"scoped_socket_removed":true,"screenshots":screenshots,"proof_boundary":"Actual Kit numeric global sort, pointer/Shift acrosspages, selected/full capturedCSV/rawJSON and clipboard, acceptedupdate isolation, save/stale/reload and freshbackend/GPUI stoppedrestore on controlled650/651ownedRPC socket fixture. No host kernel/daemon/policy, OS-process restart, compositor/package/RSS proof."})).unwrap()).unwrap();
+}
 #[test]
 fn headless_live_tasks() {
     use super::live_view::View;
@@ -5187,6 +10861,7 @@ fn headless_live_tasks() {
   eprintln!("Live fixture command {}: {}",command.r#type,command.data);log.lock().unwrap().push(command.clone());
  if command.r#type==14 {if let Some(task)=running.remove(&command.data){task.abort();}continue;}
  if command.r#type!=13{continue;}
+ assert!(command.id > 10_000, "OpenSnitch routes low task IDs to alerts instead of live replies");
   let doc:serde_json::Value=serde_json::from_str(&command.data).unwrap();let name=doc["name"].as_str().unwrap();if name=="node-monitor"{continue;}
   let data=if name=="sockets-monitor"{
    let table=(0..225).filter(|i|doc["data"]["proto"]==0||doc["data"]["proto"]==if i%2==0{6}else{17}).filter(|i|doc["data"]["family"]==0||doc["data"]["family"]==if i%2==0{10}else{2}).map(|i|serde_json::json!({"PID":42,"Proto":if i%2==0{6}else{17},"Iface":"eth0","Socket":{"ID":{"Source":if i%2==0{"2001:db8::1"}else{"192.0.2.1"},"Destination":if i%2==0{"2001:db8::2"}else{"198.51.100.2"},"SourcePort":30000+i,"DestinationPort":443,"Cookie":[1,2]},"Family":if i%2==0{10}else{2},"State":1,"UID":1000,"INode":5000+i,"RQueue":7,"WQueue":9}})).collect::<Vec<_>>();
@@ -5259,7 +10934,7 @@ fn headless_live_tasks() {
     click(&mut cx, window, "live-pause");
     settle(&mut cx);
     cx.update_window(window, |_, window, cx| {
-        window.click(("live-socket", 0u64), cx)
+        window.within("table").click(("row", 0usize), cx)
     })
     .unwrap();
     settle(&mut cx);
@@ -5513,6 +11188,19 @@ fn headless_firewall_forms() {
     let evidence = evidence();
     let dir = tempfile::tempdir().unwrap();
     let config = options(dir.path());
+    let service_path = dir.path().join("owned-services");
+    let interface_path = dir.path().join("owned-interfaces");
+    std::fs::create_dir(&interface_path).unwrap();
+    std::fs::create_dir(interface_path.join("owned0")).unwrap();
+    std::fs::write(
+        &service_path,
+        b"owned-web 4443/tcp ownedalias\nowned-web 5553/udp ownedalias\n",
+    )
+    .unwrap();
+    let _discovery = crate::firewall::suggestions::discovery_fixture(
+        service_path.clone(),
+        interface_path.clone(),
+    );
     let backend = Backend::start(config.clone()).unwrap();
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
@@ -5766,6 +11454,178 @@ fn headless_firewall_forms() {
     fill(&mut cx, editor, "fw-statement-op", "!=");
     fill(&mut cx, editor, "fw-statement-op", "==");
     click(&mut cx, editor, "fw-statement-save");
+    click(&mut cx, editor, "fw-expression-guided");
+    settle(&mut cx);
+    fill(&mut cx, editor, "fw-helper-value", "65536");
+    click(&mut cx, editor, "fw-helper-keep");
+    settle(&mut cx);
+    assert!(
+        cx.update_window(editor, |_, w, _| w.find("fw-helper-keep").visible())
+            .unwrap()
+    );
+    capture(
+        &mut cx,
+        editor,
+        &evidence.join("14-guided-port-refused.png"),
+    );
+    pick(&mut cx, editor, "fw-helper-kind", "Destination port");
+    pick(&mut cx, editor, "fw-helper-option", "tcp,udp");
+    pick(&mut cx, editor, "fw-helper-operator", "!=");
+    fill(&mut cx, editor, "fw-helper-value", "443,8443");
+    capture(
+        &mut cx,
+        editor,
+        &evidence.join("15-guided-dual-protocol.png"),
+    );
+    cx.update_window(editor, |_, w, cx| w.press("ctrl-enter", cx))
+        .unwrap();
+    settle(&mut cx);
+    click(&mut cx, editor, "fw-expression-guided");
+    settle(&mut cx);
+    pick(&mut cx, editor, "fw-helper-kind", "Destination address");
+    pick(&mut cx, editor, "fw-helper-option", "ip6");
+    fill(&mut cx, editor, "fw-helper-value", "2001:db8::/126");
+    capture(&mut cx, editor, &evidence.join("16-guided-ipv6-cidr.png"));
+    click(&mut cx, editor, "fw-helper-keep");
+    settle(&mut cx);
+    click(&mut cx, editor, "fw-expression-guided");
+    settle(&mut cx);
+    pick(&mut cx, editor, "fw-helper-kind", "Named counter");
+    fill(
+        &mut cx,
+        editor,
+        "fw-helper-value",
+        "cancelled-guided-counter",
+    );
+    click(&mut cx, editor, "fw-helper-cancel");
+    click(&mut cx, editor, "fw-expression-guided");
+    settle(&mut cx);
+    pick(&mut cx, editor, "fw-helper-option", "tcp,udp");
+    fill(&mut cx, editor, "fw-helper-value", "ownedalias");
+    click(&mut cx, editor, "fw-helper-keep");
+    settle(&mut cx);
+    assert!(
+        cx.update_window(editor, |_, w, _| w.try_find("fw-helper-value").is_some())
+            .unwrap(),
+        "Protocol-ambiguous service alias must retain helper"
+    );
+    capture(
+        &mut cx,
+        editor,
+        &evidence.join("19-service-protocol-ambiguity-refused.png"),
+    );
+    pick(&mut cx, editor, "fw-helper-service", "owned-web — 5553/udp");
+    click(&mut cx, editor, "fw-helper-use-service");
+    settle(&mut cx);
+    assert_eq!(
+        cx.update_window(editor, |_, w, _| w
+            .find("fw-helper-value")
+            .value()
+            .unwrap()
+            .to_string())
+            .unwrap(),
+        "5553"
+    );
+    capture(
+        &mut cx,
+        editor,
+        &evidence.join("20-service-exact-port-protocol.png"),
+    );
+    click(&mut cx, editor, "fw-helper-keep");
+    settle(&mut cx);
+    click(&mut cx, editor, "fw-expression-guided");
+    settle(&mut cx);
+    pick(&mut cx, editor, "fw-helper-kind", "Input interface");
+    pick(&mut cx, editor, "fw-helper-interface", "owned0");
+    click(&mut cx, editor, "fw-helper-use-interface");
+    settle(&mut cx);
+    assert_eq!(
+        cx.update_window(editor, |_, w, _| w
+            .find("fw-helper-value")
+            .value()
+            .unwrap()
+            .to_string())
+            .unwrap(),
+        "owned0"
+    );
+    capture(
+        &mut cx,
+        editor,
+        &evidence.join("21-local-interface-suggestion.png"),
+    );
+    click(&mut cx, editor, "fw-helper-keep");
+    settle(&mut cx);
+    click(&mut cx, editor, "fw-expression-guided");
+    settle(&mut cx);
+    fill(&mut cx, editor, "fw-helper-value", "1234");
+    std::fs::write(&service_path, b"owned-new 9443/tcp\n").unwrap();
+    click(&mut cx, editor, "fw-helper-reload-suggestions");
+    settle(&mut cx);
+    assert_eq!(
+        cx.update_window(editor, |_, w, _| w
+            .find("fw-helper-value")
+            .value()
+            .unwrap()
+            .to_string())
+            .unwrap(),
+        "1234",
+        "Reload must preserve manually staged value"
+    );
+    for _ in 0..10 {
+        pick(&mut cx, editor, "fw-helper-service", "owned-new — 9443/tcp");
+        if cx
+            .update_window(editor, |_, w, _| {
+                w.find("fw-helper-use-service").disabled() != Some(true)
+            })
+            .unwrap()
+        {
+            break;
+        }
+        settle(&mut cx);
+    }
+    click(&mut cx, editor, "fw-helper-use-service");
+    settle(&mut cx);
+    assert_eq!(
+        cx.update_window(editor, |_, w, _| w
+            .find("fw-helper-value")
+            .value()
+            .unwrap()
+            .to_string())
+            .unwrap(),
+        "9443"
+    );
+    capture(
+        &mut cx,
+        editor,
+        &evidence.join("22-reloaded-owned-suggestions.png"),
+    );
+    click(&mut cx, editor, "fw-helper-cancel");
+    rule_tab(&mut cx, 0);
+    click(&mut cx, editor, "fw-verdict-guided");
+    settle(&mut cx);
+    pick(&mut cx, editor, "fw-helper-verdict", "snat");
+    fill(&mut cx, editor, "fw-helper-verdict-value", "192.0.2.1:53");
+    click(&mut cx, editor, "fw-helper-keep");
+    settle(&mut cx);
+    assert!(
+        cx.update_window(editor, |_, w, _| w.find("fw-helper-keep").visible())
+            .unwrap(),
+        "SNAT refuses the output hook and retains its helper"
+    );
+    capture(
+        &mut cx,
+        editor,
+        &evidence.join("17-guided-verdict-hook-refused.png"),
+    );
+    click(&mut cx, editor, "fw-helper-cancel");
+    click(&mut cx, editor, "fw-verdict-guided");
+    settle(&mut cx);
+    pick(&mut cx, editor, "fw-helper-verdict", "queue");
+    fill(&mut cx, editor, "fw-helper-verdict-value", "12");
+    click(&mut cx, editor, "fw-helper-keep");
+    settle(&mut cx);
+    capture(&mut cx, editor, &evidence.join("18-guided-queue-draft.png"));
+    rule_tab(&mut cx, 1);
     click(&mut cx, editor, "fw-form-save");
     settle(&mut cx);
     let doc = copy(&mut cx);
@@ -5773,7 +11633,11 @@ fn headless_firewall_forms() {
     assert_eq!(native.uuid, "native-owned-rule");
     assert_eq!(native.position, u64::MAX);
     assert!(!native.enabled);
-    assert_eq!(native.expressions.len(), 1);
+    assert_eq!(
+        native.expressions.len(),
+        5,
+        "Cancelled helper cannot add an expression"
+    );
     assert_eq!(
         native.expressions[0].statement.as_ref().unwrap().values[0].value,
         "8443"
@@ -5884,6 +11748,59 @@ fn headless_firewall_forms() {
         }],
         ..Default::default()
     });
+    let guided_rule = &mut expected.system_rules[0].chains[1].rules[0];
+    guided_rule.target = "queue".into();
+    guided_rule.target_parameters = "num 12".into();
+    guided_rule.expressions.extend([
+        protocol::Expressions {
+            statement: Some(protocol::Statement {
+                name: "meta".into(),
+                op: "!=".into(),
+                values: vec![
+                    protocol::StatementValues {
+                        key: "l4proto".into(),
+                        value: "tcp,udp".into(),
+                    },
+                    protocol::StatementValues {
+                        key: "dport".into(),
+                        value: "443,8443".into(),
+                    },
+                ],
+            }),
+        },
+        protocol::Expressions {
+            statement: Some(protocol::Statement {
+                name: "ip6".into(),
+                op: "==".into(),
+                values: vec![protocol::StatementValues {
+                    key: "daddr".into(),
+                    value: "2001:db8::-2001:db8::3".into(),
+                }],
+            }),
+        },
+    ]);
+    guided_rule.expressions.extend([
+        protocol::Expressions {
+            statement: Some(protocol::Statement {
+                name: "udp".into(),
+                op: "==".into(),
+                values: vec![protocol::StatementValues {
+                    key: "dport".into(),
+                    value: "5553".into(),
+                }],
+            }),
+        },
+        protocol::Expressions {
+            statement: Some(protocol::Statement {
+                name: "iifname".into(),
+                op: "==".into(),
+                values: vec![protocol::StatementValues {
+                    key: "owned0".into(),
+                    value: String::new(),
+                }],
+            }),
+        },
+    ]);
     assert_eq!(protocol::SysFirewall::from(draft), expected);
     assert_eq!(
         firewall::read(&config.database, "forms-fixture")
@@ -5991,7 +11908,7 @@ fn headless_firewall_forms() {
     drop(cx);
     backend.join();
     assert!(!config.socket.exists());
-    std::fs::write(evidence.join("headless.json"),serde_json::to_vec_pretty(&serde_json::json!({"status":"passed","real_gpu":true,"scoped_socket_removed":true,"screenshots":["01-chain-form.png","02-created-chain.png","03-value-budget-rejected.png","04-invalid-statement.png","05-statement-values.png","06-created-rule.png","07-duplicate-and-order.png","08-removal-review.png","09-staged-forms.png","10-complete-review.png","11-permission-under-form-ack.png","12-accepted-forms.png","13-stale-form-kept-locally.png"],"proof_boundary":"Actual native Kit chain/rule/expression/value forms, invalid/over-budget preservation, local staging, duplicate/order/toggle/removal and cancellation, exact full gRPC snapshot, permission under held ACK and stale-form local recovery after reconnect. Near-cap synthetic wire value; no real firewall enforcement or native compositor proof. This journey does not cover file/profile controls, built-in policy presets or enable/disable."})).unwrap()).unwrap();
+    std::fs::write(evidence.join("headless.json"),serde_json::to_vec_pretty(&serde_json::json!({"status":"passed","real_gpu":true,"scoped_socket_removed":true,"screenshots":["01-chain-form.png","02-created-chain.png","03-value-budget-rejected.png","04-invalid-statement.png","05-statement-values.png","06-created-rule.png","07-duplicate-and-order.png","08-removal-review.png","09-staged-forms.png","10-complete-review.png","11-permission-under-form-ack.png","12-accepted-forms.png","13-stale-form-kept-locally.png","14-guided-port-refused.png","15-guided-dual-protocol.png","16-guided-ipv6-cidr.png","17-guided-verdict-hook-refused.png","18-guided-queue-draft.png","19-service-protocol-ambiguity-refused.png","20-service-exact-port-protocol.png","21-local-interface-suggestion.png","22-reloaded-owned-suggestions.png"],"proof_boundary":"Actual native Kit chain/rule/expression/value forms and guided statement/verdict controls, invalid-port and hook refusal, exact dual-protocol/IPv6 CIDR/queue wire values, helper cancellation, actual bounded local service/interface suggestion pick/use/reload from owned discovery files, service protocol ambiguity refusal and exact numeric UDP/interface wire, invalid/over-budget preservation, local staging, duplicate/order/toggle/removal and cancellation, exact full gRPC snapshot, permission under held ACK and stale-form local recovery after reconnect. Near-cap synthetic wire value; no real firewall enforcement or native compositor proof. This journey does not cover file/profile controls, built-in policy presets or enable/disable."})).unwrap()).unwrap();
     std::fs::write(evidence.join("actions.json"),serde_json::to_vec_pretty(&["Edit chain metadata and policy; reject empty new chain then add output chain","Edit near-cap synthetic statement; reject additional 8 KiB value and cancel without changing draft","Create complete rule with uint64 max, target parameters, enabled checkbox and legacy fields","Add/edit/delete/reorder/cancel statements and values through bounded native controls","Toggle rule, cancel/keep duplicate, move it and cancel/confirm removal; create/remove temporary chain","Require no daemon command before global review; require exact full protobuf and independent permission under ACK","ACK persists accepted snapshot; reconnect during a form still allows local keep/copy without applying to replacement session"]).unwrap()).unwrap();
 }
 
@@ -8022,6 +13939,24 @@ fn headless_subscriptions() {
     wait(&mut cx, 2, "cancelled");
     release.store(true, Ordering::Relaxed);
     assert!(row(2).file.is_none());
+    // The worker can publish Cancelled before the dashboard consumes its reply.
+    // Wait for the actual Edit control to be enabled before dispatching input.
+    for _ in 0..20 {
+        settle(&mut cx);
+        if cx
+            .update_window(window, |_, window, _| {
+                window.find("subs-edit").disabled() != Some(true)
+            })
+            .unwrap()
+        {
+            break;
+        }
+    }
+    assert!(
+        cx.update_window(window, |_, window, _| window.find("subs-edit").disabled()
+            != Some(true))
+            .unwrap()
+    );
     capture(&mut cx, window, &evidence.join("08-cancelled-download.png"));
     click(&mut cx, window, "subs-edit");
     settle(&mut cx);
@@ -8817,6 +14752,29 @@ fn headless_subscriptions() {
     })
     .unwrap();
     settle(&mut cx);
+    // Preserve the prior physical limits while using explicit count/unit controls.
+    cx.update_window(window, |_, window, cx| {
+        window.click(("subs-bulk-unit", 1usize), cx)
+    })
+    .unwrap();
+    settle(&mut cx);
+    cx.update_window(window, |_, window, cx| window.input("seconds", cx))
+        .unwrap();
+    settle(&mut cx);
+    cx.update_window(window, |_, window, cx| window.press("enter", cx))
+        .unwrap();
+    settle(&mut cx);
+    cx.update_window(window, |_, window, cx| {
+        window.click(("subs-bulk-unit", 2usize), cx)
+    })
+    .unwrap();
+    settle(&mut cx);
+    cx.update_window(window, |_, window, cx| window.input("KB", cx))
+        .unwrap();
+    settle(&mut cx);
+    cx.update_window(window, |_, window, cx| window.press("enter", cx))
+        .unwrap();
+    settle(&mut cx);
     click(&mut cx, window, "subs-bulk-review");
     settle(&mut cx);
     assert_eq!(
@@ -8840,8 +14798,14 @@ fn headless_subscriptions() {
             (r.spec.interval, r.spec.timeout, r.spec.max_bytes),
             (
                 None,
-                Some(crate::subscriptions::limits::Override::Absolute(7)),
-                Some(crate::subscriptions::limits::Override::Absolute(2048))
+                crate::subscriptions::limits::Override::parts(
+                    Some(7),
+                    Some(crate::subscriptions::limits::Unit::Seconds)
+                ),
+                crate::subscriptions::limits::Override::parts(
+                    Some(2),
+                    Some(crate::subscriptions::limits::Unit::Kib)
+                )
             )
         );
     }
@@ -8855,6 +14819,156 @@ fn headless_subscriptions() {
         window,
         &evidence.join("39-selected-inherited-and-custom-limits.png"),
     );
+    // New unit-only/count-only edits use real Kit selectors, not view setters.
+    use crate::subscriptions::limits::{Override as Limit, Unit as LimitUnit};
+    let bulk_before = [row(1).spec, row(last).spec];
+    let Reply::Settings(default_revision, saved_defaults) = runtime
+        .block_on(
+            backend
+                .handle
+                .subscriptions
+                .request(Request::Settings)
+                .unwrap(),
+        )
+        .unwrap()
+        .unwrap()
+    else {
+        panic!()
+    };
+    click(&mut cx, window, "subs-bulk");
+    settle(&mut cx);
+    for index in 0..3usize {
+        cx.update_window(window, |_, window, cx| {
+            window.click(("subs-bulk-override", index), cx)
+        })
+        .unwrap();
+        settle(&mut cx);
+    }
+    for (index, label) in [(0usize, "minutes"), (2usize, "MB")] {
+        cx.update_window(window, |_, window, cx| {
+            window.click(("subs-bulk-unit", index), cx)
+        })
+        .unwrap();
+        settle(&mut cx);
+        cx.update_window(window, |_, window, cx| window.input(label, cx))
+            .unwrap();
+        settle(&mut cx);
+        cx.update_window(window, |_, window, cx| window.press("enter", cx))
+            .unwrap();
+        settle(&mut cx);
+    }
+    cx.update_window(window, |_, window, cx| {
+        window.click(("subs-bulk-limit", 1usize), cx);
+        window.input("3", cx);
+    })
+    .unwrap();
+    settle(&mut cx);
+    capture(
+        &mut cx,
+        window,
+        &evidence.join("57-bulk-independent-count-units.png"),
+    );
+    click(&mut cx, window, "subs-bulk-review");
+    settle(&mut cx);
+    assert_eq!(
+        cx.read_entity(&view, |v, _| v.subscriptions.bulk_state().1),
+        Some((2, 2))
+    );
+    capture(
+        &mut cx,
+        window,
+        &evidence.join("58-bulk-effective-review.png"),
+    );
+    click(&mut cx, window, "subs-bulk-back");
+    settle(&mut cx);
+    click(&mut cx, window, "subs-bulk-review");
+    settle(&mut cx);
+    let mut changed_defaults = saved_defaults.clone();
+    changed_defaults.interval = 120;
+    runtime
+        .block_on(
+            backend
+                .handle
+                .subscriptions
+                .request(Request::SaveSettings {
+                    revision: default_revision,
+                    settings: changed_defaults.clone(),
+                })
+                .unwrap(),
+        )
+        .unwrap()
+        .unwrap();
+    click(&mut cx, window, "subs-bulk-apply");
+    settle(&mut cx);
+    assert!(cx.read_entity(&view, |v, _| {
+        v.subscriptions
+            .bulk_state()
+            .2
+            .unwrap_or_default()
+            .contains("defaults changed since review")
+    }));
+    assert_eq!([row(1).spec, row(last).spec], bulk_before);
+    capture(
+        &mut cx,
+        window,
+        &evidence.join("59-bulk-stale-defaults-refused.png"),
+    );
+    click(&mut cx, window, "subs-bulk-rebuild");
+    settle(&mut cx);
+    capture(
+        &mut cx,
+        window,
+        &evidence.join("60-bulk-rebuilt-defaults.png"),
+    );
+    cx.update_window(window, |_, window, cx| window.press("ctrl-shift-enter", cx))
+        .unwrap();
+    settle(&mut cx);
+    for id in [1, last] {
+        let spec = row(id).spec;
+        assert_eq!(
+            (spec.interval, spec.timeout, spec.max_bytes),
+            (
+                Limit::parts(None, Some(LimitUnit::Minutes)),
+                Limit::parts(Some(3), None),
+                Limit::parts(None, Some(LimitUnit::Mib))
+            )
+        );
+        assert_eq!(
+            effective(&spec, &changed_defaults).unwrap(),
+            (7200, 3, 1048576)
+        );
+    }
+    capture(
+        &mut cx,
+        window,
+        &evidence.join("61-bulk-independent-limits-applied.png"),
+    );
+    let Reply::Settings(revision, _) = runtime
+        .block_on(
+            backend
+                .handle
+                .subscriptions
+                .request(Request::Settings)
+                .unwrap(),
+        )
+        .unwrap()
+        .unwrap()
+    else {
+        panic!()
+    };
+    runtime
+        .block_on(
+            backend
+                .handle
+                .subscriptions
+                .request(Request::SaveSettings {
+                    revision,
+                    settings: saved_defaults,
+                })
+                .unwrap(),
+        )
+        .unwrap()
+        .unwrap();
     assert!(
         runtime
             .block_on(async {
@@ -9408,7 +15522,7 @@ fn headless_subscriptions() {
     drop(cx);
     backend.join();
     assert!(!config.socket.exists());
-    std::fs::write(evidence.join("headless.json"),serde_json::to_vec_pretty(&serde_json::json!({"status":"passed","real_gpu":true,"scoped_socket_removed":true,"screenshots":["01-empty-subscriptions.png","02-invalid-add-preserved.png","03-downloaded-list.png","04-downloaded-text-preview.png","05-conditional-and-forced-refresh.png","06-download-error.png","07-permission-during-slow-http.png","08-cancelled-download.png","09-edited-list-format.png","10-filtered-empty-state.png","11-removed-data-retained.png","12-restored-status-history.png","13-subscription-second-page.png","14-last-page-removal-clamped.png","15-compatible-list-rule-review.png","16-list-rule-waits-for-confirmation.png","17-permission-under-list-rule.png","18-associated-list-rules.png","19-associated-rules-second-page.png","20-associated-rule-rejection.png","21-empty-rule-collections.png","22-format-membership-review.png","23-restored-membership-review.png","24-group-rule-review.png","25-group-associated-rules.png","26-group-membership-review.png","27-group-removed-from-collections.png","28-collection-second-page.png","29-collection-sorted-members.png","30-collection-filter-full-catalogue.png","31-associated-snapshot-changed.png","32-membership-back-preserves-draft.png","33-marks-across-pages.png","34-reviewed-group-batch.png","35-stale-bulk-refused.png","36-selected-group-batch-applied.png","37-all-matching-review-page-two.png","38-all-pages-disabled.png","39-selected-inherited-and-custom-limits.png","40-invalid-config-import.png","41-import-name-conflict.png","42-import-review-second-page.png","43-stale-import-refused.png","44-imported-configuration.png","45-selected-native-export.png","46-export-preserves-existing-file.png","47-filtered-opensnitch-export.png","48-cancel-import-restores-catalogue.png","49-renamed-identity-keeps-extra-fields.png","50-duplicate-display-names.png","51-duplicate-native-export-bindings.png","52-complete-catalogue-removal-review.png","53-retained-removals-second-page.png","54-cancel-complete-replacement.png","55-complete-catalogue-applied.png","56-restored-id-retains-data-and-metadata.png"],"proof_boundary":"Owned network namespace and HTTP fixture; actual native Kit empty/add/edit/default/format controls, conditional/forced refresh, error/cancel, independent AskRule during held HTTP, full-catalogue sort/search/paging/last-page-removal/preview/log/copy/remove/restore with durable files and metadata. Local list-rule review/cancel, exact held-ACK creation, confirmed-only associated-rule paging beyond a full catalogue page, nested-condition edit/rejection and independent permission input are included. Collection empty/search/paging/global sorts, exact UID-scoped group rule creation/inspection, stale snapshot refusal/refresh and reviewed membership changes are included. Bulk marking across pages, selected/group and whole-matching-set edits, immutable review/back/cancel, concurrent-edit refusal/rebuild, group-cap rejection, explicit inheritance/custom limits and no implicit policy commands are included. Actual import/export input adds invalid-file refusal, exact-name conflict/replacement, defaults, paged review/back/cancel, stale catalogue refusal/rebuild, canonical migration and retained data, selected native and full-filter OpenSnitch exports, existing-file preservation, unknown metadata and no paused downloads or policy commands. Per-ID opaque fields survive ordinary rename, duplicate display names, selected/native export, complete catalogue review/paging/cancel/apply and restoration of retained data. A real 84-source removal preserves old files and sends no policy commands. Notifications, retired-data cleanup, native compositor and resource proof remain separate."})).unwrap()).unwrap();
+    std::fs::write(evidence.join("headless.json"),serde_json::to_vec_pretty(&serde_json::json!({"status":"passed","real_gpu":true,"scoped_socket_removed":true,"screenshots":["01-empty-subscriptions.png","02-invalid-add-preserved.png","03-downloaded-list.png","04-downloaded-text-preview.png","05-conditional-and-forced-refresh.png","06-download-error.png","07-permission-during-slow-http.png","08-cancelled-download.png","09-edited-list-format.png","10-filtered-empty-state.png","11-removed-data-retained.png","12-restored-status-history.png","13-subscription-second-page.png","14-last-page-removal-clamped.png","15-compatible-list-rule-review.png","16-list-rule-waits-for-confirmation.png","17-permission-under-list-rule.png","18-associated-list-rules.png","19-associated-rules-second-page.png","20-associated-rule-rejection.png","21-empty-rule-collections.png","22-format-membership-review.png","23-restored-membership-review.png","24-group-rule-review.png","25-group-associated-rules.png","26-group-membership-review.png","27-group-removed-from-collections.png","28-collection-second-page.png","29-collection-sorted-members.png","30-collection-filter-full-catalogue.png","31-associated-snapshot-changed.png","32-membership-back-preserves-draft.png","33-marks-across-pages.png","34-reviewed-group-batch.png","35-stale-bulk-refused.png","36-selected-group-batch-applied.png","37-all-matching-review-page-two.png","38-all-pages-disabled.png","39-selected-inherited-and-custom-limits.png","40-invalid-config-import.png","41-import-name-conflict.png","42-import-review-second-page.png","43-stale-import-refused.png","44-imported-configuration.png","45-selected-native-export.png","46-export-preserves-existing-file.png","47-filtered-opensnitch-export.png","48-cancel-import-restores-catalogue.png","49-renamed-identity-keeps-extra-fields.png","50-duplicate-display-names.png","51-duplicate-native-export-bindings.png","52-complete-catalogue-removal-review.png","53-retained-removals-second-page.png","54-cancel-complete-replacement.png","55-complete-catalogue-applied.png","56-restored-id-retains-data-and-metadata.png","57-bulk-independent-count-units.png","58-bulk-effective-review.png","59-bulk-stale-defaults-refused.png","60-bulk-rebuilt-defaults.png","61-bulk-independent-limits-applied.png"],"proof_boundary":"Owned network namespace and HTTP fixture; actual native Kit empty/add/edit/default/format controls, conditional/forced refresh, error/cancel, independent AskRule during held HTTP, full-catalogue sort/search/paging/last-page-removal/preview/log/copy/remove/restore with durable files and metadata. Local list-rule review/cancel, exact held-ACK creation, confirmed-only associated-rule paging beyond a full catalogue page, nested-condition edit/rejection and independent permission input are included. Collection empty/search/paging/global sorts, exact UID-scoped group rule creation/inspection, stale snapshot refusal/refresh and reviewed membership changes are included. Bulk marking across pages, selected/group and whole-matching-set edits, immutable review/back/cancel, concurrent-edit refusal/rebuild, group-cap rejection, explicit and independently inherited count/unit limits, effective reviews, defaults-revision refusal/rebuild and no implicit policy commands are included. Actual import/export input adds invalid-file refusal, exact-name conflict/replacement, defaults, paged review/back/cancel, stale catalogue refusal/rebuild, canonical migration and retained data, selected native and full-filter OpenSnitch exports, existing-file preservation, unknown metadata and no paused downloads or policy commands. Per-ID opaque fields survive ordinary rename, duplicate display names, selected/native export, complete catalogue review/paging/cancel/apply and restoration of retained data. A real 84-source removal preserves old files and sends no policy commands. Notifications, retired-data cleanup, native compositor and resource proof remain separate."})).unwrap()).unwrap();
 }
 
 #[test]
@@ -10948,10 +17062,10 @@ fn headless_startup() {
             gpui_kit::base::Root::read(window, cx)
                 .view()
                 .clone()
-                .downcast::<super::startup_view::Startup>()
+                .downcast::<super::settings::Settings>()
                 .unwrap()
                 .read(cx)
-                .test_state()
+                .test_startup_state(cx)
         })
         .unwrap()
     }
@@ -11023,7 +17137,7 @@ fn headless_startup() {
     cx.update_entity(&view, |v, _| v.tray = Some(tray));
     settle(&mut cx);
     click(&mut cx, main, "startup-preferences");
-    let prefs = cx.read_entity(&view, |v, _| v.startup_window.unwrap());
+    let prefs = cx.read_entity(&view, |v, _| v.settings_window.unwrap());
     finish(&mut cx, prefs);
     assert_eq!(state(&mut cx, prefs), (false, false, false));
     capture(&mut cx, prefs, &evidence.join("01-startup-disabled.png"));
@@ -11033,7 +17147,7 @@ fn headless_startup() {
     assert!(!entry.exists());
     actions.try_send(super::tray::Action::Startup).unwrap();
     settle(&mut cx);
-    let prefs = cx.read_entity(&view, |v, _| v.startup_window.unwrap());
+    let prefs = cx.read_entity(&view, |v, _| v.settings_window.unwrap());
     finish(&mut cx, prefs);
     assert!(!state(&mut cx, prefs).1);
     capture(
@@ -11058,7 +17172,7 @@ fn headless_startup() {
     click(&mut cx, prefs, "startup-close");
     settle(&mut cx);
     click(&mut cx, main, "startup-preferences");
-    let prefs = cx.read_entity(&view, |v, _| v.startup_window.unwrap());
+    let prefs = cx.read_entity(&view, |v, _| v.settings_window.unwrap());
     finish(&mut cx, prefs);
     assert!(state(&mut cx, prefs).1);
     let reply = runtime.spawn(async move {
@@ -11128,7 +17242,7 @@ fn headless_startup() {
 
 #[test]
 fn headless_appearance() {
-    use crate::appearance::{ColorMode, Store};
+    use crate::appearance::{ColorMode, DensityScale, Store};
     fn finish(cx: &mut HeadlessAppContext) {
         for _ in 0..50 {
             settle(cx);
@@ -11146,6 +17260,86 @@ fn headless_appearance() {
             )
         })
     }
+    fn reveal(cx: &mut HeadlessAppContext, window: AnyWindowHandle, id: &'static str) {
+        use gpui::InputEvent as _;
+        for _ in 0..32 {
+            let direction = cx
+                .update_window(window, |_, window, cx| {
+                    window.render_frame(cx);
+                    let clip = window.find("appearance-content").bounds();
+                    let top = clip.top() + window.rem_size() * 4.;
+                    let bottom = clip.bottom() - px(8.);
+                    match window.try_find(id) {
+                        Some(target)
+                            if target.bounds().center().y >= top
+                                && target.bounds().center().y <= bottom =>
+                        {
+                            None
+                        }
+                        Some(target) if target.bounds().center().y < top => Some(120.),
+                        _ => Some(-120.),
+                    }
+                })
+                .unwrap();
+            let Some(direction) = direction else {
+                return;
+            };
+            cx.update_window(window, |_, window, cx| {
+                let viewport = window.viewport_size();
+                let position = gpui::point(viewport.width * 0.75, viewport.height * 0.50);
+                window.dispatch_event(
+                    gpui::MouseMoveEvent {
+                        position,
+                        pressed_button: None,
+                        modifiers: Default::default(),
+                    }
+                    .to_platform_input(),
+                    cx,
+                );
+                window.render_frame(cx);
+                window.dispatch_event(
+                    gpui::ScrollWheelEvent {
+                        position,
+                        delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.), px(direction))),
+                        ..Default::default()
+                    }
+                    .to_platform_input(),
+                    cx,
+                );
+                window.render_frame(cx);
+            })
+            .unwrap();
+            settle(cx);
+        }
+        panic!("{id} must be reachable inside Settings by wheel input");
+    }
+    fn appearance_click(cx: &mut HeadlessAppContext, window: AnyWindowHandle, id: &'static str) {
+        if id != "appearance-close" {
+            reveal(cx, window, id);
+        }
+        click(cx, window, id);
+        if id != "appearance-close" && id != "appearance-reload" {
+            settle(cx);
+            click(cx, window, "appearance-save");
+        }
+    }
+    fn density(cx: &mut HeadlessAppContext) -> DensityScale {
+        cx.update(|cx| super::appearance::test_density(cx))
+    }
+    fn metrics(
+        cx: &mut HeadlessAppContext,
+        window: AnyWindowHandle,
+    ) -> (gpui::Pixels, gpui::Pixels, gpui::Pixels) {
+        reveal(cx, window, "appearance-density-up");
+        cx.update_window(window, |_, window, cx| {
+            (
+                window.rem_size(),
+                cx.global::<Theme>().font_size,
+                window.find("appearance-density-up").bounds().size.height,
+            )
+        })
+        .unwrap()
+    }
     fn field(cx: &mut HeadlessAppContext, w: AnyWindowHandle, id: &'static str) -> String {
         click(cx, w, id);
         cx.update_window(w, |_, w, cx| {
@@ -11159,6 +17353,21 @@ fn headless_appearance() {
     let evidence = evidence();
     let dir = tempfile::tempdir().unwrap();
     let config = options(dir.path());
+    let store = Store::new(&config.database);
+    std::fs::create_dir_all(store.themes_path()).unwrap();
+    let palette_path = store.themes_path().join("ocean.json");
+    let palette_bytes = serde_json::to_vec_pretty(&serde_json::json!({
+        "version":1,"name":"Owned Ocean","mode":"dark","colors":{
+            "background":"#112233","foreground":"#F0F4F8",
+            "primary":"#3388CC","primary_foreground":"#FFFFFF",
+            "secondary":"#223344","secondary_foreground":"#E0E8F0",
+            "muted":"#334455","muted_foreground":"#AABBCD",
+            "accent":"#447799","accent_foreground":"#FFFFFF",
+            "border":"#567890","danger":"#CC4455","danger_foreground":"#FFFFFF"
+        }
+    }))
+    .unwrap();
+    std::fs::write(&palette_path, &palette_bytes).unwrap();
     let backend = Backend::start(config.clone()).unwrap();
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
@@ -11224,9 +17433,16 @@ fn headless_appearance() {
     finish(&mut cx);
     assert_eq!(mode(&mut cx), (ColorMode::System, false));
     click(&mut cx, main, "appearance-preferences");
-    let settings = cx.read_entity(&view, |v, _| v.appearance_window.unwrap());
+    let settings = cx.read_entity(&view, |v, _| v.settings_window.unwrap());
     capture(&mut cx, settings, &evidence.join("01-system-settings.png"));
-    click(&mut cx, settings, "appearance-dark");
+    assert_eq!(density(&mut cx), DensityScale::default());
+    assert!(
+        cx.update(|cx| super::appearance::test_palette(cx))
+            .is_none()
+    );
+    let baseline_metrics = metrics(&mut cx, settings);
+    let baseline_bounds = cx.update_window(settings, |_, w, _| w.bounds()).unwrap();
+    appearance_click(&mut cx, settings, "appearance-dark");
     finish(&mut cx);
     assert_eq!(mode(&mut cx), (ColorMode::Dark, true));
     capture(&mut cx, main, &evidence.join("02-dark-dashboard.png"));
@@ -11249,9 +17465,63 @@ fn headless_appearance() {
         editor,
         &evidence.join("03-dark-rule-editor-draft.png"),
     );
-    click(&mut cx, settings, "appearance-light");
+    for _ in 0..5 {
+        appearance_click(&mut cx, settings, "appearance-density-up");
+        finish(&mut cx);
+    }
+    assert_eq!(density(&mut cx).value(), 5);
+    assert_eq!(density(&mut cx).percent(), 110);
+    let larger_metrics = metrics(&mut cx, settings);
+    let device_scale = cx
+        .update_window(settings, |_, w, _| w.scale_factor())
+        .unwrap();
+    std::fs::write(evidence.join("density-step-metrics.json"), serde_json::to_vec_pretty(&serde_json::json!({
+        "device_scale":device_scale,"requested_scale":1.10,
+        "baseline":{"rem":f32::from(baseline_metrics.0),"font":f32::from(baseline_metrics.1),"button_height":f32::from(baseline_metrics.2)},
+        "observed":{"rem":f32::from(larger_metrics.0),"font":f32::from(larger_metrics.1),"button_height":f32::from(larger_metrics.2)},
+        "button_deviation_physical_pixels":(f32::from(larger_metrics.2)-f32::from(baseline_metrics.2)*1.10).abs()*device_scale
+    })).unwrap()).unwrap();
+    for (actual, baseline) in [
+        (larger_metrics.0, baseline_metrics.0),
+        (larger_metrics.1, baseline_metrics.1),
+    ] {
+        assert!(
+            (f32::from(actual) - f32::from(baseline) * 1.10).abs() < 0.0001,
+            "Exact density basis: actual {actual:?}, baseline {baseline:?}"
+        );
+    }
+    // GPUI rounds the far and near layout edges to physical pixels. Their
+    // difference may vary by one device pixel even for an exact rem height.
+    assert!(
+        (f32::from(larger_metrics.2) - f32::from(baseline_metrics.2) * 1.10).abs() * device_scale
+            <= 1.0001,
+        "Rendered Button height may round by at most one physical pixel: baseline {:?}, observed {:?}, device scale {device_scale}",
+        baseline_metrics.2,
+        larger_metrics.2
+    );
+    assert_eq!(
+        cx.update_window(settings, |_, w, _| w.bounds()).unwrap(),
+        baseline_bounds
+    );
+    assert_eq!(field(&mut cx, editor, "editor-name"), "theme-unsaved");
+    assert_eq!(
+        field(&mut cx, editor, "editor-description"),
+        "Keep this while theme changes"
+    );
+    assert_eq!(
+        Store::new(&config.database).load().unwrap().density.value(),
+        5
+    );
+    capture(
+        &mut cx,
+        editor,
+        &evidence.join("12-density-retains-editor-draft.png"),
+    );
+    appearance_click(&mut cx, settings, "appearance-light");
     finish(&mut cx);
     assert_eq!(mode(&mut cx), (ColorMode::Light, false));
+    assert_eq!(density(&mut cx).value(), 5);
+    assert_eq!(metrics(&mut cx, settings), larger_metrics);
     assert_eq!(field(&mut cx, editor, "editor-name"), "theme-unsaved");
     assert_eq!(
         field(&mut cx, editor, "editor-description"),
@@ -11297,40 +17567,57 @@ fn headless_appearance() {
     settle(&mut cx);
     let prompt = cx.read_entity(&view, |v, _| v.prompt_window.unwrap());
     capture(&mut cx, prompt, &evidence.join("05-light-permission.png"));
-    click(&mut cx, settings, "appearance-dark");
+    appearance_click(&mut cx, settings, "appearance-dark");
     finish(&mut cx);
     assert_eq!(mode(&mut cx), (ColorMode::Dark, true));
     capture(&mut cx, prompt, &evidence.join("06-dark-permission.png"));
+    appearance_click(&mut cx, settings, "appearance-density-up");
+    finish(&mut cx);
+    assert_eq!(density(&mut cx).value(), 6);
+    assert_eq!(
+        cx.update_window(prompt, |_, w, _| w.rem_size()).unwrap(),
+        baseline_metrics.0 * 1.12
+    );
+    capture(
+        &mut cx,
+        prompt,
+        &evidence.join("13-density-live-permission.png"),
+    );
     click(&mut cx, prompt, "deny-once");
     assert_eq!(runtime.block_on(reply).unwrap().action, "deny");
-    let store = Store::new(&config.database);
     std::fs::write(&store.path, b"{external invalid}").unwrap();
-    click(&mut cx, settings, "appearance-light");
+    appearance_click(&mut cx, settings, "appearance-light");
     finish(&mut cx);
-    assert_eq!(mode(&mut cx), (ColorMode::Light, false));
+    assert_eq!(mode(&mut cx), (ColorMode::Dark, true));
     assert_eq!(std::fs::read(&store.path).unwrap(), b"{external invalid}");
     capture(
         &mut cx,
         settings,
-        &evidence.join("07-session-only-save-error.png"),
+        &evidence.join("07-staged-save-error.png"),
     );
-    click(&mut cx, settings, "appearance-reload");
+    appearance_click(&mut cx, settings, "appearance-reload");
     finish(&mut cx);
     assert_eq!(mode(&mut cx), (ColorMode::System, false));
+    assert_eq!(density(&mut cx), DensityScale::default());
     capture(
         &mut cx,
         settings,
         &evidence.join("08-invalid-file-system-fallback.png"),
     );
-    click(&mut cx, settings, "appearance-dark");
+    appearance_click(&mut cx, settings, "appearance-dark");
     finish(&mut cx);
     assert_eq!(store.load().unwrap().mode, ColorMode::Dark);
+    for _ in 0..3 {
+        appearance_click(&mut cx, settings, "appearance-density-down");
+        finish(&mut cx);
+    }
+    assert_eq!(store.load().unwrap().density.value(), -3);
     capture(
         &mut cx,
         settings,
         &evidence.join("09-repaired-dark-preference.png"),
     );
-    click(&mut cx, settings, "appearance-close");
+    appearance_click(&mut cx, settings, "appearance-close");
     drop(view);
     drop(cx);
     let mut cx = context();
@@ -11347,19 +17634,243 @@ fn headless_appearance() {
     let view = view.unwrap();
     finish(&mut cx);
     assert_eq!(mode(&mut cx), (ColorMode::Dark, true));
+    assert_eq!(density(&mut cx).value(), -3);
+    assert_eq!(
+        cx.update_window(main, |_, w, _| w.rem_size()).unwrap(),
+        baseline_metrics.0 * 0.94
+    );
     capture(
         &mut cx,
         main,
         &evidence.join("10-restarted-dark-dashboard.png"),
     );
     click(&mut cx, main, "appearance-preferences");
-    let settings = cx.read_entity(&view, |v, _| v.appearance_window.unwrap());
-    click(&mut cx, settings, "appearance-reset");
+    let settings = cx.read_entity(&view, |v, _| v.settings_window.unwrap());
+    appearance_click(&mut cx, settings, "appearance-reset");
     finish(&mut cx);
     assert_eq!(mode(&mut cx), (ColorMode::System, false));
     assert_eq!(store.load().unwrap().mode, ColorMode::System);
+    assert_eq!(
+        density(&mut cx).value(),
+        -3,
+        "Color reset preserves density"
+    );
     capture(&mut cx, settings, &evidence.join("11-reset-system.png"));
-    click(&mut cx, settings, "appearance-close");
+    for _ in -20..-3 {
+        appearance_click(&mut cx, settings, "appearance-density-down");
+        finish(&mut cx);
+    }
+    assert_eq!(density(&mut cx).value(), -20);
+    assert_eq!(density(&mut cx).percent(), 60);
+    appearance_click(&mut cx, settings, "appearance-density-down");
+    finish(&mut cx);
+    assert_eq!(
+        density(&mut cx).value(),
+        -20,
+        "Lower endpoint refuses more input"
+    );
+    let minimum_metrics = metrics(&mut cx, settings);
+    capture(&mut cx, settings, &evidence.join("14-density-minimum.png"));
+    for _ in -20..20 {
+        appearance_click(&mut cx, settings, "appearance-density-up");
+        finish(&mut cx);
+    }
+    assert_eq!(density(&mut cx).value(), 20);
+    assert_eq!(density(&mut cx).percent(), 140);
+    appearance_click(&mut cx, settings, "appearance-density-up");
+    finish(&mut cx);
+    assert_eq!(
+        density(&mut cx).value(),
+        20,
+        "Upper endpoint refuses more input"
+    );
+    let maximum_metrics = metrics(&mut cx, settings);
+    assert!((f32::from(minimum_metrics.0) - f32::from(baseline_metrics.0) * 0.60).abs() < 0.05);
+    assert!((f32::from(maximum_metrics.0) - f32::from(baseline_metrics.0) * 1.40).abs() < 0.05);
+    assert!(maximum_metrics.2 > minimum_metrics.2);
+    capture(&mut cx, settings, &evidence.join("15-density-maximum.png"));
+    appearance_click(&mut cx, settings, "appearance-density-reset");
+    finish(&mut cx);
+    assert_eq!(density(&mut cx), DensityScale::default());
+    assert_eq!(mode(&mut cx), (ColorMode::System, false));
+    assert_eq!(
+        metrics(&mut cx, settings),
+        baseline_metrics,
+        "Reset derives from the original basis without accumulated scale drift"
+    );
+    capture(&mut cx, settings, &evidence.join("16-density-reset.png"));
+    let invalid = br#"{"version":1,"color_mode":"dark","density_scale":21}"#;
+    std::fs::write(&store.path, invalid).unwrap();
+    appearance_click(&mut cx, settings, "appearance-reload");
+    finish(&mut cx);
+    assert_eq!(density(&mut cx), DensityScale::default());
+    assert_eq!(mode(&mut cx), (ColorMode::System, false));
+    assert!(store.load().unwrap().warning.is_some());
+    assert_eq!(std::fs::read(&store.path).unwrap(), invalid);
+    capture(
+        &mut cx,
+        settings,
+        &evidence.join("17-density-invalid-file-preserved.png"),
+    );
+    appearance_click(&mut cx, settings, "appearance-density-up");
+    finish(&mut cx);
+    assert_eq!(store.load().unwrap().density.value(), 1);
+    assert!(store.load().unwrap().warning.is_none());
+    capture(
+        &mut cx,
+        settings,
+        &evidence.join("18-density-explicit-repair.png"),
+    );
+    appearance_click(&mut cx, settings, "appearance-density-reset");
+    finish(&mut cx);
+    assert_eq!(store.load().unwrap().density, DensityScale::default());
+    std::fs::write(evidence.join("density-metrics.json"), serde_json::to_vec_pretty(&serde_json::json!({
+        "basis": {"rem":f32::from(baseline_metrics.0),"font":f32::from(baseline_metrics.1),"button_height":f32::from(baseline_metrics.2)},
+        "scale_5": {"percent":110,"rem":f32::from(larger_metrics.0),"font":f32::from(larger_metrics.1),"button_height":f32::from(larger_metrics.2)},
+        "scale_minimum": {"value":-20,"percent":60,"rem":f32::from(minimum_metrics.0),"button_height":f32::from(minimum_metrics.2)},
+        "scale_maximum": {"value":20,"percent":140,"rem":f32::from(maximum_metrics.0),"button_height":f32::from(maximum_metrics.2)},
+        "fixed_window_bounds_unchanged":true,"fresh_context_density":-3,"permission_reply":"deny"
+    })).unwrap()).unwrap();
+    appearance_click(&mut cx, settings, "appearance-palette-ocean");
+    finish(&mut cx);
+    let custom_background = gpui::Hsla::from(gpui::rgb(0x112233));
+    assert_eq!(
+        cx.update(|cx| super::appearance::test_palette(cx)
+            .unwrap()
+            .as_str()
+            .to_owned()),
+        "ocean"
+    );
+    assert_eq!(
+        cx.update(|cx| cx.global::<Theme>().background),
+        custom_background
+    );
+    assert_eq!(store.load().unwrap().palette.unwrap().as_str(), "ocean");
+    capture(
+        &mut cx,
+        settings,
+        &evidence.join("19-native-palette-selected.png"),
+    );
+    appearance_click(&mut cx, settings, "appearance-density-up");
+    finish(&mut cx);
+    assert_eq!(density(&mut cx).value(), 1);
+    assert_eq!(
+        cx.update(|cx| super::appearance::test_palette(cx)
+            .unwrap()
+            .as_str()
+            .to_owned()),
+        "ocean"
+    );
+    assert_eq!(
+        cx.update(|cx| cx.global::<Theme>().background),
+        custom_background
+    );
+    capture(
+        &mut cx,
+        main,
+        &evidence.join("20-density-preserves-native-palette.png"),
+    );
+    appearance_click(&mut cx, settings, "appearance-light");
+    finish(&mut cx);
+    assert!(
+        cx.update(|cx| super::appearance::test_palette(cx))
+            .is_none()
+    );
+    assert!(store.load().unwrap().palette.is_none());
+    assert_ne!(
+        cx.update(|cx| cx.global::<Theme>().background),
+        custom_background
+    );
+    assert_eq!(density(&mut cx).value(), 1);
+    capture(
+        &mut cx,
+        main,
+        &evidence.join("21-builtin-clears-native-palette.png"),
+    );
+    appearance_click(&mut cx, settings, "appearance-palette-ocean");
+    finish(&mut cx);
+    appearance_click(&mut cx, settings, "appearance-close");
+    drop(view);
+    drop(cx);
+    let mut cx = context();
+    cx.update(|cx| super::appearance::init(&config.database, cx));
+    let mut view = None;
+    let main = cx
+        .open_window(size(px(1240.), px(940.)), |window, cx| {
+            let v = cx.new(|cx| Dashboard::new(backend.handle.clone(), config.clone(), window, cx));
+            view = Some(v.clone());
+            cx.new(|cx| gpui_kit::base::Root::new(v, window, cx))
+        })
+        .unwrap();
+    let main: AnyWindowHandle = main.into();
+    let view = view.unwrap();
+    finish(&mut cx);
+    assert_eq!(density(&mut cx).value(), 1);
+    assert_eq!(
+        cx.update(|cx| super::appearance::test_palette(cx)
+            .unwrap()
+            .as_str()
+            .to_owned()),
+        "ocean"
+    );
+    assert_eq!(
+        cx.update(|cx| cx.global::<Theme>().background),
+        custom_background
+    );
+    capture(
+        &mut cx,
+        main,
+        &evidence.join("22-native-palette-restarted.png"),
+    );
+    click(&mut cx, main, "appearance-preferences");
+    let settings = cx.read_entity(&view, |v, _| v.settings_window.unwrap());
+    let saved_bytes = std::fs::read(&store.path).unwrap();
+    std::fs::remove_file(&palette_path).unwrap();
+    appearance_click(&mut cx, settings, "appearance-reload");
+    finish(&mut cx);
+    assert_eq!(
+        cx.update(|cx| super::appearance::test_palette(cx)
+            .unwrap()
+            .as_str()
+            .to_owned()),
+        "ocean"
+    );
+    assert_ne!(
+        cx.update(|cx| cx.global::<Theme>().background),
+        custom_background
+    );
+    assert_eq!(
+        std::fs::read(&store.path).unwrap(),
+        saved_bytes,
+        "Missing catalogue file cannot erase a saved palette choice"
+    );
+    capture(
+        &mut cx,
+        settings,
+        &evidence.join("23-missing-native-palette-fallback.png"),
+    );
+    std::fs::write(&palette_path, &palette_bytes).unwrap();
+    appearance_click(&mut cx, settings, "appearance-reload");
+    finish(&mut cx);
+    assert_eq!(
+        cx.update(|cx| cx.global::<Theme>().background),
+        custom_background
+    );
+    assert_eq!(
+        std::fs::read(&palette_path).unwrap(),
+        palette_bytes,
+        "Palette catalogue is read-only to appearance preferences"
+    );
+    capture(
+        &mut cx,
+        settings,
+        &evidence.join("24-native-palette-restored.png"),
+    );
+    appearance_click(&mut cx, settings, "appearance-system");
+    finish(&mut cx);
+    appearance_click(&mut cx, settings, "appearance-density-reset");
+    finish(&mut cx);
+    appearance_click(&mut cx, settings, "appearance-close");
     drop(view);
     drop(cx);
     drop(runtime);
@@ -11372,17 +17883,30 @@ fn headless_appearance() {
         "light-editor-retains-draft",
         "light-permission",
         "dark-permission",
-        "session-only-save-error",
+        "staged-save-error",
         "invalid-file-system-fallback",
         "repaired-dark-preference",
         "restarted-dark-dashboard",
         "reset-system",
+        "density-retains-editor-draft",
+        "density-live-permission",
+        "density-minimum",
+        "density-maximum",
+        "density-reset",
+        "density-invalid-file-preserved",
+        "density-explicit-repair",
+        "native-palette-selected",
+        "density-preserves-native-palette",
+        "builtin-clears-native-palette",
+        "native-palette-restarted",
+        "missing-native-palette-fallback",
+        "native-palette-restored",
     ]
     .iter()
     .enumerate()
     .map(|(i, n)| format!("{:02}-{n}.png", i + 1))
     .collect::<Vec<_>>();
-    std::fs::write(evidence.join("headless.json"),serde_json::to_vec_pretty(&serde_json::json!({"status":"passed","real_gpu":true,"scoped_socket_removed":true,"screenshots":frames,"proof_boundary":"Actual Kit Settings color/reset/reload controls, dashboard/editor/popup repaint, copied unsaved editor fields, independent real AskRule, stale save preserved on disk with session-only theme, explicit invalid-file recovery and fresh GPUI context persistence. Platform is fixed Light here: actual native system appearance-change events, compositor, density/custom themes and whole-app visual pass remain separate."})).unwrap()).unwrap();
+    std::fs::write(evidence.join("headless.json"),serde_json::to_vec_pretty(&serde_json::json!({"status":"passed","real_gpu":true,"scoped_socket_removed":true,"screenshots":frames,"proof_boundary":"Actual Kit Settings color/density/reset/reload controls, exact 2%-per-step rem/font/button geometry, -20/20 endpoint refusal, fixed window bounds, dashboard/editor/popup repaint, copied unsaved editor fields, independent real AskRule while density changes, stale save preserves the applied theme and retains the staged choices, out-of-range density file preservation/explicit repair fresh GPUI context color/density persistence, actual bounded data-only native palette choice/token repaint, density preservation, built-in reset, restart, missing-file fallback and restored-file reload. Platform is fixed Light here: actual native system appearance-change events, compositor, Qt Material palette equivalence and whole-app visual pass remain separate."})).unwrap()).unwrap();
 }
 
 #[test]
@@ -11485,6 +18009,35 @@ fn headless_window_memory() {
     saved(&mut cx, &view);
     assert_eq!(store.load().unwrap().state.unwrap().page, Page::Rules);
     capture(&mut cx, main, &evidence.join("02-rules-page-saved.png"));
+    // Open the shared settings window from the minimum dashboard size.
+    cx.update_window(main, |_, w, _| w.resize(size(px(780.), px(560.))))
+        .unwrap();
+    settle(&mut cx);
+    click(&mut cx, main, "settings-menu-trigger");
+    settle(&mut cx);
+    let preferences = cx.read_entity(&view, |v, _| v.settings_window.unwrap());
+    capture(
+        &mut cx,
+        preferences,
+        &evidence.join("12-compact-settings-menu.png"),
+    );
+    click(&mut cx, preferences, "settings-popup");
+    capture(
+        &mut cx,
+        preferences,
+        &evidence.join("13-settings-opens-preferences.png"),
+    );
+    click(&mut cx, preferences, "preferences-close");
+    settle(&mut cx);
+    cx.update_window(main, |_, w, _| {
+        assert!(
+            w.try_find("settings-menu-trigger")
+                .is_some_and(|target| target.visible())
+        );
+        w.resize(size(px(960.), px(680.)));
+    })
+    .unwrap();
+    settle(&mut cx);
     let burst_before = saved(&mut cx, &view);
     for i in 0..25 {
         cx.update_window(main, |_, w, _| {
@@ -11676,6 +18229,8 @@ fn headless_window_memory() {
         "stale-state-preserved",
         "restarted-after-external-repair",
         "quit-flush-state",
+        "compact-settings-menu",
+        "settings-opens-preferences",
     ]
     .iter()
     .enumerate()
@@ -12292,3 +18847,9 @@ fn headless_subscription_inheritance() {
         .collect::<Vec<_>>();
     std::fs::write(evidence.join("headless.json"),serde_json::to_vec_pretty(&serde_json::json!({"status":"passed","real_gpu":true,"scoped_socket_removed":true,"screenshots":frames,"proof_boundary":"Actual Kit count/Input/unit Select/Save/Cancel controls, reopened raw inheritance, recomputed effective limits, invalid-dependent defaults rollback, stale-defaults save refusal and current reload, legacy absolute compatibility and independent real AskRule. Metadata-only fixture with paused downloads; no external HTTP or real daemon policy changes. Native unit selectors and real bounded-download behavior are separate evidence."})).unwrap()).unwrap();
 }
+
+#[path = "headless_settings.rs"]
+mod settings_shell;
+
+#[path = "headless_browsing.rs"]
+mod browsing;

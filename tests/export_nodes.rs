@@ -9,7 +9,7 @@ fn fixture() -> (tempfile::TempDir, std::path::PathBuf) {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("history.sqlite3");
     let db = Connection::open(&path).unwrap();
-    db.execute_batch("PRAGMA journal_mode=WAL; CREATE TABLE application_rules(node TEXT,name TEXT,wire BLOB,process TEXT,description TEXT,duration TEXT,PRIMARY KEY(node,name));CREATE TABLE prompt_rules AS SELECT * FROM application_rules WHERE 0;CREATE TABLE node_info(name TEXT PRIMARY KEY);").unwrap();
+    db.execute_batch("PRAGMA journal_mode=WAL; CREATE TABLE application_rules(node TEXT,name TEXT,wire BLOB,process TEXT,description TEXT,duration TEXT,PRIMARY KEY(node,name));CREATE TABLE prompt_rules AS SELECT * FROM application_rules WHERE 0; CREATE TABLE rule_observations(node TEXT,name TEXT,received INTEGER,PRIMARY KEY(node,name));CREATE TABLE node_info(name TEXT PRIMARY KEY);").unwrap();
     for node in ["../../alpha", "..__alpha", "offline"] {
         db.execute("INSERT INTO node_info VALUES (?)", [node])
             .unwrap();

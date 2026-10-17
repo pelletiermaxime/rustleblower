@@ -92,6 +92,7 @@ async fn ping(socket: &Path, authority: &str, path: &str) -> Result<Vec<u8>> {
 async fn accepts_daemon_socket_authorities_without_relaxing_other_http_paths() -> Result<()> {
     let dir = tempfile::tempdir()?;
     let config = Config {
+        transport: Default::default(),
         socket: dir.path().join("ui.sock"),
         database: dir.path().join("history.sqlite3"),
         prompt_timeout: 1,

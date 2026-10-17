@@ -6,6 +6,7 @@ mod download;
 mod format;
 pub mod limits;
 pub mod model;
+pub mod notifications;
 pub mod probe;
 mod store;
 pub mod transfer;
@@ -83,6 +84,11 @@ pub enum Request {
         id: u64,
         revision: u64,
     },
+    NotificationSettings,
+    SaveNotificationSettings {
+        revision: u64,
+        config: notifications::Config,
+    },
     Settings,
     SaveSettings {
         revision: u64,
@@ -109,6 +115,7 @@ pub enum Reply {
     Collection(Box<collections::Collection>),
     Row(Box<Row>),
     Saved(u64),
+    NotificationSettings(u64, notifications::Config),
     Settings(u64, Settings),
     Logs(Vec<String>),
     Preview(String),
@@ -140,6 +147,7 @@ impl Handle {
             Request::ApplyBulk(review) => review.validate()?,
             Request::Save { spec, .. } | Request::SaveChecked { spec, .. } => spec.validate()?,
             Request::SaveSettings { settings, .. } => settings.validate()?,
+            Request::SaveNotificationSettings { config, .. } => config.validate()?,
             Request::Collections(q)
                 if q.search.len() > 256 || q.offset > collections::MAX_LINKS + 5 =>
             {
@@ -167,6 +175,15 @@ impl Handle {
 }
 impl Worker {
     pub fn start(root: &Path) -> Self {
+        Self::start_with_notices(
+            root,
+            Arc::new(crate::desktop_notifications::Mailbox::default()),
+        )
+    }
+    pub fn start_with_notices(
+        root: &Path,
+        notices: Arc<crate::desktop_notifications::Mailbox>,
+    ) -> Self {
         let (tx, rx) = mpsc::channel(32);
         let (state_tx, state) = watch::channel(State::default());
         let cancel = CancellationToken::new();
@@ -191,7 +208,7 @@ impl Worker {
                         .enable_all()
                         .build()
                         .map_err(|e| e.to_string())?;
-                    let result = rt.block_on(run(store, rx, state_tx, cancel, ready));
+                    let result = rt.block_on(run(store, rx, state_tx, cancel, ready, notices));
                     rt.shutdown_timeout(Duration::from_millis(250));
                     result
                 })();
@@ -236,9 +253,11 @@ async fn run(
     state: watch::Sender<State>,
     cancel: CancellationToken,
     ready: Arc<AtomicBool>,
+    notices: Arc<crate::desktop_notifications::Mailbox>,
 ) -> Result<(), String> {
     let mut client: Option<reqwest::Client> = None;
     let mut collections = collections::synchronize(&store)?;
+    store.cleanup_publications()?;
     let (_, settings) = store.settings()?;
     let archived = store.archived_count()?;
     state.send_modify(|s| s.archived_metadata = archived);
@@ -265,15 +284,27 @@ async fn run(
                         Ok(download::Download::Updated{file,bytes,etag,modified})=>{
                             if store.used()?.saturating_sub(store.replacing_bytes(&current)?).saturating_add(bytes)>settings.disk_bytes{store.failed(&current,"Published-list disk budget would be exceeded",false)?;}
                             else {
-                                let obsolete=store.unreferenced_files(&current)?;let path=store.data_path(&current);std::fs::create_dir_all(path.parent().unwrap()).map_err(|e|e.to_string())?;
-                                file.persist(&path).map_err(|e|format!("Cannot publish validated list: {}",e.error))?;
-                                let(interval,_,_)=effective(&current.spec,&settings)?;store.success(&current,Some(&path),bytes,(&etag,&modified),interval,false)?;
-                                collections=collections::synchronize(&store).map_err(|e|format!("List was published; collection state needs recovery: {e}"))?;
-                                for old in obsolete {if Path::new(&old)!=path && !store.referenced(&old)?{std::fs::remove_file(old).map_err(|e|format!("Published list saved; previous owned filename could not be removed: {e}"))?;}}
+                                let(interval,_,_)=effective(&current.spec,&settings)?;
+                                if store.publish(&current,file,bytes,(&etag,&modified),interval)? {
+                                    collections=collections::synchronize(&store).map_err(|e|format!("List was published; collection state needs recovery: {e}"))?;
+                                    store.cleanup_publications()?;
+                                }
                             }
                         },
                         Err(error)=>store.failed(&current,&error,job.cancel.is_cancelled())?,
                     }
+                }
+                if !job.cancel.is_cancelled() && current.revision == job.row.revision && !current.removed {
+                    // Only report a committed normal-download outcome. Configuration and
+                    // desktop failures never fail the download or wait for UI visibility.
+                    let result = store.notification_settings().and_then(|(_, config)| {
+                        let row = store.get(current.id)?;
+                        if let Some(text) = config.message(&row.spec.name, &row.status, &row.error) {
+                            notices.post_subscription(&row.spec.name, &text, row.status == "error");
+                        }
+                        Ok(())
+                    });
+                    if let Err(error) = result { notices.failed(error); }
                 }
                 state.send_modify(|s|{s.active=None;s.revision+=1;});
             },
@@ -301,7 +332,7 @@ async fn run(
                     request=>Message{request,reply:message.reply},
                 };
                 let rebuild=matches!(&message.request,Request::Save{..}|Request::Remove{..}|Request::ApplyBulk(_)|Request::ApplyImport(_));
-                let mutating=matches!(&message.request,Request::Save{..}|Request::Remove{..}|Request::ApplyBulk(_)|Request::ApplyImport(_)|Request::SaveSettings{..}|Request::Runtime(_)|Request::Refresh{..}|Request::Cancel);
+                let mutating=matches!(&message.request,Request::Save{..}|Request::Remove{..}|Request::ApplyBulk(_)|Request::ApplyImport(_)|Request::SaveSettings{..}|Request::SaveNotificationSettings{..}|Request::Runtime(_)|Request::Refresh{..}|Request::Cancel);
                 let result=(||->Result<Reply,String>{match message.request {
                     Request::TestUrl(_)=>unreachable!("Handled above"),
                     Request::SaveChecked{..}=>unreachable!("Checked above"),
@@ -313,6 +344,8 @@ async fn run(
                     Request::Collection{group,format}=>collections.iter().find(|c|c.group==group&&c.format.directory()==format.directory()).cloned().map(|c|Reply::Collection(Box::new(c))).ok_or_else(||"Collection membership changed; refresh the collection list".into()),
                     Request::Collections(q)=>collections::page(&collections,&q).map(Reply::Collections),
                     Request::Page(q)=>store.page(&q).map(Reply::Page),Request::Get(id)=>store.get(id).map(|r|Reply::Row(Box::new(r))),
+                    Request::NotificationSettings=>store.notification_settings().map(|(r,c)|Reply::NotificationSettings(r,c)),
+                    Request::SaveNotificationSettings{revision,config}=>{store.save_notification_settings(revision,&config)?;Ok(Reply::Done)},
                     Request::Settings=>store.settings().map(|(r,s)|Reply::Settings(r,s)),
                     Request::Save{previous,spec}=>{let saved=store.save(previous,&spec)?;if let Some((id,_))=previous{if let Some(job)=active.as_ref().filter(|a|a.row.id==id){job.cancel.cancel();}queue.retain(|(v,_)|*v!=id);}Ok(Reply::Saved(saved))},
                     Request::Remove{id,revision}=>{if let Some(job)=active.as_ref().filter(|a|a.row.id==id){job.cancel.cancel();}queue.retain(|(v,_)|*v!=id);store.remove(id,revision)?;Ok(Reply::Done)},

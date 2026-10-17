@@ -5,6 +5,7 @@ use rustleblower::history::{
 };
 fn sample() -> Presentation {
     Presentation {
+        node: "saved-offline-node".into(),
         search: "literal_%' café".into(),
         action: "reject".into(),
         filters: vec![
@@ -19,6 +20,7 @@ fn sample() -> Presentation {
                 value: "--session blue".into(),
             },
         ],
+        logic: Default::default(),
         sort: Some((Field::Time, true)),
         widths: vec![(Field::Time, 319.5), (Field::Process, 420.)],
     }
@@ -161,6 +163,7 @@ async fn damaged_presentation_never_prevents_rpc_startup_or_permission_replies()
         let path = dir.path().join("history.sqlite3.history.json");
         std::fs::write(&path, &bad)?;
         let config = Config {
+            transport: Default::default(),
             database: database.clone(),
             socket: dir.path().join("ui.sock"),
             prompt_timeout: 30,

@@ -58,8 +58,12 @@ match of the captured search. Filter changes and Show removed clear the marks;
 sort/page changes preserve them. Mark page and Clear marks are explicit controls.
 The form covers the pinned upstream bulk controller's enabled, groups, input
 format, interval, timeout and maximum-size fields; Add/Remove/Clear group modes
-extend its replacement action. Checked empty limit fields explicitly inherit
-saved defaults; unchecked fields keep each source's existing override. Group
+extend its replacement action. Checked limits now retain optional count and unit
+independently through the existing Kit selectors; unchecked limits keep each
+source's existing override. Empty count and Inherit default unit can be combined
+or chosen separately. The pinned bulk view disables units when count is zero
+and serializes both as null in that case; native unit-only bulk editing is a
+consistency extension following the shared pinned models and individual editor. Group
 changes use normalized collection keys, preserve order and remove duplicates.
 The entire proposed change is shown before applying it.
 
@@ -67,7 +71,9 @@ The worker freezes at most 128 targets into before/after entries (2 MiB cap).
 Unchanged entries count in the scope but are omitted from the write plan. Review
 shows 16 changed entries per page. Back retains fields; Cancel performs no write;
 Rebuild resolves current selected IDs or current matches of the captured filter.
-Applying the immutable review revalidates every changed row's revision and exact
+The review captures one bounded defaults snapshot and revision, shows its count/
+units and effective before/after seconds/bytes, and validates each dependent limit.
+Applying revalidates these defaults and every changed row's revision and exact
 configuration inside one SQLite transaction before the first update. Any stale,
 removed or missing changed row rejects the entire batch. SQL errors roll back all
 metadata and log writes. Rows newly matching after review stay outside that plan.
@@ -196,10 +202,12 @@ and exact persisted null-count/minutes/seconds/KB values, three PNGs, no downloa
 or policy command, 430 events and complete cleanup. Recheck native subscription
 import and URL validation: unit selectors add three Tab stops before Test URL.
 
-Bulk actions currently preserve untouched structured limits and keep their
-existing explicit-seconds/bytes or full-inherit operations. Independent bulk
-unit selection remains source-backed parity work. Native default changes,
-stale-editor/reopen controls, real scheduling timing, package/RSS and final UX
+Bulk actions now preserve untouched structured limits and offer the same
+independent count/unit choices as individual forms. The source bulk view's
+zero-count-clears-both behavior is retained through empty count plus Inherit
+default; unit-only selection is a native consistency extension. Native default changes,
+stale-editor/reopen controls, native bulk-unit gestures, real scheduling timing,
+package/RSS and final UX
 remain separate. Read `.verification/subscription-inheritance-result.json` for
 exact reports/source hashes and the remaining full objective.
 
@@ -254,7 +262,7 @@ loopback namespace. Require eleven PNGs: empty URL refusal without HTTP; redirec
 and hosts sample; invalid hosts; changed-format HEAD-only; held GET with actual
 AskRule/Deny once; cancel; edit discards stale result; form cancel/reopen; leave/
 return cancellation; and an explicit Save as the first subscription/log mutation.
-The ordinary 56-frame subscription journey remains a separate regression.
+The ordinary 61-frame subscription journey remains a separate regression.
 
 Six `tests/subscription_probe.rs` cases cover the URL/heuristic bounds, HEAD/GET
 403/405/error/redirect/loop/oversized-target handling, split/chunked/long/many-line
@@ -338,7 +346,7 @@ limits and the distinction from retained direct-list activation.
   the test requires its actual write lock before and after production Ping and
   AskRule/Allow replies, with 500-ms RPC/decision bounds. A separate kernel-UID probe also passes outside the namespace
   with UID 1000.
-- GPU: `python scripts/verify-headless.py --feature subscriptions` has **56 frames**.
+- GPU: `python scripts/verify-headless.py --feature subscriptions` has **61 frames**.
   It uses actual controls for the complete catalogue/download journey, UID-scoped
   direct and group rule review/cancel/ACK, an independent permission under held
   ACK, associated-rule paging and rejection, concurrent confirmed edit/stale
@@ -421,7 +429,6 @@ backend/canonical reports retain their original scope under `.verification/`.
 
 ## Full parity still open
 
-Bulk-specific independent count/unit controls and review; notifications;
 inactive/old-format inspection and cleanup;
 direct-list activation migration; complete filesystem/SQLite crash recovery;
 quiet schedule/backoff timing; HTTPS/TLS failure/redirect/compression fixtures;
@@ -433,3 +440,17 @@ protocol/cache proofs do not establish real daemon kernel enforcement.
 The metadata archive recovery interface is a separate Rustleblower improvement,
 not a prerequisite invented for OpenSnitch feature parity. Its retained records
 and existing reimport behavior must remain preserved throughout the port.
+
+
+Subscription result notices are now implemented through the existing bounded
+mailbox, with a source-compatible Notifications editor, stale metadata revision
+guard and explicit Blocklists action target. Four core cases, private D-Bus and nine GPU frames pass;
+see [notification contract](desktop-notifications.md) and
+[implementation details](../../../../docs/subscription-notifications-plan.md).
+
+
+Bulk count/unit controls and frozen-default review pass the 61-frame subscription
+journey, 12-frame inheritance regression and 48-frame general regression, plus
+176 core tests and strict Clippy. Exact source hashes and scoped cleanup are in
+`.verification/subscription-bulk-units-result.json`. Native gestures for the new
+bulk unit selectors and full-parity resource/UX checks remain separate.

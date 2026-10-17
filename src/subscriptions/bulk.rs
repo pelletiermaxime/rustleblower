@@ -1,5 +1,5 @@
 //! Bounded immutable before/after plans for local subscription configuration.
-use super::{collections::normalize_group, model::*};
+use super::{collections::normalize_group, limits::Override, model::*};
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum Groups {
     #[default]
@@ -15,9 +15,9 @@ pub struct Patch {
     pub groups: Groups,
     pub format: Option<Format>,
     /// None keeps the override; Some(None) explicitly inherits global defaults.
-    pub interval: Option<Option<u32>>,
-    pub timeout: Option<Option<u32>>,
-    pub max_bytes: Option<Option<u64>>,
+    pub interval: Option<Option<Override>>,
+    pub timeout: Option<Option<Override>>,
+    pub max_bytes: Option<Option<Override>>,
 }
 #[derive(Clone)]
 pub enum Scope {
@@ -34,6 +34,8 @@ pub struct Entry {
 #[derive(Clone, Debug)]
 pub struct Review {
     pub patch: Patch,
+    pub settings_revision: u64,
+    pub settings: Settings,
     pub entries: Vec<Entry>,
     pub scanned: usize,
 }
@@ -87,13 +89,13 @@ impl Patch {
             after.format = format.clone();
         }
         if let Some(value) = self.interval {
-            after.interval = value.map(|v| super::limits::Override::Absolute(u64::from(v)));
+            after.interval = value;
         }
         if let Some(value) = self.timeout {
-            after.timeout = value.map(|v| super::limits::Override::Absolute(u64::from(v)));
+            after.timeout = value;
         }
         if let Some(value) = self.max_bytes {
-            after.max_bytes = value.map(super::limits::Override::Absolute);
+            after.max_bytes = value;
         }
         match &self.groups {
             Groups::Keep => {}
@@ -130,6 +132,7 @@ impl Patch {
 impl Review {
     pub fn validate(&self) -> Result<(), String> {
         self.patch.validate()?;
+        self.settings.validate()?;
         if self.entries.len() > MAX_SUBSCRIPTIONS
             || self.scanned > MAX_SUBSCRIPTIONS
             || self.entries.len() > self.scanned
@@ -141,6 +144,8 @@ impl Review {
         for entry in &self.entries {
             entry.before.validate()?;
             entry.after.validate()?;
+            effective(&entry.before, &self.settings)?;
+            effective(&entry.after, &self.settings)?;
             if !ids.insert(entry.id)
                 || entry.before == entry.after
                 || self.patch.apply(&entry.before)? != entry.after

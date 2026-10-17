@@ -25,7 +25,14 @@ fn picker(
         .unwrap_or(0);
     let picker = cx.new(|cx| {
         SelectState::new(
-            SearchableVec::new(labels),
+            SearchableVec::new(
+                labels
+                    .into_iter()
+                    .map(|label| {
+                        crate::i18n::LocalizedOption::new(label.clone(), label.to_string())
+                    })
+                    .collect::<Vec<_>>(),
+            ),
             Some(IndexPath::new(index)),
             window,
             cx,
@@ -34,7 +41,9 @@ fn picker(
     });
     cx.subscribe(
         &picker,
-        |_, _, _: &SelectEvent<SearchableVec<SharedString>>, cx| cx.notify(),
+        |_, _, _: &SelectEvent<SearchableVec<crate::i18n::LocalizedOption<SharedString>>>, cx| {
+            cx.notify()
+        },
     )
     .detach();
     picker
@@ -172,10 +181,15 @@ impl Form {
             )
         })();
         match values {
-            Ok((interval, timeout, size)) => format!(
-                "Effective with loaded defaults: {interval} seconds between checks · {timeout} seconds timeout · {size} bytes maximum. Empty count and Inherit default unit are independent choices."
+            Ok((interval, timeout, size)) => crate::i18n::tr_args(
+                "Effective with loaded defaults: %{interval} seconds between checks · %{timeout} seconds timeout · %{size} bytes maximum. Empty count and Inherit default unit are independent choices.",
+                &[
+                    ("interval", &format!("{}", interval)),
+                    ("timeout", &format!("{}", timeout)),
+                    ("size", &format!("{}", size)),
+                ],
             ),
-            Err(e) => format!("Limits need attention: {e}"),
+            Err(e) => crate::i18n::tr_args("Limits need attention: %{e}", &[("e", &e.to_string())]),
         }
     }
 }

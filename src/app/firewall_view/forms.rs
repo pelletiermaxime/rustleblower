@@ -1,5 +1,7 @@
 //! Bounded native field editors for chains, rules and ordered expression values.
 use super::FirewallView;
+#[path = "helpers.rs"]
+mod helpers;
 use crate::firewall::{
     self,
     document::{Chain, Command, Document, Expression, Rule, Statement, Value},
@@ -63,7 +65,7 @@ impl Field {
             .flex()
             .flex_col()
             .gap_1()
-            .child(div().text_sm().child(self.label))
+            .child(div().text_sm().child(crate::i18n::tr(self.label)))
             .child(Input::new(&self.state).id(self.id).disabled(locked))
     }
 }
@@ -89,6 +91,8 @@ pub(super) struct Form {
     selected: Option<usize>,
     offset: usize,
     statement: Option<StatementForm>,
+    helper: Option<helpers::Guided>,
+    hook: String,
     tab: usize,
 }
 fn new_id() -> String {
@@ -104,7 +108,25 @@ fn new_id() -> String {
     )
 }
 impl Form {
-    pub fn keep_active(&mut self, cx: &App) -> Result<bool, String> {
+    pub(super) fn refresh_suggestions(
+        &mut self,
+        catalogue: std::sync::Arc<firewall::suggestions::Catalogue>,
+        window: &mut Window,
+        cx: &mut Context<FirewallView>,
+    ) {
+        if let Some(helper) = &mut self.helper {
+            helper.refresh_suggestions(catalogue, window, cx);
+        }
+    }
+    pub fn keep_active(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<FirewallView>,
+    ) -> Result<bool, String> {
+        if self.helper.is_some() {
+            self.keep_helper(window, cx)?;
+            return Ok(true);
+        }
         if self.statement.as_ref().is_some_and(|s| s.value.is_some()) {
             self.save_value(cx)?;
             return Ok(true);
@@ -116,6 +138,9 @@ impl Form {
         Ok(false)
     }
     pub fn cancel_active(&mut self) -> bool {
+        if self.helper.take().is_some() {
+            return true;
+        }
         if let Some(statement) = &mut self.statement {
             if statement.value.take().is_some() {
                 return true;
@@ -131,6 +156,14 @@ impl Form {
         window: &mut Window,
         cx: &mut Context<FirewallView>,
     ) -> Result<Self, String> {
+        let hook = match target {
+            Target::Rule { group, chain, .. } => doc
+                .chain(group, chain)
+                .ok_or("Select a current chain")?
+                .hook
+                .clone(),
+            Target::Chain { .. } => String::new(),
+        };
         let (fields, enabled, expressions) = match target {
             Target::Chain { group, index } => {
                 let chain = match index {
@@ -224,6 +257,8 @@ impl Form {
             selected: None,
             offset: 0,
             statement: None,
+            helper: None,
+            hook,
             tab: 0,
         };
         form.fields[0].state.focus_handle(cx).focus(window, cx);
@@ -430,7 +465,36 @@ impl Form {
         firewall::admit(&config)?;
         Ok(expressions)
     }
+    fn keep_helper(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<FirewallView>,
+    ) -> Result<(), String> {
+        let Some(helper) = &self.helper else {
+            return Ok(());
+        };
+        match helper.result(&self.hook, cx)? {
+            helpers::Kept::Expression(expression) => {
+                self.expressions = self.checked_expressions(None, expression, cx)?;
+                self.offset = (self.expressions.len() - 1) / firewall::PAGE * firewall::PAGE;
+                self.selected = Some(self.expressions.len() - 1);
+            }
+            helpers::Kept::Verdict(target, parameters) => {
+                self.fields[2]
+                    .state
+                    .update(cx, |input, cx| input.set_value(target, window, cx));
+                self.fields[3]
+                    .state
+                    .update(cx, |input, cx| input.set_value(parameters, window, cx));
+            }
+        }
+        self.helper = None;
+        Ok(())
+    }
     pub fn render(&self, locked: bool, cx: &mut Context<FirewallView>) -> Div {
+        if let Some(helper) = &self.helper {
+            return helper.render(&self.hook, locked, cx);
+        }
         if let Some(statement) = &self.statement {
             if let Some(value) = &statement.value {
                 return div()
@@ -439,7 +503,7 @@ impl Form {
                     .flex()
                     .flex_col()
                     .gap_3()
-                    .child("Expression value")
+                    .child(crate::i18n::tr("Expression value"))
                     .child(value.key.render(locked))
                     .child(value.value.render(locked))
                     .child(
@@ -448,7 +512,7 @@ impl Form {
                             .gap_2()
                             .child(
                                 Button::new("fw-value-save")
-                                    .label("Keep value")
+                                    .label(crate::i18n::tr("Keep value"))
                                     .disabled(locked)
                                     .on_click(cx.listener(|this, _, window, cx| {
                                         if let Some(form) = &mut this.form {
@@ -465,7 +529,7 @@ impl Form {
                             )
                             .child(
                                 Button::new("fw-value-cancel")
-                                    .label("Cancel value")
+                                    .label(crate::i18n::tr("Cancel value"))
                                     .disabled(locked)
                                     .on_click(cx.listener(|this, _, window, cx| {
                                         if let Some(s) =
@@ -489,13 +553,19 @@ impl Form {
                 .flex()
                 .flex_col()
                 .gap_2()
-                .child("Expression statement")
+                .child(crate::i18n::tr("Expression statement"))
                 .child(statement.name.render(locked))
                 .child(statement.op.render(locked))
-                .child(format!(
-                    "Ordered values · {}–{} of {total}",
-                    if total == 0 { 0 } else { offset + 1 },
-                    end
+                .child(crate::i18n::tr_args(
+                    "Ordered values · %{arg0}–%{arg1} of %{total}",
+                    &[
+                        (
+                            "arg0",
+                            &(if total == 0 { 0 } else { offset + 1 }).to_string(),
+                        ),
+                        ("arg1", &(end).to_string()),
+                        ("total", &(total).to_string()),
+                    ],
                 ))
                 .child(
                     uniform_list(
@@ -541,7 +611,7 @@ impl Form {
                         .gap_2()
                         .child(
                             Button::new("fw-statement-save")
-                                .label("Keep statement")
+                                .label(crate::i18n::tr("Keep statement"))
                                 .disabled(locked)
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     if let Some(form) = &mut this.form {
@@ -558,7 +628,7 @@ impl Form {
                         )
                         .child(
                             Button::new("fw-statement-cancel")
-                                .label("Cancel statement")
+                                .label(crate::i18n::tr("Cancel statement"))
                                 .disabled(locked)
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     if let Some(form) = &mut this.form {
@@ -577,7 +647,11 @@ impl Form {
             .flex()
             .flex_col()
             .gap_2()
-            .child(if chain { "Chain draft" } else { "Rule draft" });
+            .child(crate::i18n::tr(if chain {
+                "Chain draft"
+            } else {
+                "Rule draft"
+            }));
         if !chain {
             body = body.child(
                 TabBar::new("fw-rule-tabs")
@@ -589,9 +663,9 @@ impl Form {
                         }
                         cx.notify();
                     }))
-                    .child(Tab::new().label("Rule"))
-                    .child(Tab::new().label("Expressions"))
-                    .child(Tab::new().label("Legacy fields")),
+                    .child(Tab::new().label(crate::i18n::tr("Rule")))
+                    .child(Tab::new().label(crate::i18n::tr("Expressions")))
+                    .child(Tab::new().label(crate::i18n::tr("Legacy fields"))),
             );
         }
         if chain || self.tab != 1 {
@@ -614,8 +688,23 @@ impl Form {
                     .children(fields.map(|i| self.fields[i].render(locked)))
                     .when(!chain && self.tab == 0, |view| {
                         view.child(
+                            Button::new("fw-verdict-guided")
+                                .label(crate::i18n::tr("Choose guided verdict…"))
+                                .disabled(locked)
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    if let Some(form) = &mut this.form {
+                                        form.helper = Some(helpers::Guided::verdict(
+                                            &form.fields[2].value(cx),
+                                            window,
+                                            cx,
+                                        ));
+                                    }
+                                    cx.notify();
+                                })),
+                        )
+                        .child(
                             Checkbox::new("fw-rule-enabled")
-                                .label("Rule enabled")
+                                .label(crate::i18n::tr("Rule enabled"))
                                 .checked(self.enabled)
                                 .disabled(locked)
                                 .on_change(cx.listener(|this, value: &bool, _, cx| {
@@ -633,10 +722,16 @@ impl Form {
             let total = self.expressions.len();
             let selected = self.selected;
             body = body
-                .child(format!(
-                    "Ordered expressions · {}–{} of {total}",
-                    if total == 0 { 0 } else { offset + 1 },
-                    end
+                .child(crate::i18n::tr_args(
+                    "Ordered expressions · %{arg0}–%{arg1} of %{total}",
+                    &[
+                        (
+                            "arg0",
+                            &(if total == 0 { 0 } else { offset + 1 }).to_string(),
+                        ),
+                        ("arg1", &(end).to_string()),
+                        ("total", &(total).to_string()),
+                    ],
                 ))
                 .child(
                     uniform_list(
@@ -655,15 +750,27 @@ impl Form {
                                         .child(
                                             statement
                                                 .map(|s| {
-                                                    format!(
-                                                        "{} {} · {} values",
-                                                        crate::history::bounded(&s.name, 128),
-                                                        crate::history::bounded(&s.op, 64),
-                                                        s.values.len()
+                                                    crate::i18n::tr_args(
+                                                        "%{name} %{operator} · %{count} values",
+                                                        &[
+                                                            (
+                                                                "name",
+                                                                &crate::history::bounded(
+                                                                    &s.name, 128,
+                                                                ),
+                                                            ),
+                                                            (
+                                                                "operator",
+                                                                &crate::history::bounded(&s.op, 64),
+                                                            ),
+                                                            ("count", &s.values.len().to_string()),
+                                                        ],
                                                     )
                                                 })
                                                 .unwrap_or_else(|| {
-                                                    "Missing statement; edit to repair".into()
+                                                    crate::i18n::tr(
+                                                        "Missing statement; edit to repair",
+                                                    )
                                                 }),
                                         )
                                         .on_click(cx.listener(move |this, _, _, cx| {
@@ -687,13 +794,13 @@ impl Form {
                 .gap_2()
                 .child(
                     Button::new("fw-form-save")
-                        .label("Keep in draft")
+                        .label(crate::i18n::tr("Keep in draft"))
                         .disabled(locked)
                         .on_click(cx.listener(|this, _, window, cx| this.commit_form(window, cx))),
                 )
                 .child(
                     Button::new("fw-form-cancel")
-                        .label("Cancel form")
+                        .label(crate::i18n::tr("Cancel form"))
                         .disabled(locked)
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.form = None;
@@ -719,8 +826,21 @@ fn expression_actions(
         .flex_wrap()
         .gap_2()
         .child(
+            Button::new("fw-expression-guided")
+                .label(crate::i18n::tr("Add guided statement…"))
+                .disabled(locked || total >= firewall::MAX_EXPRESSIONS)
+                .on_click(cx.listener(|this, _, window, cx| {
+                    let catalogue = this.suggestions.clone();
+                    if let Some(form) = &mut this.form {
+                        form.helper = Some(helpers::Guided::statement(catalogue, window, cx));
+                    }
+                    this.error = None;
+                    cx.notify();
+                })),
+        )
+        .child(
             Button::new("fw-expression-new")
-                .label("Add statement…")
+                .label(crate::i18n::tr("Add statement…"))
                 .disabled(locked || total >= firewall::MAX_EXPRESSIONS)
                 .on_click(cx.listener(|this, _, window, cx| {
                     if let Some(form) = &mut this.form {
@@ -731,7 +851,7 @@ fn expression_actions(
         )
         .child(
             Button::new("fw-expression-edit")
-                .label("Edit statement…")
+                .label(crate::i18n::tr("Edit statement…"))
                 .disabled(locked || selected.is_none())
                 .on_click(cx.listener(|this, _, window, cx| {
                     if let Some(form) = &mut this.form {
@@ -742,7 +862,7 @@ fn expression_actions(
         )
         .child(
             Button::new("fw-expression-delete")
-                .label("Remove statement")
+                .label(crate::i18n::tr("Remove statement"))
                 .disabled(locked || selected.is_none())
                 .on_click(cx.listener(|this, _, _, cx| {
                     if let Some(form) = &mut this.form
@@ -756,7 +876,7 @@ fn expression_actions(
         )
         .child(
             Button::new("fw-expression-up")
-                .label("Move up")
+                .label(crate::i18n::tr("Move up"))
                 .disabled(locked || selected.is_none_or(|i| i == 0))
                 .on_click(cx.listener(|this, _, _, cx| {
                     if let Some(form) = &mut this.form
@@ -771,7 +891,7 @@ fn expression_actions(
         )
         .child(
             Button::new("fw-expression-down")
-                .label("Move down")
+                .label(crate::i18n::tr("Move down"))
                 .disabled(locked || selected.is_none_or(|i| i + 1 >= total))
                 .on_click(cx.listener(|this, _, _, cx| {
                     if let Some(form) = &mut this.form
@@ -786,7 +906,7 @@ fn expression_actions(
         )
         .child(
             Button::new("fw-expression-previous")
-                .label("Previous")
+                .label(crate::i18n::tr("Previous"))
                 .disabled(locked || offset == 0)
                 .on_click(cx.listener(|this, _, _, cx| {
                     if let Some(form) = &mut this.form {
@@ -798,7 +918,7 @@ fn expression_actions(
         )
         .child(
             Button::new("fw-expression-next")
-                .label("Next")
+                .label(crate::i18n::tr("Next"))
                 .disabled(locked || end >= total)
                 .on_click(cx.listener(|this, _, _, cx| {
                     if let Some(form) = &mut this.form {
@@ -823,7 +943,7 @@ fn value_actions(
         .gap_2()
         .child(
             Button::new("fw-value-new")
-                .label("Add value…")
+                .label(crate::i18n::tr("Add value…"))
                 .disabled(locked || total >= firewall::MAX_VALUES)
                 .on_click(cx.listener(|this, _, window, cx| {
                     if let Some(form) = &mut this.form {
@@ -834,7 +954,7 @@ fn value_actions(
         )
         .child(
             Button::new("fw-value-edit")
-                .label("Edit value…")
+                .label(crate::i18n::tr("Edit value…"))
                 .disabled(locked || selected.is_none())
                 .on_click(cx.listener(|this, _, window, cx| {
                     if let Some(form) = &mut this.form {
@@ -846,7 +966,7 @@ fn value_actions(
         )
         .child(
             Button::new("fw-value-delete")
-                .label("Remove value")
+                .label(crate::i18n::tr("Remove value"))
                 .disabled(locked || selected.is_none())
                 .on_click(cx.listener(|this, _, _, cx| {
                     if let Some(s) = this.form.as_mut().and_then(|f| f.statement.as_mut())
@@ -860,7 +980,7 @@ fn value_actions(
         )
         .child(
             Button::new("fw-value-up")
-                .label("Move up")
+                .label(crate::i18n::tr("Move up"))
                 .disabled(locked || selected.is_none_or(|i| i == 0))
                 .on_click(cx.listener(|this, _, _, cx| {
                     if let Some(s) = this.form.as_mut().and_then(|f| f.statement.as_mut())
@@ -875,7 +995,7 @@ fn value_actions(
         )
         .child(
             Button::new("fw-value-down")
-                .label("Move down")
+                .label(crate::i18n::tr("Move down"))
                 .disabled(locked || selected.is_none_or(|i| i + 1 >= total))
                 .on_click(cx.listener(|this, _, _, cx| {
                     if let Some(s) = this.form.as_mut().and_then(|f| f.statement.as_mut())
@@ -890,7 +1010,7 @@ fn value_actions(
         )
         .child(
             Button::new("fw-value-previous")
-                .label("Previous")
+                .label(crate::i18n::tr("Previous"))
                 .disabled(locked || offset == 0)
                 .on_click(cx.listener(|this, _, _, cx| {
                     if let Some(s) = this.form.as_mut().and_then(|f| f.statement.as_mut()) {
@@ -902,7 +1022,7 @@ fn value_actions(
         )
         .child(
             Button::new("fw-value-next")
-                .label("Next")
+                .label(crate::i18n::tr("Next"))
                 .disabled(locked || end >= total)
                 .on_click(cx.listener(|this, _, _, cx| {
                     if let Some(s) = this.form.as_mut().and_then(|f| f.statement.as_mut()) {

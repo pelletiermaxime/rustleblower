@@ -121,6 +121,7 @@ def main():
                     if len(commands) < 1024:
                         commands.append({"id":notification.id, "type":notification.type, "task":task_config, "acknowledged":False})
                     if notification.type == proto.TASK_START:
+                        assert notification.id > 10000, "OpenSnitch routes task IDs <=10000 to alerts, not streamed replies"
                         table = [{"PID":42, "Proto":6, "Iface":"eth0", "Socket":{"ID":{"Source":"192.0.2.1", "Destination":"198.51.100.2", "SourcePort":30000+i, "DestinationPort":443, "Cookie":[1,2]}, "Family":2, "State":1, "UID":1000, "INode":5000+i, "RQueue":7, "WQueue":9}} for i in range(3)]
                         payload = json.dumps({"Table":table,"Processes":{"42":{"Path":"/usr/bin/synthetic-live", "Comm":"synthetic-live"}}})
                         acknowledgements.put(proto.NotificationReply(id=notification.id, code=proto.OK, data=payload), timeout=1)

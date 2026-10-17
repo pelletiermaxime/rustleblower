@@ -1,8 +1,11 @@
 //! Disk-backed rule pages and bounded, acknowledged daemon commands.
+pub mod catalogue_policy;
 pub mod checksums;
 pub mod distribute;
 pub mod document;
 pub mod export_nodes;
+mod ordering;
+pub mod query;
 pub mod transfer;
 use crate::{
     history::History,
@@ -25,13 +28,24 @@ pub const MAX_RULES: usize = 10_000;
 pub const MAX_CATALOG_BYTES: usize = 2 * 1024 * 1024;
 const MAX_COMMANDS: usize = 16;
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(10);
+// OpenSnitch monitorTaskEvents treats IDs <=10000 as daemon-owned tasks and
+// publishes their output as alerts instead of replies to the requesting UI.
+// Keep the shared monotonic allocator above that reserved range for every
+// command, preserving uniqueness across policy commands and live tasks.
+const INITIAL_NOTIFICATION_ID: u64 = 10_000;
 
 #[derive(Clone, Default)]
 pub struct Query {
     pub node: String,
+    pub action: String,
     pub after: String,
     pub search: String,
     pub temporary: Option<bool>,
+    pub filters: Vec<query::Filter>,
+    pub logic: crate::history::query::Logic,
+    /// Frozen local visibility/status context, carried through every export/review.
+    pub policy: Option<catalogue_policy::Context>,
+    pub sort: Option<crate::view_preferences::Sort<crate::view_preferences::RuleField>>,
 }
 
 #[derive(Default)]
@@ -39,6 +53,10 @@ pub struct Page {
     pub rules: Vec<Rule>,
     pub has_more: bool,
     pub awaiting: std::collections::BTreeSet<String>,
+    /// Local UI observation seconds, absent for untouched pre-migration cache rows.
+    pub received: BTreeMap<String, i64>,
+    pub origins: BTreeMap<String, catalogue_policy::Origin>,
+    pub cache_status: BTreeMap<String, catalogue_policy::Display>,
 }
 
 pub(crate) fn schema(db: &Connection) -> rusqlite::Result<()> {
@@ -50,8 +68,45 @@ pub(crate) fn schema(db: &Connection) -> rusqlite::Result<()> {
         CREATE TABLE IF NOT EXISTS prompt_rules (
         node TEXT NOT NULL, name TEXT NOT NULL, wire BLOB NOT NULL,
         process TEXT NOT NULL, description TEXT NOT NULL, duration TEXT NOT NULL,
-        PRIMARY KEY(node,name));",
-    )
+        PRIMARY KEY(node,name));
+        CREATE TABLE IF NOT EXISTS rule_observations (
+        node TEXT NOT NULL, name TEXT NOT NULL, received INTEGER NOT NULL,
+        PRIMARY KEY(node,name));
+        CREATE TRIGGER IF NOT EXISTS application_rule_received_insert AFTER INSERT ON application_rules
+        BEGIN INSERT INTO rule_observations(node,name,received) VALUES(new.node,new.name,unixepoch())
+        ON CONFLICT(node,name) DO UPDATE SET received=excluded.received; END;
+        CREATE TRIGGER IF NOT EXISTS application_rule_received_update AFTER UPDATE OF wire ON application_rules
+        BEGIN INSERT INTO rule_observations(node,name,received) VALUES(new.node,new.name,unixepoch())
+        ON CONFLICT(node,name) DO UPDATE SET received=excluded.received; END;
+        CREATE TRIGGER IF NOT EXISTS prompt_rule_received_insert AFTER INSERT ON prompt_rules
+        BEGIN INSERT INTO rule_observations(node,name,received) VALUES(new.node,new.name,unixepoch())
+        ON CONFLICT(node,name) DO UPDATE SET received=excluded.received; END;
+        CREATE TRIGGER IF NOT EXISTS application_rule_received_delete AFTER DELETE ON application_rules
+        BEGIN DELETE FROM rule_observations WHERE node=old.node AND name=old.name
+        AND NOT EXISTS(SELECT 1 FROM prompt_rules WHERE node=old.node AND name=old.name); END;
+        CREATE TRIGGER IF NOT EXISTS prompt_rule_received_delete AFTER DELETE ON prompt_rules
+        BEGIN DELETE FROM rule_observations WHERE node=old.node AND name=old.name
+        AND NOT EXISTS(SELECT 1 FROM application_rules WHERE node=old.node AND name=old.name); END;",
+    )?;
+    let has_run: bool = db.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('rule_observations') WHERE name='ui_run')",
+        [],
+        |row| row.get(0),
+    )?;
+    if !has_run {
+        db.execute_batch("ALTER TABLE rule_observations ADD COLUMN ui_run BLOB CHECK(ui_run IS NULL OR length(ui_run)=16);")?;
+    }
+    Ok(())
+}
+
+/// Called only after an actual inventory/accepted command/telemetry observation.
+pub(crate) fn stamp_observation(db: &Connection, node: &str, name: &str) -> rusqlite::Result<()> {
+    let run = catalogue_policy::process_run_id();
+    db.execute(
+        "UPDATE rule_observations SET ui_run=?3 WHERE node=?1 AND name=?2",
+        params![node, name, run.as_ref().map(|run| run.0.as_slice())],
+    )?;
+    Ok(())
 }
 
 pub(crate) fn valid(rule: &Rule) -> Result<(), String> {
@@ -101,6 +156,7 @@ fn put(db: &Connection, node: &str, rule: &Rule) -> anyhow::Result<()> {
         "DELETE FROM prompt_rules WHERE node=? AND name=?",
         params![node, rule.name],
     )?;
+    stamp_observation(db, node, &rule.name)?;
     Ok(())
 }
 
@@ -155,30 +211,93 @@ pub(crate) fn apply(
 }
 
 pub(crate) fn query(db: &Connection, query: &Query) -> anyhow::Result<Page> {
-    let mut statement = db.prepare_cached("WITH catalogue AS (SELECT *,0 AS awaiting FROM application_rules UNION ALL SELECT *,1 AS awaiting FROM prompt_rules) SELECT wire,awaiting FROM catalogue WHERE node=?1 AND name>?2
-        AND (?3='' OR instr(lower(name),lower(?3))>0 OR instr(lower(process),lower(?3))>0 OR instr(lower(description),lower(?3))>0)
-        AND (?4 IS NULL OR (duration!='always')=?4) ORDER BY name LIMIT 201")?;
-    let records = statement.query_map(
-        params![query.node, query.after, query.search, query.temporary],
-        |r| Ok((r.get::<_, Vec<u8>>(0)?, r.get::<_, bool>(1)?)),
-    )?;
+    let predicate = query::Predicate::new(query)?;
+    // A sorted name index and its page documents share one read snapshot.
+    // Exports may already own a transaction; never begin a nested one.
+    let snapshot = if query.sort.is_some() && db.is_autocommit() {
+        Some(db.unchecked_transaction()?)
+    } else {
+        None
+    };
+    let db = snapshot.as_ref().map_or(db, |snapshot| &**snapshot);
+    let (sql, values) = if query.sort.is_some() {
+        ordering::page_sql(db, query)?
+    } else {
+        ("WITH catalogue AS (SELECT *,0 AS awaiting FROM application_rules UNION ALL SELECT *,1 AS awaiting FROM prompt_rules) SELECT c.name,c.wire,c.awaiting,o.received,o.ui_run FROM catalogue c LEFT JOIN rule_observations o ON o.node=c.node AND o.name=c.name WHERE c.node=?1 AND c.name>?2 ORDER BY c.name LIMIT 10001".to_owned(),vec![rusqlite::types::Value::Text(query.node.clone()),rusqlite::types::Value::Text(query.after.clone())])
+    };
+    let mut statement = db.prepare_cached(&sql)?;
+    let mut records = statement.query(rusqlite::params_from_iter(values))?;
     let mut rules = Vec::new();
     let mut awaiting = std::collections::BTreeSet::new();
-    for record in records {
-        let (wire, pending) = record?;
-        let rule = Rule::decode(wire.as_slice())?;
+    let mut received = BTreeMap::new();
+    let mut origins = BTreeMap::new();
+    let mut cache_status = BTreeMap::new();
+    let (mut scanned, mut bytes, mut retained) = (0, 0, 0);
+    while let Some(record) = records.next()? {
+        let stored_name = record.get_ref(0)?.as_str()?;
+        let wire = record.get_ref(1)?.as_blob()?;
+        scanned += 1;
+        bytes += wire.len();
+        anyhow::ensure!(
+            scanned <= MAX_RULES && bytes <= MAX_CATALOG_BYTES && wire.len() <= MAX_RULE_BYTES,
+            "Rule query exceeds bounded catalogue limits"
+        );
+        let rule = Rule::decode(wire)?;
+        valid(&rule).map_err(anyhow::Error::msg)?;
+        anyhow::ensure!(
+            stored_name == rule.name,
+            "Cached rule identity does not match its document"
+        );
+        let observation = record.get::<_, Option<i64>>(3)?;
+        if !predicate.matches_received(&query.node, &rule, observation) {
+            continue;
+        }
+        retained += memory_bytes(&rule);
+        anyhow::ensure!(
+            retained <= 8 * 1024 * 1024,
+            "Matching rule page exceeds its 8 MiB allocation bound"
+        );
+        let pending = record.get::<_, bool>(2)?;
+        if let Some(context) = query.policy {
+            let origin = match record.get_ref(4)? {
+                rusqlite::types::ValueRef::Null => context.origin(None, observation, pending),
+                rusqlite::types::ValueRef::Blob(marker) => {
+                    context.origin(Some(&marker[..marker.len().min(17)]), observation, pending)
+                }
+                _ => catalogue_policy::Origin::Unknown,
+            };
+            origins.insert(rule.name.clone(), origin);
+            let mut display =
+                catalogue_policy::derive(context.settings, &rule, origin, context.now_unix);
+            if pending {
+                display.status = catalogue_policy::Status::Unknown;
+            }
+            cache_status.insert(rule.name.clone(), display);
+        }
         if pending {
             awaiting.insert(rule.name.clone());
         }
+        if let Some(time) = observation {
+            received.insert(rule.name.clone(), time);
+        }
         rules.push(rule);
+        if rules.len() == 201 {
+            break;
+        }
     }
     let has_more = rules.len() > 200;
     rules.truncate(200);
     awaiting.retain(|name| rules.iter().any(|rule| &rule.name == name));
+    received.retain(|name, _| rules.iter().any(|rule| &rule.name == name));
+    origins.retain(|name, _| rules.iter().any(|rule| &rule.name == name));
+    cache_status.retain(|name, _| rules.iter().any(|rule| &rule.name == name));
     Ok(Page {
         rules,
         has_more,
         awaiting,
+        received,
+        origins,
+        cache_status,
     })
 }
 
@@ -419,7 +538,7 @@ pub struct Control {
 impl Control {
     pub(crate) fn new(catalogues: Arc<Catalogues>) -> Self {
         Self {
-            next: AtomicU64::new(0),
+            next: AtomicU64::new(INITIAL_NOTIFICATION_ID),
             state: Mutex::new(State::default()),
             catalogues,
         }

@@ -12,6 +12,7 @@ use anyhow::{Context as _, Result};
 use futures_util::{Stream, StreamExt};
 use std::{
     collections::BTreeMap,
+    future::Future,
     io,
     os::unix::{
         fs::{MetadataExt, PermissionsExt},
@@ -29,10 +30,9 @@ use std::{
 };
 use tokio::{
     io::{AsyncRead, AsyncWrite, ReadBuf},
-    net::UnixStream,
-    sync::mpsc,
+    sync::{OwnedSemaphorePermit, Semaphore, mpsc},
 };
-use tokio_stream::wrappers::{ReceiverStream, UnixListenerStream};
+use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
 use tonic::{
     Request, Response, Status as RpcStatus,
@@ -45,10 +45,12 @@ pub const MAX_MESSAGE_BYTES: usize = 2 * 1024 * 1024;
 pub struct Session {
     pub id: u64,
     pub name: String,
+    pub reported_name: String,
     pub version: String,
     pub rules: usize,
     pub last_seen: Instant,
     pub notifications: bool,
+    pub local: bool,
 }
 
 #[derive(Clone, Default)]
@@ -65,6 +67,9 @@ pub struct Status {
 
 #[derive(Clone)]
 pub struct Handle {
+    pub listener: String,
+    connections: Arc<Semaphore>,
+    initial_connections: Arc<Semaphore>,
     pub prompts: Arc<Prompts>,
     pub control: Arc<Control>,
     pub history: History,
@@ -76,9 +81,23 @@ pub struct Handle {
     pub desktop_notices: Arc<crate::desktop_notifications::Mailbox>,
     pub live: Arc<crate::live::Tasks>,
     pub subscriptions: crate::subscriptions::Handle,
+    pub updates: crate::updates::Handle,
+    pub reputation: crate::reputation::Handle,
+    pub raw_downloads: crate::raw_downloads::Handle,
+    pub highlighting: crate::highlighting::Handle,
+    pub catalogue_policy: crate::rules::catalogue_policy::Handle,
+    pub catalogue_run: Option<crate::rules::catalogue_policy::RunId>,
+    pub live_presentation: crate::live::presentation::Handle,
+    pub view_preferences: crate::view_preferences::Handle,
 }
 
 impl Handle {
+    pub fn connection_count(&self) -> usize {
+        crate::transport::MAX_CONNECTIONS - self.connections.available_permits()
+    }
+    pub fn initial_connection_count(&self) -> usize {
+        crate::transport::MAX_INITIAL_CONNECTIONS - self.initial_connections.available_permits()
+    }
     pub fn popup_policy(&self) -> (crate::preferences::Popup, u64, Decision) {
         let preferences = self.preferences.snapshot();
         let timeout = preferences.timeout.unwrap_or(self.prompt_timeout);
@@ -114,6 +133,13 @@ impl Handle {
     }
     pub fn shutdown(&self) {
         self.subscriptions.shutdown();
+        self.updates.shutdown();
+        self.reputation.shutdown();
+        self.raw_downloads.shutdown();
+        self.highlighting.shutdown();
+        self.catalogue_policy.shutdown();
+        self.live_presentation.shutdown();
+        self.view_preferences.shutdown();
         self.cancel.cancel();
     }
     pub fn session(&self, id: u64) -> Option<Session> {
@@ -155,6 +181,13 @@ pub struct Backend {
     server: thread::JoinHandle<()>,
     history: Worker,
     subscriptions: crate::subscriptions::Worker,
+    updates: crate::updates::Worker,
+    reputation: crate::reputation::Worker,
+    raw_downloads: crate::raw_downloads::Worker,
+    highlighting: crate::highlighting::Worker,
+    catalogue_policy: crate::rules::catalogue_policy::Worker,
+    live_presentation: crate::live::presentation::Worker,
+    view_preferences: crate::view_preferences::Worker,
 }
 
 impl Backend {
@@ -165,34 +198,95 @@ impl Backend {
         config: Config,
         overrides: crate::history::storage::Overrides,
     ) -> Result<Self> {
-        anyhow::ensure!(config.socket.is_absolute(), "Socket path must be absolute");
+        // Desktop dependencies can also enable Ring. Select a default explicitly
+        // before Tonic constructs TLS configs; preserve a caller's installed provider.
+        let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+        let endpoint = crate::transport::Endpoint::parse(&config.socket)?;
+        let tls = config.transport.tls(&endpoint)?;
+        let mut rpc_server = Server::builder();
+        if let Some(tls) = tls {
+            rpc_server = rpc_server
+                .tls_config(tls)
+                .context("Invalid TLS credentials")?;
+        }
+        let local_addresses = Arc::new(if matches!(endpoint, crate::transport::Endpoint::Tcp(_)) {
+            crate::transport::local_addresses()?
+        } else {
+            Default::default()
+        });
         let preferences = Arc::new(crate::preferences::Store::open(&config.database)?);
         // Bind without unlinking: never steal opensnitch-ui's endpoint.
-        let listener = StdListener::bind(&config.socket).with_context(|| {
-            format!(
-                "Cannot bind {}. Existing sockets are never replaced; choose --socket for testing.",
-                config.socket.display()
-            )
-        })?;
-        let guard = SocketGuard::new(config.socket.clone())?;
-        std::fs::set_permissions(&config.socket, std::fs::Permissions::from_mode(0o600))?;
-        listener.set_nonblocking(true)?;
+        let (listener, guard, address) = match endpoint {
+            crate::transport::Endpoint::Unix(path) => {
+                let listener=StdListener::bind(&path).with_context(||format!("Cannot bind {}. Existing sockets are never replaced; choose --socket for testing.",path.display()))?;
+                let guard = SocketGuard::new(path.clone())?;
+                std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
+                listener.set_nonblocking(true)?;
+                (
+                    crate::transport::Listener::Unix(listener),
+                    Some(guard),
+                    path.display().to_string(),
+                )
+            }
+            crate::transport::Endpoint::Tcp(address) => {
+                let listener = std::net::TcpListener::bind(address)
+                    .with_context(|| format!("Cannot bind TCP listener {address}"))?;
+                let address = listener.local_addr()?.to_string();
+                listener.set_nonblocking(true)?;
+                (crate::transport::Listener::Tcp(listener), None, address)
+            }
+        };
         let history = Worker::start_with_overrides(
             &config.database,
             config.history_days,
             config.history_mib,
             overrides,
         )?;
-        let subscriptions = crate::subscriptions::Worker::start(
+        let desktop_notices = Arc::new(crate::desktop_notifications::Mailbox::default());
+        let subscriptions = crate::subscriptions::Worker::start_with_notices(
             &config
                 .database
                 .parent()
                 .unwrap_or(std::path::Path::new("."))
                 .join("subscriptions"),
+            desktop_notices.clone(),
+        );
+        let update_notices = desktop_notices.clone();
+        let updates = crate::updates::Worker::start(
+            crate::updates::path_for(&config.database),
+            Some(Arc::new(move |notice| update_notices.post_update(&notice))),
+        );
+        let reputation =
+            crate::reputation::Worker::start(crate::reputation::path_for(&config.database));
+        let raw_notices = desktop_notices.clone();
+        let raw_downloads = crate::raw_downloads::Worker::start(
+            config.database.clone(),
+            config.socket.clone(),
+            Some(Arc::new(move |notice| {
+                raw_notices.post_raw_download(&notice)
+            })),
+        );
+        let highlighting =
+            crate::highlighting::Worker::start(crate::highlighting::path_for(&config.database));
+        // Startup runs before the UI; entropy failure leaves origin unknown.
+        let catalogue_run = crate::rules::catalogue_policy::process_run_id();
+        let catalogue_policy = crate::rules::catalogue_policy::Worker::start(
+            crate::rules::catalogue_policy::path_for(&config.database),
+        );
+        let live_presentation = crate::live::presentation::Worker::start(
+            crate::live::presentation::path_for(&config.database),
+        );
+        let view_preferences = crate::view_preferences::Worker::start(
+            crate::view_preferences::path_for(&config.database),
         );
         let control = Arc::new(Control::new(history.history.health.catalogues.clone()));
         let live = Arc::new(crate::live::Tasks::new(control.clone()));
         let handle = Handle {
+            listener: address,
+            connections: Arc::new(Semaphore::new(crate::transport::MAX_CONNECTIONS)),
+            initial_connections: Arc::new(Semaphore::new(
+                crate::transport::MAX_INITIAL_CONNECTIONS,
+            )),
             prompts: Arc::new(Prompts::default()),
             control,
             live,
@@ -202,8 +296,16 @@ impl Backend {
             timeout_action: config.timeout_action,
             prompt_timeout: config.prompt_timeout,
             preferences,
-            desktop_notices: Arc::new(crate::desktop_notifications::Mailbox::default()),
+            desktop_notices,
             subscriptions: subscriptions.handle(),
+            updates: updates.handle(),
+            reputation: reputation.handle(),
+            raw_downloads: raw_downloads.handle(),
+            highlighting: highlighting.handle(),
+            catalogue_policy: catalogue_policy.handle(),
+            catalogue_run,
+            live_presentation: live_presentation.handle(),
+            view_preferences: view_preferences.handle(),
         };
         let service = Service {
             handle: handle.clone(),
@@ -224,6 +326,7 @@ impl Backend {
                         let command_cancel = server_handle.cancel.clone();
                         let subscription_handle=server_handle.subscriptions.clone();
                         let subscription_status=server_handle.status.clone();
+                        let update_handle=server_handle.updates.clone();
                         let pause_history=server_handle.history.clone();
                         tokio::spawn(async move {
                             let mut restoring: Vec<crate::rules::PauseRestore> = Vec::new();
@@ -239,7 +342,13 @@ impl Backend {
                                             Err(tokio::sync::oneshot::error::TryRecvError::Empty)=>true,
                                         });
                                         if restoring.len()<crate::nodes::MAX_NODES {restoring.extend(control.restore_pauses(&pause_history,crate::nodes::MAX_NODES-restoring.len()));}
-                                        subscription_handle.local_ready(subscription_status.lock().unwrap().sessions.values().any(|s|s.notifications));
+                                        subscription_handle.local_ready(subscription_status.lock().unwrap().sessions.values().any(|s|s.notifications&&s.local));
+                                        let selected = {
+                                            let status = subscription_status.lock().unwrap();
+                                            status.sessions.get(&status.selected).filter(|s| !s.version.is_empty())
+                                                .map(|s| crate::updates::TargetVersion { node: s.name.clone(), version: s.version.clone() })
+                                        };
+                                        update_handle.set_daemon(selected);
                                     },
                                 }
                             }
@@ -262,15 +371,34 @@ impl Backend {
                                 _ = signal_cancel.cancelled() => {},
                             }
                         });
-                        let listener = tokio::net::UnixListener::from_std(listener)?;
+                        let incoming=listener.incoming()?;
                         let ids = Arc::new(AtomicU64::new(history::now_nanos() as u64));
                         let connection_history = server_handle.history.clone();
                         let connection_handle = server_handle.clone();
-                        let incoming = UnixListenerStream::new(listener).map(move |s| {
-                            s.map(|stream| SessionIo {
+                        let permits=server_handle.connections.clone();
+                        let initial_permits=server_handle.initial_connections.clone();
+                        let incoming = incoming.filter_map(move |s| {
+                            let Ok(permit)=permits.clone().try_acquire_owned() else {return futures_util::future::ready(None);};
+                            futures_util::future::ready(Some(s.and_then(|stream| {
+                                let peer=match &stream {
+                                    crate::transport::Io::Unix(_)=>crate::transport::Peer::unix(),
+                                    crate::transport::Io::Tcp(tcp)=>{tcp.set_nodelay(true)?;crate::transport::Peer::tcp_socket(tcp.peer_addr()?,&local_addresses)},
+                                };
+                                let deadline=peer.address.map(|_|Box::pin(tokio::time::sleep(crate::transport::INITIAL_DEADLINE)));
+                                let initial=if peer.address.is_some() {
+                                    match initial_permits.clone().try_acquire_owned() {
+                                        Ok(permit)=>Some(permit),
+                                        Err(_)=>return Err(io::Error::new(io::ErrorKind::ConnectionAborted,"Initial connection capacity reached")),
+                                    }
+                                } else {None};
+                                Ok(SessionIo {
                                 stream,
+                                deadline,
+                                _permit:permit,
                                 handle: connection_handle.clone(),
                                 info: ConnectionId {
+                                    initial: Arc::new(Mutex::new(initial)),
+                                    peer,
                                     session: Arc::new(AtomicU64::new(0)),
                                     ids: ids.clone(),
                                     history: Arc::new(Mutex::new(ConnectionHistory {
@@ -281,14 +409,15 @@ impl Backend {
                                         statistics: None,
                                     })),
                                 },
-                            })
+                            })})))
                         });
-                        Server::builder()
+                        rpc_server
                             .concurrency_limit_per_connection(64)
+                            .max_concurrent_streams(64)
                             .add_service(
-                                UiServer::new(service)
+                                crate::transport::Admission::new(UiServer::new(service)
                                     .max_decoding_message_size(MAX_MESSAGE_BYTES)
-                                    .max_encoding_message_size(MAX_MESSAGE_BYTES),
+                                    .max_encoding_message_size(MAX_MESSAGE_BYTES)),
                             )
                             .serve_with_incoming_shutdown(
                                 incoming,
@@ -308,6 +437,13 @@ impl Backend {
             server,
             history,
             subscriptions,
+            updates,
+            reputation,
+            raw_downloads,
+            highlighting,
+            catalogue_policy,
+            live_presentation,
+            view_preferences,
         })
     }
 
@@ -315,6 +451,13 @@ impl Backend {
         self.handle.shutdown();
         let _ = self.server.join();
         self.subscriptions.join();
+        self.updates.join();
+        self.reputation.join();
+        self.raw_downloads.join();
+        self.highlighting.join();
+        self.catalogue_policy.join();
+        self.live_presentation.join();
+        self.view_preferences.join();
         drop(self.handle);
         self.history.join();
     }
@@ -372,14 +515,35 @@ impl Drop for ConnectionHistory {
 
 #[derive(Clone)]
 struct ConnectionId {
+    initial: Arc<Mutex<Option<OwnedSemaphorePermit>>>,
+    peer: crate::transport::Peer,
     session: Arc<AtomicU64>,
     ids: Arc<AtomicU64>,
     history: Arc<Mutex<ConnectionHistory>>,
 }
 struct SessionIo {
-    stream: UnixStream,
+    stream: crate::transport::Io,
+    deadline: Option<Pin<Box<tokio::time::Sleep>>>,
+    _permit: OwnedSemaphorePermit,
     handle: Handle,
     info: ConnectionId,
+}
+impl SessionIo {
+    fn expired(&mut self, cx: &mut Context<'_>) -> bool {
+        if self.info.session.load(Ordering::Acquire) != 0 {
+            self.deadline = None;
+            return false;
+        }
+        self.deadline
+            .as_mut()
+            .is_some_and(|timer| timer.as_mut().poll(cx).is_ready())
+    }
+    fn deadline_error() -> io::Error {
+        io::Error::new(
+            io::ErrorKind::ConnectionAborted,
+            "Initial TLS/subscription deadline exceeded",
+        )
+    }
 }
 
 impl Drop for SessionIo {
@@ -400,6 +564,9 @@ impl AsyncRead for SessionIo {
         cx: &mut Context<'_>,
         buf: &mut ReadBuf<'_>,
     ) -> Poll<io::Result<()>> {
+        if self.expired(cx) {
+            return Poll::Ready(Err(Self::deadline_error()));
+        }
         Pin::new(&mut self.stream).poll_read(cx, buf)
     }
 }
@@ -409,9 +576,15 @@ impl AsyncWrite for SessionIo {
         cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<io::Result<usize>> {
+        if self.expired(cx) {
+            return Poll::Ready(Err(Self::deadline_error()));
+        }
         Pin::new(&mut self.stream).poll_write(cx, buf)
     }
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        if self.expired(cx) {
+            return Poll::Ready(Err(Self::deadline_error()));
+        }
         Pin::new(&mut self.stream).poll_flush(cx)
     }
     fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
@@ -529,16 +702,10 @@ impl Ui for Service {
         let id = info.ids.fetch_add(1, Ordering::Relaxed) + 1;
         let config = request.into_inner();
         let saved = crate::nodes::Saved::prepare(&config).map_err(RpcStatus::resource_exhausted)?;
-        let name = if config.name.is_empty() {
-            "local".to_string()
-        } else {
-            config.name.clone()
-        };
-        if name.len() > 128 || name.chars().any(char::is_control) {
-            return Err(RpcStatus::invalid_argument(
-                "Node name must be at most 128 bytes without control characters",
-            ));
-        }
+        let name = info
+            .peer
+            .node_key(&config.name)
+            .map_err(|e| RpcStatus::invalid_argument(e.to_string()))?;
         let mut state = self.handle.status.lock().unwrap();
         let replaced = state
             .sessions
@@ -562,10 +729,12 @@ impl Ui for Service {
             Session {
                 id,
                 name: name.clone(),
+                reported_name: config.name.clone(),
                 version: String::new(),
                 rules: config.rules.len(),
                 last_seen: Instant::now(),
                 notifications: false,
+                local: info.peer.local,
             },
         );
         if !state.sessions.contains_key(&state.selected) {
@@ -591,6 +760,7 @@ impl Ui for Service {
             .history
             .replace_rules(id, name, config.rules.clone());
         info.session.store(id, Ordering::Release);
+        info.initial.lock().unwrap().take();
         {
             let mut pending = info.history.lock().unwrap();
             pending.subscribed = true;
@@ -647,12 +817,20 @@ impl Ui for Service {
         } else {
             popup_preferences.initial(&connection, fallback)
         };
-        let (node, pending) = {
+        let (node, hostname, node_text, pending) = {
             let mut state = self.handle.status.lock().unwrap();
-            let node = state
-                .sessions
-                .get(&session_id)
-                .map(|session| session.name.clone());
+            let session = state.sessions.get(&session_id);
+            let hostname = session.map(|s| s.reported_name.clone()).unwrap_or_default();
+            let node_text = session
+                .filter(|s| !s.local)
+                .map(|s| {
+                    // TCP node keys are the trusted address/scope followed by the
+                    // reported name; never derive locality from the reported name.
+                    let address = s.name.split_once('/').map_or(s.name.as_str(), |(a, _)| a);
+                    format!("on node {address}")
+                })
+                .unwrap_or_default();
+            let node = session.map(|session| session.name.clone());
             let pending = if node.is_some()
                 && !oversized
                 && !popups_disabled
@@ -671,7 +849,12 @@ impl Ui for Service {
             if pending.is_none() && !popups_disabled {
                 state.overloaded += 1;
             }
-            (node.unwrap_or_else(|| "unregistered".into()), pending)
+            (
+                node.unwrap_or_else(|| "unregistered".into()),
+                hostname,
+                node_text,
+                pending,
+            )
         };
         let (decision, reason, id, chosen_rule) = if let Some((prompt, receiver)) = pending {
             let _guard = PendingGuard(self.handle.prompts.clone(), prompt.id);
@@ -709,6 +892,20 @@ impl Ui for Service {
         let rule = chosen_rule
             .map(|rule| *rule)
             .unwrap_or_else(|| prompts::once_rule(&safe, decision, id));
+        if reason == "timeout" {
+            // Notification preferences apply immediately; the rule/fallback
+            // above remains captured. This bounded snapshot has no I/O.
+            let notice_preferences = self.handle.preferences.snapshot();
+            crate::desktop_notifications::missed::post_timeout(
+                &self.handle.desktop_notices,
+                &notice_preferences,
+                &safe,
+                &rule,
+                &node_text,
+                &hostname,
+                reason,
+            );
+        }
         if reason == "decision"
             && rule.duration != "once"
             && !self
@@ -788,7 +985,7 @@ impl Ui for Service {
             .handle
             .session(session)
             .map(|node| node.name)
-            .unwrap_or_else(|| "Unidentified Unix peer".into());
+            .unwrap_or_else(|| "Unidentified peer".into());
         let alert = request.into_inner();
         let id = alert.id;
         match protocol::alert::Action::try_from(alert.action) {

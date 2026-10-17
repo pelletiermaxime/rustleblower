@@ -3,39 +3,49 @@ mod alerts_view;
 mod app_icon;
 mod appearance;
 mod brand_icons;
+mod catalogue_preferences;
 mod connection_details;
 mod daemon_preferences;
 mod desktop_notifications;
 mod firewall_view;
 #[cfg(all(test, feature = "headless-tests"))]
 mod headless_tests;
+mod highlighting;
 mod history_memory;
 mod history_preferences;
 mod history_table;
 mod history_tools;
 mod history_view;
+mod live_table;
+mod live_tools;
 mod live_view;
 mod nodes_view;
 mod placement;
 mod preferences_view;
 mod prompt_checksums;
+mod prompt_reputation;
 mod prompt_window;
+mod raw_downloads_view;
+mod reputation_view;
 mod rule_distribution;
 mod rule_editor;
 mod rule_exports;
 mod rule_transfer;
 mod rules_view;
+mod settings;
 mod startup_view;
 mod statistics_view;
 mod subscriptions_view;
 mod tray;
+mod updates_view;
 mod window_memory;
 use crate::{backend::Handle, config::Config};
 use gpui::{prelude::*, *};
 use gpui_kit::component::{
-    ActiveTheme, Sizable,
-    button::Button,
+    ActiveTheme, IconName, Sizable,
+    button::{Button, ButtonVariants},
     tab::{Tab, TabBar},
+    tag::Tag,
 };
 use history_view::HistoryView;
 use std::time::{Duration, Instant};
@@ -79,6 +89,7 @@ fn bind_keys(cx: &mut App) {
         KeyBinding::new("ctrl-enter", LiveStart, Some("Rustleblower")),
         KeyBinding::new("ctrl-shift-enter", LivePause, Some("Rustleblower")),
     ]);
+    settings::bind_keys(cx);
     daemon_preferences::bind_keys(cx);
     history_preferences::bind_keys(cx);
     firewall_view::bind_keys(cx);
@@ -166,11 +177,9 @@ struct Dashboard {
     subscriptions: subscriptions_view::SubscriptionsView,
     screen: Screen,
     prompt_window: Option<AnyWindowHandle>,
+    settings_window: Option<AnyWindowHandle>,
     prompt_id: Option<u64>,
     prompt_position: crate::prompts::placement::Position,
-    preferences_window: Option<AnyWindowHandle>,
-    startup_window: Option<AnyWindowHandle>,
-    appearance_window: Option<AnyWindowHandle>,
     focus: FocusHandle,
     next_status: Instant,
 }
@@ -179,12 +188,12 @@ impl Dashboard {
     fn new(backend: Handle, config: Config, window: &mut Window, cx: &mut Context<Self>) -> Self {
         placement::start(window, cx);
         Self::install_close_handler(window, cx.weak_entity(), cx);
-        let history = HistoryView::new(&backend.history, window, cx);
+        let history = HistoryView::new(&backend.history, backend.highlighting.clone(), window, cx);
         let rules = rules_view::RulesView::new(window, cx);
         let statistics = statistics_view::StatisticsView::new(window, cx);
         let nodes = nodes_view::NodesView::new(window, cx);
         let alerts = alerts_view::AlertsView::new(window, cx);
-        let live = live_view::LiveView::new(window, cx);
+        let live = live_view::LiveView::new(&backend, window, cx);
         let subscriptions = subscriptions_view::SubscriptionsView::new(window, cx);
         let focus = cx.focus_handle();
         focus.focus(window, cx);
@@ -234,11 +243,9 @@ impl Dashboard {
             subscriptions,
             screen: Screen::History,
             prompt_window: None,
+            settings_window: None,
             prompt_id: None,
             prompt_position: Default::default(),
-            preferences_window: None,
-            startup_window: None,
-            appearance_window: None,
             focus,
             next_status: Instant::now(),
         }
@@ -375,13 +382,27 @@ impl Dashboard {
         if self.quitting {
             return;
         }
-        if self
+        if let Some(target) = self
             .desktop_notifications
             .as_mut()
-            .is_some_and(|notices| notices.open_requested())
+            .and_then(|n| n.open_requested())
         {
-            self.screen = Screen::Alerts;
-            self.show_dashboard(cx);
+            match target {
+                crate::desktop_notifications::Target::Updates => self.open_updates(cx),
+                crate::desktop_notifications::Target::RawDownloads => self.open_raw_downloads(cx),
+                target => {
+                    self.screen = match target {
+                        crate::desktop_notifications::Target::Alerts => Screen::Alerts,
+                        crate::desktop_notifications::Target::Subscriptions => {
+                            Screen::Subscriptions
+                        }
+                        crate::desktop_notifications::Target::Rules => Screen::Rules,
+                        crate::desktop_notifications::Target::Updates
+                        | crate::desktop_notifications::Target::RawDownloads => unreachable!(),
+                    };
+                    self.show_dashboard(cx);
+                }
+            }
             cx.notify();
         }
         if let Some(tray) = &self.tray {
@@ -425,8 +446,10 @@ impl Dashboard {
                     self.prompt_window = Some(handle);
                 }
                 Err(e) => {
-                    self.backend.status.lock().unwrap().error =
-                        Some(format!("Cannot show permission window: {e:#}"));
+                    self.backend.status.lock().unwrap().error = Some(crate::i18n::tr_args(
+                        "Cannot show permission window: %{e}",
+                        &[("e", &format!("{:#}", e))],
+                    ));
                 }
             }
         }
@@ -447,20 +470,24 @@ impl Dashboard {
         }
     }
 
-    fn open_startup(&mut self, cx: &mut Context<Self>) {
-        if let Some(window) = self.startup_window
-            && window.update(cx, |_, w, _| w.activate_window()).is_ok()
-        {
-            return;
-        }
-        match startup_view::open(self.config.clone(), cx) {
-            Ok(window) => self.startup_window = Some(window),
-            Err(e) => {
-                self.backend.status.lock().unwrap().error =
-                    Some(format!("Cannot open startup preferences: {e:#}"))
+    fn open_settings(&mut self, page: settings::Page, cx: &mut Context<Self>) {
+        match settings::open(self.backend.clone(), self.config.clone(), page, cx) {
+            Ok(handle) => {
+                self.settings_window = Some(handle);
+                self.history.preferences_window = Some(handle);
             }
+            Err(error) => self.backend.status.lock().unwrap().error = Some(error.to_string()),
         }
         cx.notify();
+    }
+    fn open_updates(&mut self, cx: &mut Context<Self>) {
+        self.open_settings(settings::Page::Updates, cx);
+    }
+    fn open_raw_downloads(&mut self, cx: &mut Context<Self>) {
+        self.open_settings(settings::Page::Downloads, cx);
+    }
+    fn open_startup(&mut self, cx: &mut Context<Self>) {
+        self.open_settings(settings::Page::Startup, cx);
     }
     fn tick(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.remember_window(window, false);
@@ -469,20 +496,10 @@ impl Dashboard {
         if self.backend.cancel.is_cancelled() {
             return;
         }
-        if let Some(window) = self.appearance_window
-            && window.update(cx, |_, _, _| {}).is_err()
-        {
-            self.appearance_window = None;
-        }
-        if let Some(window) = self.startup_window
-            && window.update(cx, |_, _, _| {}).is_err()
-        {
-            self.startup_window = None;
-        }
-        if let Some(preferences) = self.preferences_window
+        if let Some(preferences) = self.settings_window
             && preferences.update(cx, |_, _, _| {}).is_err()
         {
-            self.preferences_window = None;
+            self.settings_window = None;
         }
         if let Some(editor) = self.rules.editor_window
             && editor.update(cx, |_, _, _| {}).is_err()
@@ -520,7 +537,9 @@ impl Dashboard {
             }) {
                 if let Some(editor) = self.rules.editor_window {
                     let _ = editor.update(cx, |_, window, _| window.activate_window());
-                    Err("Close the current rule window before opening another rule".to_string())
+                    Err(crate::i18n::tr(
+                        "Close the current rule window before opening another rule",
+                    ))
                 } else {
                     let original = action.existing.then(|| action.rule.clone());
                     match rule_editor::open(
@@ -534,11 +553,16 @@ impl Dashboard {
                             self.rules.editor_window = Some(editor);
                             Ok(())
                         }
-                        Err(error) => Err(format!("Cannot open rule editor: {error:#}")),
+                        Err(error) => Err(crate::i18n::tr_args(
+                            "Cannot open rule editor: %{error}",
+                            &[("error", &format!("{:#}", error))],
+                        )),
                     }
                 }
             } else {
-                Err("This event's daemon changed or disconnected; reopen the rule editor after reconnecting".to_string())
+                Err(crate::i18n::tr(
+                    "This event's daemon changed or disconnected; reopen the rule editor after reconnecting",
+                ))
             };
             if let Err(error) = &result {
                 self.history.error = Some(error.clone());
@@ -586,7 +610,7 @@ impl Dashboard {
         }
         if self.screen == Screen::Rules
             && self.rules.poll(
-                &self.backend.history,
+                &self.backend,
                 self.backend.status().session.as_ref(),
                 window,
                 cx,
@@ -612,23 +636,32 @@ impl Render for Dashboard {
             .session
             .as_ref()
             .map(|s| {
-                format!(
-                    "{} · OpenSnitch {} · {} rules{}",
-                    s.name,
-                    if s.version.is_empty() {
-                        "connecting"
-                    } else {
-                        &s.version
-                    },
-                    s.rules,
-                    if connected { "" } else { " · heartbeat stale" }
+                let version = if s.version.is_empty() {
+                    crate::i18n::tr("connecting")
+                } else {
+                    s.version.clone()
+                };
+                let heartbeat = if connected {
+                    String::new()
+                } else {
+                    crate::i18n::tr(" · heartbeat stale")
+                };
+                crate::i18n::tr_args(
+                    "%{arg0} · OpenSnitch %{arg1} · %{arg2} rules%{arg3}",
+                    &[
+                        ("arg0", &s.name.to_string()),
+                        ("arg1", &version),
+                        ("arg2", &format!("{}", s.rules)),
+                        ("arg3", &heartbeat),
+                    ],
                 )
             })
-            .unwrap_or_else(|| "Waiting for the OpenSnitch daemon".into());
+            .unwrap_or_else(|| crate::i18n::tr("Waiting for the OpenSnitch daemon"));
         let history_warning = self.backend.history.health.warning();
         let db_error = self.backend.history.health.error.lock().unwrap().clone();
         let pending = self.backend.prompts.snapshot().len();
-        let (popup_preferences, popup_timeout, popup_fallback) = self.backend.popup_policy();
+        let (popup_preferences, _popup_timeout, popup_fallback) = self.backend.popup_policy();
+        let fallback_title = decision_title(popup_fallback);
         let popups_disabled = !popup_preferences.popups;
         let error = state.error.or(db_error);
         let border = cx.theme().border;
@@ -641,7 +674,7 @@ impl Render for Dashboard {
             .text_color(cx.theme().foreground)
             .track_focus(&self.focus)
             .key_context("Rustleblower")
-            .on_action(cx.listener(|this,_:&LiveStart,window,cx|{if this.screen==Screen::Subscriptions{if this.subscriptions.has_transfer(){this.review_subscription_import(window,cx);}else{this.review_subscription_bulk(window,cx);}}else if this.screen==Screen::Live{this.live.start(&this.backend,cx);cx.notify();}}))
+            .on_action(cx.listener(|this,_:&LiveStart,window,cx|{if this.screen==Screen::Subscriptions{if this.subscriptions.has_notifications(){this.subscription_save(window,cx);}else if this.subscriptions.has_transfer(){this.review_subscription_import(window,cx);}else{this.review_subscription_bulk(window,cx);}}else if this.screen==Screen::Live{this.live.start(&this.backend,cx);cx.notify();}}))
             .on_action(cx.listener(|this,_:&LivePause,_,cx|{if this.screen==Screen::Subscriptions{if this.subscriptions.has_transfer(){this.apply_subscription_import(cx);}else{this.apply_subscription_bulk(cx);}}else if this.screen==Screen::Live{this.live.pause();cx.notify();}}))
             .on_action(cx.listener(|this,_:&TransferSubscriptions,window,cx|{if this.screen==Screen::Subscriptions{this.open_subscription_transfer(window,cx);}}))
             .on_action(cx.listener(|this,_:&BulkSubscriptions,window,cx|{if this.screen==Screen::Subscriptions{this.open_subscription_bulk(window,cx);}}))
@@ -685,102 +718,67 @@ impl Render for Dashboard {
                     .flex()
                     .items_center()
                     .justify_between()
-                    .px_6()
-                    .py_4()
+                    .gap_4()
+                    .flex_shrink_0()
+                    .px_4()
+                    .py_3()
                     .border_b_1()
                     .border_color(border)
                     .child(
                         div()
                             .flex()
                             .flex_col()
+                            .min_w_0()
                             .gap_1()
-                            .child(
-                                div()
-                                    .text_xl()
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .child("Rustleblower"),
-                            )
-                            .child(div().text_sm().text_color(muted).child(summary)),
+                            .child(div().text_lg().font_weight(FontWeight::SEMIBOLD).child("Rustleblower"))
+                            .child(div().text_xs().text_color(muted).truncate().child(summary)),
                     )
                     .child(
-                        div()
-                            .flex()
-                            .gap_3()
+                        div().flex().items_center().gap_3().flex_shrink_0()
                             .child(
-                                Button::new("preferences")
-                                    .label("Popup preferences…")
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                    if let Some(handle) = this.preferences_window {
-                                        let _ = handle
-                                            .update(cx, |_, window, _| window.activate_window());
-                                    } else {
-                                        match preferences_view::open(this.backend.clone(), cx) {
-                                            Ok(handle) => this.preferences_window = Some(handle),
-                                            Err(error) => {
-                                                this.backend.status.lock().unwrap().error =
-                                                    Some(format!(
-                                                        "Cannot open popup preferences: {error:#}"
-                                                    ))
-                                            }
-                                        }
-                                    }
-                                })),
+                                if connected { Tag::success() } else { Tag::secondary() }
+                                    .small()
+                                    .child(crate::i18n::tr(if connected { "Connected" } else { "Disconnected" })),
                             )
-                            .child(Button::new("startup-preferences").label("Startup…").on_click(cx.listener(|this,_,_,cx|this.open_startup(cx))))
-                            .child(Button::new("appearance-preferences").label("Appearance…").on_click(cx.listener(|this,_,_,cx|{
-                                if let Some(window)=this.appearance_window && window.update(cx,|_,w,_|w.activate_window()).is_ok(){return;}
-                                match appearance::open(&this.config.database,cx){Ok(w)=>this.appearance_window=Some(w),Err(e)=>this.backend.status.lock().unwrap().error=Some(format!("Cannot open appearance: {e:#}"))}cx.notify();
-                            })))
-                            .child(Button::new("quit").label("Quit Rustleblower").on_click(
-                                cx.listener(|this, _, window, cx| {
-                                    this.quit(Some(window),cx);
-                                }),
-                            )),
+                            .child(
+                                Button::new("settings-menu-trigger").small().ghost().icon(IconName::Settings)
+                                    .label(crate::i18n::tr("Settings"))
+                                    .on_click(cx.listener(|this, _, _, cx| this.open_settings(settings::Page::Appearance, cx))),
+                            )
+                            .child(Button::new("quit").small().ghost().label(crate::i18n::tr("Quit Rustleblower")).on_click(cx.listener(|this, _, window, cx| this.quit(Some(window), cx)))),
                     ),
             )
-            .child(
-                div()
-                    .px_6()
-                    .py_3()
-                    .flex()
-                    .justify_between()
-                    .text_sm()
-                    .child(format!(
-                        "{} pending · {} answered · {} timed out · {} overflow",
-                        pending, state.answered, state.timed_out, state.overloaded
-                    ))
-                    .child(format!(
-                        "Unanswered: {} once after {}s",
-                        popup_fallback.action(),
-                        popup_timeout
-                    )),
-            )
             .when_some(self.memory.as_ref().and_then(window_memory::Client::error),|v,error|v.child(banner(error,cx)))
+            .when_some(highlighting::message(cx), |v, message| v.child(banner(message, cx)))
+            .when_some(self.backend.highlighting.snapshot().warning.clone(), |v, warning| v.child(banner(warning, cx)))
             .when_some(history_warning, |v, warning| v.child(banner(warning, cx)))
-            .when(popups_disabled, |view|view.child(banner(format!("Permission popups are disabled. New requests receive {} once; change this in Popup preferences.",popup_fallback.action()),cx)))
+            .when(popups_disabled, |view|view.child(banner(crate::i18n::tr_args("Permission popups are disabled. New requests receive %{arg0} once; change this in Popup preferences.", &[("arg0", &fallback_title)]),cx)))
             .when_some(error, |v, e| v.child(banner(e, cx)))
             .when_some(state.last_alert, |v, e| {
                 v.child(div().px_6().py_2().text_sm().text_color(muted).child(e))
             })
             .child(
-                TabBar::new("main-tabs")
+                {
+                use gpui_kit::TestSupportExt;
+                div().id("main-navigation").test_support().flex_shrink_0().child(TabBar::new("main-tabs")
                     .small()
                     .underline()
-                    .px_6()
+                    .px_4()
                     .selected_index(match self.screen { Screen::History => 0, Screen::Rules => 1, Screen::Statistics => 2, Screen::Nodes => 3, Screen::Alerts => 4, Screen::Live => 5, Screen::Subscriptions=>6 })
                     .children([
-                        Tab::new().label("History"),
-                        Tab::new().label("Application rules"),
-                        Tab::new().label("Statistics"),
-                        Tab::new().label("Nodes"),
-                        Tab::new().label("Alerts"),
-                        Tab::new().label("Live"),
-                        Tab::new().label("Blocklists"),
+                        Tab::new().label(crate::i18n::tr("History")),
+                        Tab::new().label(crate::i18n::tr("Application rules")),
+                        Tab::new().label(crate::i18n::tr("Statistics")),
+                        Tab::new().label(crate::i18n::tr("Nodes")),
+                        Tab::new().label(crate::i18n::tr("Alerts")),
+                        Tab::new().label(crate::i18n::tr("Live")),
+                        Tab::new().label(crate::i18n::tr("Blocklists")),
                     ])
                     .on_click(cx.listener(|this, index: &usize, _, cx| {
                         this.screen = match *index { 0 => Screen::History, 1 => Screen::Rules, 2 => Screen::Statistics, 3 => Screen::Nodes, 4 => Screen::Alerts, 5=>Screen::Live, _=>Screen::Subscriptions };
                         cx.notify();
-                    })),
+                    })))
+                },
             )
             .child(match self.screen {
                 Screen::History => self.render_history(cx),
@@ -793,25 +791,24 @@ impl Render for Dashboard {
             })
             .child(
                 div()
-                    .px_6()
-                    .py_2()
+                    .px_4()
+                    .py_1()
+                    .flex_shrink_0()
                     .text_xs()
                     .text_color(muted)
                     .border_t_1()
                     .border_color(border)
-                    .child(format!(
-                        "{} · {} day history · {} MiB target · {}",
-                        self.config.socket.display(),
-                        self.backend.history.storage.snapshot().config.days,
-                        self.backend.history.storage.snapshot().config.mib,
-                        if self.tray.as_ref().is_some_and(tray::Client::available) {
-                            "closing this window hides it to the system tray"
-                        } else {
-                            "closing this window minimizes it (system tray unavailable)"
-                        }
-                    )),
+                    .child(crate::i18n::tr_args("%{arg0} pending · %{arg1} answered · %{arg2} timed out · %{arg3} overflow", &[("arg0", &pending.to_string()), ("arg1", &state.answered.to_string()), ("arg2", &state.timed_out.to_string()), ("arg3", &state.overloaded.to_string())])),
             )
     }
+}
+
+fn decision_title(decision: crate::config::Decision) -> String {
+    crate::i18n::tr(match decision {
+        crate::config::Decision::Allow => "Allow",
+        crate::config::Decision::Deny => "Deny",
+        crate::config::Decision::Reject => "Reject",
+    })
 }
 
 fn banner(message: String, cx: &App) -> Div {
@@ -821,5 +818,5 @@ fn banner(message: String, cx: &App) -> Div {
         .bg(cx.theme().warning.opacity(0.15))
         .text_color(cx.theme().warning)
         .text_sm()
-        .child(message)
+        .child(crate::i18n::presentation(&message))
 }

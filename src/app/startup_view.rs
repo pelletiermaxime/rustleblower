@@ -6,43 +6,6 @@ use crate::{
 use gpui::{prelude::*, *};
 use gpui_kit::component::{ActiveTheme, Disableable, button::Button, checkbox::Checkbox};
 use std::sync::Arc;
-pub(super) fn open(config: Config, cx: &mut App) -> gpui::Result<AnyWindowHandle> {
-    let (w, _) = gpui_kit::open_window(
-        WindowOptions {
-            window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
-                None,
-                size(px(780.), px(580.)),
-                cx,
-            ))),
-            window_min_size: Some(size(px(640.), px(480.))),
-            titlebar: Some(TitlebarOptions {
-                title: Some("Rustleblower — startup preferences".into()),
-                ..Default::default()
-            }),
-            app_id: Some("dev.rustleblower.Rustleblower".into()),
-            icon: Some(super::brand_icons::window_icon()),
-            ..Default::default()
-        },
-        cx,
-        move |window, cx| {
-            cx.new(|cx| {
-                let mut v = Startup {
-                    config,
-                    manager: None,
-                    snapshot: None,
-                    enabled: false,
-                    busy: false,
-                    error: None,
-                    message: String::new(),
-                    focus: cx.focus_handle(),
-                };
-                v.reload(window, cx);
-                v
-            })
-        },
-    )?;
-    Ok(w)
-}
 pub(super) struct Startup {
     config: Config,
     manager: Option<Arc<Manager>>,
@@ -54,6 +17,20 @@ pub(super) struct Startup {
     focus: FocusHandle,
 }
 impl Startup {
+    pub(super) fn new(config: Config, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let mut v = Startup {
+            config,
+            manager: None,
+            snapshot: None,
+            enabled: false,
+            busy: false,
+            error: None,
+            message: String::new(),
+            focus: cx.focus_handle(),
+        };
+        v.reload(window, cx);
+        v
+    }
     fn reload(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.busy {
             return;
@@ -112,21 +89,19 @@ impl Startup {
 }
 impl Render for Startup {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let border = cx.theme().border;
         let disabled = self.busy || self.snapshot.is_none();
         div().size_full().flex().flex_col().track_focus(&self.focus).bg(cx.theme().background).text_color(cx.theme().foreground)
-  .child(div().px_5().py_3().border_b_1().border_color(border).text_lg().child("Startup preferences"))
+  .child(super::settings::heading("Startup"))
   .child(div().id("startup-scroll").flex_1().min_h_0().overflow_y_scroll().px_5().py_3().flex().flex_col().gap_3()
-   .child(Checkbox::new("startup-enabled").label("Start Rustleblower when I log in").checked(self.enabled).disabled(disabled).on_change(cx.listener(|this,value:&bool,_,cx|{this.enabled = *value;cx.notify();})))
-   .child("The desktop starts this copy of Rustleblower with its current socket, history location and permission fallback. Saved retention settings continue to apply.")
-   .when_some(self.snapshot.as_ref(),|v,s|v.child(format!("Current entry: {}",s.origin.as_ref().map(|p|p.display().to_string()).unwrap_or_else(||"No startup entry".into()))))
-   .when_some(self.manager.as_ref(),|v,m|v.child(format!("User entry: {}",m.paths.user.display())).child(format!("Application: {}",m.launch.executable.display())))
-   .child("Save applies the selection. Reload reads the current entry again and discards the staged selection.")
+   .child(Checkbox::new("startup-enabled").label(crate::i18n::tr("Start Rustleblower when I log in")).checked(self.enabled).disabled(disabled).on_change(cx.listener(|this,value:&bool,_,cx|{this.enabled = *value;cx.notify();})))
+   .child(crate::i18n::tr("The desktop starts this copy of Rustleblower with its current socket, history location and permission fallback. Saved retention settings continue to apply."))
+   .when_some(self.snapshot.as_ref(),|v,s|v.child(crate::i18n::tr_args("Current entry: %{arg0}", &[("arg0", &(s.origin.as_ref().map(|p|p.display().to_string()).unwrap_or_else(||"No startup entry".into())).to_string())])))
+   .when_some(self.manager.as_ref(),|v,m|v.child(crate::i18n::tr_args("User entry: %{arg0}", &[("arg0", &(m.paths.user.display()).to_string())])).child(crate::i18n::tr_args("Application: %{arg0}", &[("arg0", &(m.launch.executable.display()).to_string())])))
+   .child(crate::i18n::tr("Save applies the selection. Reload reads the current entry again and discards the staged selection."))
    .when_some(self.error.clone(),|v,e|v.child(super::banner(e,cx)))
-   .child(self.message.clone()))
-  .child(div().px_5().py_3().border_t_1().border_color(border).flex().gap_2()
-   .child(Button::new("startup-close").label("Close").on_click(|_,window,_|window.remove_window()))
-   .child(Button::new("startup-reload").label("Reload").disabled(self.busy).on_click(cx.listener(|this,_,window,cx|this.reload(window,cx))))
-   .child(Button::new("startup-save").label("Save startup preference").disabled(disabled).on_click(cx.listener(|this,_,window,cx|this.save(window,cx)))))
+   .child(crate::i18n::presentation(&self.message))
+   .child(div().flex().child(Button::new("startup-reload").label(crate::i18n::tr("Reload")).disabled(self.busy).on_click(cx.listener(|this,_,window,cx|this.reload(window,cx))))))
+  .child(super::settings::footer("startup-close", self.busy,
+    Button::new("startup-save").disabled(disabled).on_click(cx.listener(|this,_,window,cx|this.save(window,cx))), cx))
     }
 }

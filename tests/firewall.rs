@@ -340,6 +340,7 @@ async fn client(path: &Path) -> Result<UiClient<Channel>> {
 async fn exact_reload_routing_ack_cache_rollback_reconnect_and_prompt_isolation() -> Result<()> {
     let dir = tempfile::tempdir()?;
     let options = Config {
+        transport: Default::default(),
         socket: dir.path().join("ui.sock"),
         database: dir.path().join("history.sqlite3"),
         prompt_timeout: 30,
@@ -926,6 +927,7 @@ async fn sequenced_disable_waits_for_ack_and_cache_stops_on_failures_and_release
     ] {
         let dir = tempfile::tempdir()?;
         let options = Config {
+            transport: Default::default(),
             socket: dir.path().join("ui.sock"),
             database: dir.path().join("history.sqlite3"),
             prompt_timeout: 30,

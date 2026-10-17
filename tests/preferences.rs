@@ -62,7 +62,7 @@ fn malformed_oversized_and_future_preferences_fail_explicitly() -> anyhow::Resul
     let dir = tempfile::tempdir()?;
     let database = dir.path().join("history.sqlite3");
     let path = dir.path().join("history.sqlite3.preferences.json");
-    for bytes in [vec![b' ';4097],b"{}".to_vec(),br#"{"version":5}"#.to_vec(),br#"{"version":1,"duration":"once","target":"unknown","popups":true,"priority":false,"logging":true}"#.to_vec()] {
+    for bytes in [vec![b' ';4097],b"{}".to_vec(),br#"{"version":6}"#.to_vec(),br#"{"version":1,"duration":"once","target":"unknown","popups":true,"priority":false,"logging":true}"#.to_vec()] {
         std::fs::write(&path,bytes)?;
         assert!(Store::open(&database).is_err());
     }
@@ -169,7 +169,7 @@ fn optional_preferences_migrate_old_files_and_reject_invalid_overrides() -> anyh
     store.save(new.clone())?;
     let written: serde_json::Value = serde_json::from_slice(&std::fs::read(&path)?)?;
     assert_eq!(
-        written["version"], 4,
+        written["version"], 5,
         "old binaries must reject overrides they do not understand"
     );
     assert_eq!(Store::open(&database)?.snapshot(), new);

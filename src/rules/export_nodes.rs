@@ -3,7 +3,7 @@
 use super::{Query, document};
 use anyhow::{Result, ensure};
 use prost::Message;
-use rusqlite::{Connection, OpenFlags, params};
+use rusqlite::{Connection, OpenFlags};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::{
@@ -76,7 +76,7 @@ fn component(name: &str) -> String {
         })
         .take(32)
         .collect();
-    format!("{prefix}-{:x}", Sha256::digest(name.as_bytes()))
+    format!("{prefix}-{}", hex::encode(Sha256::digest(name.as_bytes())))
 }
 /// Copy only selected rule blobs into bounded sequential disk spools, then
 /// release the live SQLite reader before JSON encoding or individual file writes.
@@ -97,10 +97,7 @@ pub fn capture(
             .all(|n| !n.is_empty() && n.len() <= 128 && unique.insert(n)),
         "Duplicate or invalid node identity"
     );
-    ensure!(
-        filter.search.len() <= 1024,
-        "Export search exceeds its limit"
-    );
+    let predicate = super::query::Predicate::new(filter)?;
     running(stop)?;
     let source = tempfile::Builder::new()
         .prefix("rustleblower-rule-snapshot-")
@@ -131,8 +128,8 @@ pub fn capture(
                 bytes: 0,
             };
             let mut spool = tempfile::NamedTempFile::new_in(source.path())?;
-            let mut query=tx.prepare("WITH catalogue AS (SELECT *,0 AS awaiting FROM application_rules UNION ALL SELECT *,1 FROM prompt_rules) SELECT name,wire,awaiting FROM catalogue WHERE node=?1 AND (?2='' OR instr(lower(name),lower(?2))>0 OR instr(lower(process),lower(?2))>0 OR instr(lower(description),lower(?2))>0) AND (?3 IS NULL OR (duration!='always')=?3) ORDER BY name")?;
-            let mut rows = query.query(params![name, filter.search, filter.temporary])?;
+            let mut query=tx.prepare("WITH catalogue AS (SELECT *,0 AS awaiting FROM application_rules UNION ALL SELECT *,1 FROM prompt_rules) SELECT c.name,c.wire,c.awaiting,o.received FROM catalogue c LEFT JOIN rule_observations o ON o.node=c.node AND o.name=c.name WHERE c.node=?1 ORDER BY c.name")?;
+            let mut rows = query.query([name])?;
             let mut allocated = 0;
             while let Some(row) = rows.next()? {
                 running(stop)?;
@@ -148,6 +145,9 @@ pub fn capture(
                     stored_name == rule.name,
                     "Cached rule identity does not match its document"
                 );
+                if !predicate.matches_received(name, &rule, row.get(3)?) {
+                    continue;
+                }
                 allocated += super::memory_bytes(&rule);
                 ensure!(
                     allocated <= 8 * 1024 * 1024,

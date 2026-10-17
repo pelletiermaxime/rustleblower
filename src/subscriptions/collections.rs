@@ -219,7 +219,7 @@ pub(super) fn synchronize(store: &Store) -> Result<Vec<Collection>, String> {
                 .insert(source.id, target.clone());
         }
     }
-    let signature = format!("{:x}", signature.finalize());
+    let signature = hex::encode(signature.finalize());
     let make_catalogue=|links:&BTreeMap<(Option<String>,String),BTreeMap<u64,PathBuf>>|->Result<Vec<Collection>,String>{links.iter().map(|((group,kind),members)|Ok(Collection{group:group.clone(),format:Format::parse(kind)?,directory:current.join(relative(group.as_deref(),kind)),members:members.len()})).collect()};
     if previous
         .as_ref()

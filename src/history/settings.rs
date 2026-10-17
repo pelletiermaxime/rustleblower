@@ -13,14 +13,19 @@ use std::{
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Presentation {
+    #[serde(default)]
+    pub node: String,
     pub search: String,
     pub action: String,
     pub filters: Vec<Filter>,
+    #[serde(default)]
+    pub logic: super::query::Logic,
     pub sort: Option<(Field, bool)>,
     pub widths: Vec<(Field, f32)>,
 }
 impl Presentation {
     pub fn validate(&self) -> Result<()> {
+        ensure!(self.node.len() <= 128, "History node exceeds 128 bytes");
         ensure!(self.search.len() <= 256, "History search exceeds 256 bytes");
         ensure!(
             matches!(self.action.as_str(), "" | "allow" | "deny" | "reject"),
@@ -33,6 +38,7 @@ impl Presentation {
         for filter in &self.filters {
             filter.validate()?;
         }
+        self.logic.validate(self.filters.len())?;
         ensure!(self.widths.len() <= FIELDS.len(), "Too many history widths");
         for (index, (field, width)) in self.widths.iter().enumerate() {
             ensure!(
@@ -48,9 +54,11 @@ impl Presentation {
     }
     pub fn query(&self) -> super::Query {
         super::Query {
+            node: self.node.clone(),
             search: self.search.clone(),
             action: self.action.clone(),
             filters: self.filters.clone(),
+            logic: self.logic.clone(),
             sort: self.sort,
             ..Default::default()
         }

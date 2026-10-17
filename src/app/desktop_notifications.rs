@@ -1,6 +1,6 @@
 //! One bounded freedesktop notification worker; no per-notification threads.
 use crate::{
-    desktop_notifications::{Mailbox, Notice},
+    desktop_notifications::{Mailbox, Notice, Target},
     preferences::Store,
 };
 use futures_util::StreamExt;
@@ -11,12 +11,12 @@ use std::{
 };
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
-use zbus::zvariant::Value;
+use zbus::Variant;
 
 const DESTINATION: &str = "org.freedesktop.Notifications";
 const PATH: &str = "/org/freedesktop/Notifications";
 pub(super) struct Client {
-    actions: mpsc::Receiver<()>,
+    actions: mpsc::Receiver<Target>,
     stop: CancellationToken,
 }
 impl Client {
@@ -45,11 +45,11 @@ impl Client {
         }
         Some(Self { actions, stop })
     }
-    pub fn open_requested(&mut self) -> bool {
-        self.actions.try_recv().is_ok()
+    pub fn open_requested(&mut self) -> Option<Target> {
+        self.actions.try_recv().ok()
     }
     #[cfg(all(test, feature = "headless-tests"))]
-    pub fn fixture() -> (Self, mpsc::Sender<()>) {
+    pub fn fixture() -> (Self, mpsc::Sender<Target>) {
         let (sender, actions) = mpsc::channel(1);
         (
             Self {
@@ -68,12 +68,12 @@ impl Drop for Client {
 
 async fn connect(address: Option<&str>) -> zbus::Result<zbus::Connection> {
     let builder = if let Some(address) = address {
-        zbus::connection::Builder::address(address)?
+        zbus::connection::Builder::address(address)
     } else {
-        zbus::connection::Builder::session()?
+        zbus::connection::Builder::session()
     };
     builder
-        .max_queued(16)
+        .max_queued(std::num::NonZeroUsize::new(16).unwrap())
         .method_timeout(Duration::from_secs(1))
         .build()
         .await
@@ -94,13 +94,25 @@ async fn send(proxy: &zbus::Proxy<'_>, id: u32, notice: &Notice) -> zbus::Result
         _ => "dialog-information",
     };
     let hints = HashMap::from([
-        ("urgency", Value::U8(notice.urgency())),
-        ("category", Value::from("network")),
+        ("urgency", Variant::U8(notice.urgency())),
+        ("category", Variant::from("network")),
         (
             "desktop-entry",
-            Value::from("dev.rustleblower.Rustleblower"),
+            Variant::from("dev.rustleblower.Rustleblower"),
         ),
     ]);
+    let action_label = crate::i18n::tr(notice.target.label());
+    let title = if notice.target == Target::Alerts {
+        crate::i18n::tr_args(
+            "Rustleblower — %{severity}",
+            &[(
+                "severity",
+                &crate::i18n::presentation(&crate::alerts::severity(notice.severity)),
+            )],
+        )
+    } else {
+        crate::i18n::tr(&notice.title())
+    };
     proxy
         .call(
             "Notify",
@@ -108,9 +120,14 @@ async fn send(proxy: &zbus::Proxy<'_>, id: u32, notice: &Notice) -> zbus::Result
                 "Rustleblower",
                 id,
                 icon,
-                notice.title(),
+                title,
                 notice.body(),
-                vec!["default", "Open alerts", "open-alerts", "Open alerts"],
+                vec![
+                    "default",
+                    action_label.as_str(),
+                    notice.target.action(),
+                    action_label.as_str(),
+                ],
                 hints,
                 10_000_i32,
             ),
@@ -121,7 +138,7 @@ async fn run(
     mailbox: Arc<Mailbox>,
     preferences: Arc<Store>,
     mut receiver: mpsc::Receiver<Notice>,
-    actions: mpsc::Sender<()>,
+    actions: mpsc::Sender<Target>,
     stop: CancellationToken,
     address: Option<&str>,
 ) {
@@ -157,7 +174,7 @@ async fn connected(
     mailbox: &Mailbox,
     preferences: &Store,
     receiver: &mut mpsc::Receiver<Notice>,
-    actions: &mpsc::Sender<()>,
+    actions: &mpsc::Sender<Target>,
     stop: &CancellationToken,
 ) -> anyhow::Result<()> {
     let proxy = zbus::Proxy::new(connection, DESTINATION, PATH, DESTINATION).await?;
@@ -166,6 +183,7 @@ async fn connected(
     let mut invoked = proxy.receive_signal("ActionInvoked").await?;
     let mut closed = proxy.receive_signal("NotificationClosed").await?;
     let mut current = 0;
+    let mut current_target = Target::Alerts;
     let mut latest = None;
     let mut interval = tokio::time::interval(Duration::from_millis(500));
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -182,9 +200,9 @@ async fn connected(
                 let Some(signal) = signal else { break };
                 if let Ok((id, action)) = signal.body().deserialize::<(u32, String)>()
                     && id != 0 && id == current
-                    && (action == "default" || action == "open-alerts")
+                    && (action == "default" || action == current_target.action())
                 {
-                    let _ = actions.try_send(());
+                    let _ = actions.try_send(current_target);
                     close(&proxy, current).await;
                     current = 0;
                 }
@@ -207,6 +225,7 @@ async fn connected(
                         Ok(id) => {
                             if current != id { close(&proxy, current).await; }
                             current = id;
+                            current_target = notice.target;
                             mailbox.accepted.fetch_add(1, Ordering::Relaxed);
                             *mailbox.error.lock().unwrap() = None;
                         }
@@ -232,7 +251,7 @@ mod tests {
         process::{Child, Command, Stdio},
         sync::atomic::{AtomicBool, AtomicU32},
     };
-    use zbus::zvariant::OwnedValue;
+    use zbus::OwnedVariant;
     struct Bus(Child);
     impl Drop for Bus {
         fn drop(&mut self) {
@@ -267,7 +286,7 @@ mod tests {
             summary: &str,
             body: &str,
             actions: Vec<String>,
-            hints: HashMap<String, OwnedValue>,
+            hints: HashMap<String, OwnedVariant>,
             expire_timeout: i32,
         ) -> u32 {
             assert_eq!(app_name, "Rustleblower");
@@ -325,8 +344,8 @@ mod tests {
         let (closes, mut closed) = mpsc::channel(16);
         let hold = Arc::new(AtomicBool::new(false));
         let release = Arc::new(tokio::sync::Notify::new());
-        let service = zbus::connection::Builder::address(address)?
-            .name(DESTINATION)?
+        let service = zbus::connection::Builder::address(address)
+            .name(DESTINATION)
             .serve_at(
                 PATH,
                 Server {
@@ -336,11 +355,12 @@ mod tests {
                     hold: hold.clone(),
                     release: release.clone(),
                 },
-            )?
+            )
             .build()
             .await?;
         let dir = tempfile::tempdir()?;
         let backend = crate::backend::Backend::start(crate::config::Config {
+            transport: Default::default(),
             socket: dir.path().join("ui.sock"),
             database: dir.path().join("history.sqlite3"),
             prompt_timeout: 30,
@@ -433,7 +453,7 @@ mod tests {
                 &(first.id, "default"),
             )
             .await?;
-        received(&mut action).await;
+        assert_eq!(received(&mut action).await, Target::Alerts);
         assert_eq!(received(&mut closed).await, first.id);
         // Dismissal invalidates the action; reopening does not duplicate callbacks.
         service
@@ -450,6 +470,202 @@ mod tests {
                 .await
                 .is_err()
         );
+        mailbox.post("replace-kind", &alert);
+        let replaced_kind = received(&mut posts).await;
+        mailbox.post_subscription("owned-list", "Updated <list> & ready", false);
+        let subscription = received(&mut posts).await;
+        assert_eq!(subscription.id, replaced_kind.id);
+        assert_eq!(subscription.replaces, replaced_kind.id);
+        assert!(subscription.title.contains("List subscriptions"));
+        assert_eq!(
+            subscription.body,
+            "owned-list\nUpdated &lt;list&gt; &amp; ready"
+        );
+        assert_eq!(subscription.urgency, 1);
+        assert_eq!(
+            subscription.actions,
+            [
+                "default",
+                "Open subscriptions",
+                "open-subscriptions",
+                "Open subscriptions"
+            ]
+        );
+        // A reused notification ID must carry its new target, and a stale alert
+        // action must not open the wrong screen after replacement.
+        service
+            .emit_signal(
+                None::<&str>,
+                PATH,
+                DESTINATION,
+                "ActionInvoked",
+                &(subscription.id, "open-alerts"),
+            )
+            .await?;
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), action.recv())
+                .await
+                .is_err()
+        );
+        service
+            .emit_signal(
+                None::<&str>,
+                PATH,
+                DESTINATION,
+                "ActionInvoked",
+                &(subscription.id, "open-subscriptions"),
+            )
+            .await?;
+        assert_eq!(received(&mut action).await, Target::Subscriptions);
+        assert_eq!(received(&mut closed).await, subscription.id);
+        crate::desktop_notifications::missed::post_timeout(
+            &mailbox,
+            &crate::preferences::Popup::default(),
+            &crate::protocol::Connection {
+                process_path: "/usr/bin/owned-client".into(),
+                process_args: vec!["owned-client".into(), "--fixture".into()],
+                ..Default::default()
+            },
+            &crate::protocol::Rule {
+                action: "deny".into(),
+                ..Default::default()
+            },
+            "",
+            "owned-host",
+            "timeout",
+        );
+        let missed = received(&mut posts).await;
+        assert!(missed.title.contains("Missed permission popup"));
+        assert_eq!(
+            missed.body,
+            "/usr/bin/owned-client\ndeny action applied \nCommand line: owned-client --fixture"
+        );
+        assert_eq!(missed.urgency, 1);
+        assert_eq!(
+            missed.actions,
+            [
+                "default",
+                "Open application rules",
+                "open-rules",
+                "Open application rules"
+            ]
+        );
+        service
+            .emit_signal(
+                None::<&str>,
+                PATH,
+                DESTINATION,
+                "ActionInvoked",
+                &(missed.id, "open-subscriptions"),
+            )
+            .await?;
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), action.recv())
+                .await
+                .is_err()
+        );
+        service
+            .emit_signal(
+                None::<&str>,
+                PATH,
+                DESTINATION,
+                "ActionInvoked",
+                &(missed.id, "open-rules"),
+            )
+            .await?;
+        assert_eq!(received(&mut action).await, Target::Rules);
+        assert_eq!(received(&mut closed).await, missed.id);
+        mailbox.post_update(&crate::updates::Notice {
+            target: crate::updates::Target::SelectedDaemon,
+            node: "owned-daemon".into(),
+            current: "1.8.1".into(),
+            latest: "1.9.0".into(),
+            release_url: "https://github.com/evilsocket/opensnitch/releases/tag/v1.9.0".into(),
+        });
+        let update = received(&mut posts).await;
+        assert!(update.title.contains("Update available"));
+        assert_eq!(update.urgency, 1);
+        assert_eq!(
+            update.body,
+            "owned-daemon\n1.8.1 → 1.9.0\nhttps://github.com/evilsocket/opensnitch/releases/tag/v1.9.0"
+        );
+        assert_eq!(
+            update.actions,
+            ["default", "Open updates", "open-updates", "Open updates"]
+        );
+        service
+            .emit_signal(
+                None::<&str>,
+                PATH,
+                DESTINATION,
+                "ActionInvoked",
+                &(update.id, "open-rules"),
+            )
+            .await?;
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), action.recv())
+                .await
+                .is_err()
+        );
+        service
+            .emit_signal(
+                None::<&str>,
+                PATH,
+                DESTINATION,
+                "ActionInvoked",
+                &(update.id, "open-updates"),
+            )
+            .await?;
+        assert_eq!(received(&mut action).await, Target::Updates);
+        assert_eq!(received(&mut closed).await, update.id);
+        mailbox.post_raw_download(&crate::raw_downloads::Notice {
+            group: "Owned files".into(),
+            success: false,
+            message: "One resource failed; previous file retained".into(),
+            failed_names: vec!["Owned resource".into()],
+            failed_count: 1,
+        });
+        let raw = received(&mut posts).await;
+        assert!(raw.title.contains("Raw downloads"));
+        assert_eq!(raw.urgency, 1);
+        assert_eq!(
+            raw.body,
+            "Owned files\nOne resource failed; previous file retained"
+        );
+        assert_eq!(
+            raw.actions,
+            [
+                "default",
+                "Open raw downloads",
+                "open-raw-downloads",
+                "Open raw downloads"
+            ]
+        );
+        service
+            .emit_signal(
+                None::<&str>,
+                PATH,
+                DESTINATION,
+                "ActionInvoked",
+                &(raw.id, "open-updates"),
+            )
+            .await?;
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), action.recv())
+                .await
+                .is_err()
+        );
+        service
+            .emit_signal(
+                None::<&str>,
+                PATH,
+                DESTINATION,
+                "ActionInvoked",
+                &(raw.id, "open-raw-downloads"),
+            )
+            .await?;
+        assert_eq!(received(&mut action).await, Target::RawDownloads);
+        assert_eq!(received(&mut closed).await, raw.id);
         mailbox.post("dismissed", &alert);
         let dismissed = received(&mut posts).await;
         service

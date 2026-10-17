@@ -20,6 +20,6 @@ intentionally, install `protoc`, then run from the repository root:
 cargo run --manifest-path tools/protocol-generator/Cargo.toml --locked
 ```
 
-The generator has its own lockfile and exact tonic-build 0.12.3 / prost-build
-0.13.5 versions. Keep wire tags and RPC streaming directions stable; run core
+The generator has its own lockfile and exact tonic-prost-build 0.14.6 / prost-build
+0.14.4 versions. Keep wire tags and RPC streaming directions stable; run core
 transport tests and the installed OpenSnitch Python-client fixture after changes.

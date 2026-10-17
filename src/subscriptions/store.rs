@@ -1,4 +1,6 @@
 use super::model::*;
+mod notifications;
+mod publication;
 mod transfer;
 use rusqlite::{Connection, OptionalExtension, params};
 use std::{
@@ -10,7 +12,17 @@ use std::{
 pub(super) struct Store {
     pub db: Connection,
     pub root: PathBuf,
-    _lock: File,
+    _lock: ManagerLock,
+}
+// Release the logical owner's lock explicitly. A concurrent fork can retain
+// the same open file description until its CLOEXEC descriptors close; closing
+// our File alone would otherwise leave a departed manager's lock held briefly.
+// This guard drops after the SQLite connection, before closing its descriptor.
+struct ManagerLock(File);
+impl Drop for ManagerLock {
+    fn drop(&mut self) {
+        let _ = self.0.unlock();
+    }
 }
 pub(super) fn now() -> i64 {
     std::time::SystemTime::now()
@@ -56,6 +68,7 @@ impl Store {
             .map_err(|e| e.to_string())?;
         lock.try_lock()
             .map_err(|_| "Another subscription manager owns this directory")?;
+        let lock = ManagerLock(lock);
         std::fs::create_dir_all(root.join("tmp")).map_err(|e| e.to_string())?;
         let db = Connection::open(root.join("subscriptions.sqlite3")).map_err(|e| e.to_string())?;
         db.busy_timeout(Duration::from_millis(250))
@@ -65,6 +78,8 @@ impl Store {
         CREATE TABLE IF NOT EXISTS subscriptions(id INTEGER PRIMARY KEY AUTOINCREMENT,revision INTEGER NOT NULL,config TEXT NOT NULL,enabled INTEGER NOT NULL,removed INTEGER NOT NULL DEFAULT 0,checked INTEGER NOT NULL DEFAULT 0,updated INTEGER NOT NULL DEFAULT 0,next_due INTEGER NOT NULL DEFAULT 0,failures INTEGER NOT NULL DEFAULT 0,bytes INTEGER NOT NULL DEFAULT 0,status TEXT NOT NULL DEFAULT 'never',error TEXT NOT NULL DEFAULT '',etag TEXT NOT NULL DEFAULT '',modified TEXT NOT NULL DEFAULT '',file TEXT);
         CREATE TABLE IF NOT EXISTS logs(id INTEGER PRIMARY KEY AUTOINCREMENT,subscription INTEGER NOT NULL,time INTEGER NOT NULL,message TEXT NOT NULL);").map_err(|e|e.to_string())?;
         db.execute_batch("CREATE TABLE IF NOT EXISTS subscription_publications(subscription INTEGER NOT NULL,kind TEXT NOT NULL,format TEXT NOT NULL,url TEXT NOT NULL,file TEXT NOT NULL,bytes INTEGER NOT NULL,PRIMARY KEY(subscription,kind));").map_err(|e|e.to_string())?;
+        db.execute_batch("CREATE TABLE IF NOT EXISTS publication_intent(id INTEGER PRIMARY KEY CHECK(id=1),subscription INTEGER NOT NULL,revision INTEGER NOT NULL,destination TEXT NOT NULL,existed INTEGER NOT NULL CHECK(existed IN(0,1)));").map_err(|e|e.to_string())?;
+        db.execute_batch("CREATE TABLE IF NOT EXISTS publication_cleanup(subscription INTEGER NOT NULL,file TEXT PRIMARY KEY CHECK(length(CAST(file AS BLOB))<=4096));").map_err(|e|e.to_string())?;
         db.execute_batch("CREATE TABLE IF NOT EXISTS collection_epoch(id INTEGER PRIMARY KEY CHECK(id=1),value INTEGER NOT NULL); INSERT OR IGNORE INTO collection_epoch VALUES(1,0);").map_err(|e|e.to_string())?;
         db.execute(
             "INSERT OR IGNORE INTO settings VALUES(1,1,?)",
@@ -81,6 +96,7 @@ impl Store {
         Ok(store)
     }
     fn recover(&mut self) -> Result<(), String> {
+        self.recover_publication()?;
         for (index, entry) in std::fs::read_dir(self.root.join("tmp"))
             .map_err(|e| e.to_string())?
             .enumerate()
@@ -263,15 +279,6 @@ impl Store {
         candidates.dedup();
         Ok(candidates)
     }
-    pub fn referenced(&self, file: &str) -> Result<bool, String> {
-        self.db
-            .query_row(
-                "SELECT EXISTS(SELECT 1 FROM subscription_publications WHERE file=?)",
-                [file],
-                |r| r.get(0),
-            )
-            .map_err(|e| e.to_string())
-    }
     fn validate_file(&self, row: &Row) -> Result<(), String> {
         if let Some(file) = &row.file {
             let path = Path::new(file);
@@ -333,8 +340,11 @@ impl Store {
                 ids
             }
         };
+        let (settings_revision, settings) = self.settings()?;
         let mut review = Review {
             patch: patch.clone(),
+            settings_revision,
+            settings,
             entries: Vec::new(),
             scanned: ids.len(),
         };
@@ -344,7 +354,7 @@ impl Store {
                 return Err("A selected subscription was removed; refresh the selection".into());
             }
             let after = patch.apply(&row.spec)?;
-            effective(&after, &self.settings()?.1)?;
+            effective(&after, &review.settings)?;
             if after != row.spec {
                 review.entries.push(Entry {
                     id,
@@ -366,8 +376,13 @@ impl Store {
     }
     pub fn apply_bulk(&mut self, review: &super::bulk::Review) -> Result<usize, String> {
         review.validate()?;
-        let settings = self.settings()?.1;
-        let tx = self.db.transaction().map_err(|e| e.to_string())?;
+        let tx = self.db.unchecked_transaction().map_err(|e| e.to_string())?;
+        let (settings_revision, settings) = self.settings()?;
+        if settings_revision != review.settings_revision || settings != review.settings {
+            return Err(
+                "Subscription defaults changed since review; rebuild before applying".into(),
+            );
+        }
         // Revalidate the entire immutable plan before writing its first row.
         for entry in &review.entries {
             effective(&entry.after, &settings)?;
@@ -541,6 +556,11 @@ impl Store {
         unchanged: bool,
     ) -> Result<(), String> {
         let (etag, modified) = validators;
+        let obsolete = if path.is_some() {
+            self.unreferenced_files(row)?
+        } else {
+            Vec::new()
+        };
         let tx = self.db.transaction().map_err(|e| e.to_string())?;
         if let Some(path) = path {
             if row.spec.enabled {
@@ -549,16 +569,45 @@ impl Store {
             }
             tx.execute("INSERT INTO subscription_publications VALUES(?1,?2,?3,?4,?5,?6) ON CONFLICT(subscription,kind) DO UPDATE SET format=excluded.format,url=excluded.url,file=excluded.file,bytes=excluded.bytes",params![row.id,row.spec.format.directory(),row.spec.format.key(),row.spec.url,path.to_string_lossy(),bytes]).map_err(|e|e.to_string())?;
         }
-        tx.execute("UPDATE subscriptions SET status=?1,error='',failures=0,bytes=?2,file=COALESCE(?3,file),etag=?4,modified=?5,next_due=?6,updated=CASE WHEN ?7 THEN updated ELSE ?8 END WHERE id=?9 AND revision=?10",params![if unchanged{"unchanged"}else{"updated"},bytes,path.map(|p|p.to_string_lossy().to_string()),etag,modified,now()+i64::from(interval),unchanged,now(),row.id,row.revision]).map_err(|e|e.to_string())?;
-        tx.commit().map_err(|e| e.to_string())?;
-        self.log(
-            row.id,
-            if unchanged {
-                "HTTP 304; retained downloaded data"
-            } else {
-                "Download validated and published"
-            },
+        let changed = tx.execute("UPDATE subscriptions SET status=?1,error='',failures=0,bytes=?2,file=COALESCE(?3,file),etag=?4,modified=?5,next_due=?6,updated=CASE WHEN ?7 THEN updated ELSE ?8 END WHERE id=?9 AND revision=?10",params![if unchanged{"unchanged"}else{"updated"},bytes,path.map(|p|p.to_string_lossy().to_string()),etag,modified,now()+i64::from(interval),unchanged,now(),row.id,row.revision]).map_err(|e|e.to_string())?;
+        if changed != 1 {
+            return Err("Subscription changed before publication could commit".into());
+        }
+        tx.execute(
+            "INSERT INTO logs(subscription,time,message) VALUES(?,?,?)",
+            params![
+                row.id,
+                now(),
+                if unchanged {
+                    "HTTP 304; retained downloaded data"
+                } else {
+                    "Download validated and published"
+                }
+            ],
         )
+        .map_err(|e| e.to_string())?;
+        tx.execute(
+            "DELETE FROM logs WHERE id NOT IN(SELECT id FROM logs ORDER BY id DESC LIMIT 1024)",
+            [],
+        )
+        .map_err(|e| e.to_string())?;
+        if let Some(path) = path {
+            for file in obsolete {
+                if Path::new(&file) != path {
+                    tx.execute("INSERT OR IGNORE INTO publication_cleanup SELECT ?1,?2 WHERE NOT EXISTS(SELECT 1 FROM subscription_publications WHERE file=?2)",params![row.id,file]).map_err(|e|e.to_string())?;
+                }
+            }
+            let queued: usize = tx
+                .query_row("SELECT count(*) FROM publication_cleanup", [], |r| r.get(0))
+                .map_err(|e| e.to_string())?;
+            if queued > 4 {
+                return Err(
+                    "Previous publication cleanup must finish before another update".into(),
+                );
+            }
+            tx.execute("DELETE FROM publication_intent WHERE id=1 AND subscription=? AND revision=? AND destination=?",params![row.id,row.revision,path.to_string_lossy()]).map_err(|e|e.to_string())?;
+        }
+        tx.commit().map_err(|e| e.to_string())
     }
     pub fn used(&self) -> Result<u64, String> {
         self.db

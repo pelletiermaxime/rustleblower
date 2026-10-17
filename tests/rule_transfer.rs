@@ -12,7 +12,7 @@ fn fixture(count: usize) -> (tempfile::TempDir, std::path::PathBuf, Vec<Rule>) {
     let dir = tempfile::tempdir().unwrap();
     let database = dir.path().join("history.sqlite3");
     let db = Connection::open(&database).unwrap();
-    db.execute_batch("PRAGMA journal_mode=WAL; CREATE TABLE application_rules(node TEXT,name TEXT,wire BLOB,process TEXT,description TEXT,duration TEXT,PRIMARY KEY(node,name)); CREATE TABLE prompt_rules AS SELECT * FROM application_rules WHERE 0;").unwrap();
+    db.execute_batch("PRAGMA journal_mode=WAL; CREATE TABLE application_rules(node TEXT,name TEXT,wire BLOB,process TEXT,description TEXT,duration TEXT,PRIMARY KEY(node,name)); CREATE TABLE prompt_rules AS SELECT * FROM application_rules WHERE 0; CREATE TABLE rule_observations(node TEXT,name TEXT,received INTEGER,ui_run BLOB,PRIMARY KEY(node,name));").unwrap();
     let rules = (0..count)
         .map(|i| Rule {
             name: format!("app.{i:03}"),

@@ -68,7 +68,7 @@ fn open_with_rules(
             ))),
             window_min_size: Some(size(px(720.), px(560.))),
             titlebar: Some(TitlebarOptions {
-                title: Some("Rustleblower — rule transfer".into()),
+                title: Some(crate::i18n::tr("Rustleblower — rule transfer").into()),
                 ..Default::default()
             }),
             app_id: Some("dev.rustleblower.Rustleblower".into()),
@@ -85,6 +85,7 @@ fn open_with_rules(
             view
         },
     )?;
+    crate::i18n::register_title(window, "Rustleblower — rule transfer", cx);
     Ok(window)
 }
 
@@ -134,9 +135,9 @@ impl RuleTransfer {
             mode,
             path,
             message: if matches!(mode, Mode::Bulk { .. }) {
-                format!(
-                    "Review {} selected rules. Changes are confirmed one rule at a time.",
-                    rules.len()
+                crate::i18n::tr_args(
+                    "Review %{arg0} selected rules. Changes are confirmed one rule at a time.",
+                    &[("arg0", &format!("{}", rules.len()))],
                 )
             } else {
                 String::new()
@@ -193,14 +194,19 @@ impl RuleTransfer {
                 this.busy = false;
                 match result {
                     Ok(rules) => {
-                        this.message = format!(
-                            "Review {} rules · {}",
-                            rules.len(),
-                            if all {
-                                "every page matching the filter"
-                            } else {
-                                "selected rules"
-                            }
+                        this.message = crate::i18n::tr_args(
+                            "Review %{arg0} rules · %{arg1}",
+                            &[
+                                ("arg0", &format!("{}", rules.len())),
+                                (
+                                    "arg1",
+                                    (if all {
+                                        "every page matching the filter"
+                                    } else {
+                                        "selected rules"
+                                    }),
+                                ),
+                            ],
                         );
                         this.rules = rules;
                     }
@@ -232,7 +238,10 @@ impl RuleTransfer {
                         }),
                         Ok(Ok(None)) => {}
                         other => {
-                            this.error = Some(format!("Cannot choose an export path: {other:?}"))
+                            this.error = Some(crate::i18n::tr_args(
+                                "Cannot choose an export path: %{other}",
+                                &[("other", &format!("{:?}", other))],
+                            ))
                         }
                     }
                     cx.notify();
@@ -260,8 +269,10 @@ impl RuleTransfer {
                         }
                         Ok(Ok(None)) => {}
                         other => {
-                            this.error =
-                                Some(format!("Cannot choose a rule transfer path: {other:?}"))
+                            this.error = Some(crate::i18n::tr_args(
+                                "Cannot choose a rule transfer path: %{other}",
+                                &[("other", &format!("{:?}", other))],
+                            ))
                         }
                     }
                     cx.notify();
@@ -278,7 +289,7 @@ impl RuleTransfer {
             match cx.read_from_clipboard().and_then(|item| item.text()) {
                 Some(text) => Some(text),
                 None => {
-                    self.error = Some("The clipboard has no rule JSON text".into());
+                    self.error = Some(crate::i18n::tr("The clipboard has no rule JSON text"));
                     cx.notify();
                     return;
                 }
@@ -308,15 +319,23 @@ impl RuleTransfer {
                 this.busy = false;
                 match result {
                     Ok((imported, names)) => {
-                        this.message = format!(
-                            "{} rules ready · {} KiB JSON · {} existing names",
-                            imported.rules.len(),
-                            imported.bytes.div_ceil(1024),
-                            imported
-                                .rules
-                                .iter()
-                                .filter(|rule| names.contains(&rule.name))
-                                .count()
+                        this.message = crate::i18n::tr_args(
+                            "%{arg0} rules ready · %{arg1} KiB JSON · %{arg2} existing names",
+                            &[
+                                ("arg0", &format!("{}", imported.rules.len())),
+                                ("arg1", &format!("{}", imported.bytes.div_ceil(1024))),
+                                (
+                                    "arg2",
+                                    &format!(
+                                        "{}",
+                                        imported
+                                            .rules
+                                            .iter()
+                                            .filter(|rule| names.contains(&rule.name))
+                                            .count()
+                                    ),
+                                ),
+                            ],
                         );
                         this.rules = imported.rules;
                         this.existing = names;
@@ -346,8 +365,13 @@ impl RuleTransfer {
         self.busy = true;
         self.applying = true;
         self.error = None;
-        self.message =
-            format!("Waiting for confirmation · 0/{total} · {skipped} existing names skipped");
+        self.message = crate::i18n::tr_args(
+            "Waiting for confirmation · 0/%{total} · %{skipped} existing names skipped",
+            &[
+                ("total", &format!("{}", total)),
+                ("skipped", &format!("{}", skipped)),
+            ],
+        );
         cx.notify();
         let stop = self.stop.clone();
         let control = self.backend.control.clone();
@@ -379,7 +403,7 @@ impl RuleTransfer {
                 if confirmed % 10 == 0 || confirmed == total {
                     let _ = this.update_in(cx, |this, _, cx| {
                         this.message =
-                            format!("Daemon confirmed {confirmed}/{total} · {skipped} skipped");
+                            crate::i18n::tr_args("Daemon confirmed %{confirmed}/%{total} · %{skipped} skipped", &[("confirmed", &format!("{}", confirmed)), ("total", &format!("{}", total)), ("skipped", &format!("{}", skipped))]);
                         cx.notify();
                     });
                 }
@@ -388,10 +412,7 @@ impl RuleTransfer {
                 this.busy = false;
                 this.applying = false;
                 this.rules = remaining.into();
-                this.message = format!(
-                    "Daemon confirmed {confirmed}/{total} · {skipped} skipped · {} remaining",
-                    this.rules.len()
-                );
+                this.message = crate::i18n::tr_args("Daemon confirmed %{confirmed}/%{total} · %{skipped} skipped · %{arg0} remaining", &[("confirmed", &format!("{}", confirmed)), ("total", &format!("{}", total)), ("skipped", &format!("{}", skipped)), ("arg0", &format!("{}", this.rules.len()))]);
                 this.error = error;
                 if stop.load(Ordering::Acquire) && !this.rules.is_empty() {
                     this.message.push_str(" · stopped after the current reply");
@@ -415,18 +436,36 @@ impl RuleTransfer {
         let task = cx.background_executor().spawn(async move {
             match target {
                 0 => transfer::export_text(&database, &scope).map(|(text, count)| {
-                    (Some(text), format!("Copied {count} rules to the clipboard"))
+                    (
+                        Some(text),
+                        crate::i18n::tr_args(
+                            "Copied %{count} rules to the clipboard",
+                            &[("count", &format!("{}", count))],
+                        ),
+                    )
                 }),
                 1 => transfer::export_file(&database, &scope, &path).map(|count| {
                     (
                         None,
-                        format!("Exported {count} rules to {}", path.display()),
+                        crate::i18n::tr_args(
+                            "Exported %{count} rules to %{arg0}",
+                            &[
+                                ("count", &format!("{}", count)),
+                                ("arg0", &format!("{}", path.display())),
+                            ],
+                        ),
                     )
                 }),
                 _ => transfer::export_directory(&database, &scope, &path).map(|(path, count)| {
                     (
                         None,
-                        format!("Exported {count} rules to {}", path.display()),
+                        crate::i18n::tr_args(
+                            "Exported %{count} rules to %{arg0}",
+                            &[
+                                ("count", &format!("{}", count)),
+                                ("arg0", &format!("{}", path.display())),
+                            ],
+                        ),
                     )
                 }),
             }
@@ -504,29 +543,29 @@ impl Render for RuleTransfer {
             .child(
                 Button::new("transfer-browse-file")
                     .label(if import {
-                        "Choose file…"
+                        crate::i18n::tr("Choose file…")
                     } else {
-                        "Choose JSON destination…"
+                        crate::i18n::tr("Choose JSON destination…")
                     })
                     .disabled(busy)
                     .on_click(cx.listener(|this, _, window, cx| this.browse(false, window, cx))),
             )
             .child(
                 Button::new("transfer-browse-directory")
-                    .label("Choose directory…")
+                    .label(crate::i18n::tr("Choose directory…"))
                     .disabled(busy)
                     .on_click(cx.listener(|this, _, window, cx| this.browse(true, window, cx))),
             )
             .when(import, |v| {
                 v.child(
                     Button::new("transfer-read")
-                        .label("Read path")
+                        .label(crate::i18n::tr("Read path"))
                         .disabled(busy)
                         .on_click(cx.listener(|this, _, window, cx| this.load(false, window, cx))),
                 )
                 .child(
                     Button::new("transfer-paste")
-                        .label("Read clipboard")
+                        .label(crate::i18n::tr("Read clipboard"))
                         .disabled(busy)
                         .on_click(cx.listener(|this, _, window, cx| this.load(true, window, cx))),
                 )
@@ -534,39 +573,39 @@ impl Render for RuleTransfer {
             .when(!import, |v| {
                 v.child(
                     Button::new("transfer-copy")
-                        .label("Copy JSON")
+                        .label(crate::i18n::tr("Copy JSON"))
                         .disabled(busy)
                         .on_click(cx.listener(|this, _, window, cx| this.export(0, window, cx))),
                 )
                 .child(
                     Button::new("transfer-export-file")
-                        .label("Save JSON file")
+                        .label(crate::i18n::tr("Save JSON file"))
                         .disabled(busy)
                         .on_click(cx.listener(|this, _, window, cx| this.export(1, window, cx))),
                 )
                 .child(
                     Button::new("transfer-export-directory")
-                        .label("Export rule folder")
+                        .label(crate::i18n::tr("Export rule folder"))
                         .disabled(busy)
                         .on_click(cx.listener(|this, _, window, cx| this.export(2, window, cx))),
                 )
             });
         div().size_full().flex().flex_col().track_focus(&self.focus).bg(cx.theme().background).text_color(cx.theme().foreground)
-            .child(div().px_5().py_3().border_b_1().border_color(border).text_lg().child(if let Mode::Bulk{label,..}=self.mode {label} else if import{"Import application rules"}else{"Export application rules"}))
+            .child(div().px_5().py_3().border_b_1().border_color(border).text_lg().child(if let Mode::Bulk{label,..}=self.mode {crate::i18n::tr(label)} else if import{crate::i18n::tr("Import application rules")}else{crate::i18n::tr("Export application rules")}))
             .child(div().p_5().flex().flex_col().gap_3()
-                .child(format!("Node: {}",self.scope.query.node))
-                .when(!review,|v|v.child(if let Some(names)=&self.scope.names{format!("{} selected rules",names.len())}else{"All rules matching the current filter, across every page".into()}))
+                .child(crate::i18n::tr_args("Node: %{arg0}", &[("arg0", &(self.scope.query.node).to_string())]))
+                .when(!review,|v|v.child(if let Some(names)=&self.scope.names{crate::i18n::tr_args("%{arg0} selected rules", &[("arg0", &format!("{}", names.len()))])}else{crate::i18n::tr("All rules matching the current filter, across every page")}))
                 .when(!bulk,|v|v.child(Input::new(&self.path).id("transfer-path").disabled(busy)).child(controls))
-                .child(div().text_sm().text_color(muted).child(if bulk {"Apply affects the reviewed rules. Completed changes remain applied if you stop or a later rule fails."} else if import{"Read a JSON file, an OpenSnitch rule directory, or clipboard JSON. Review the rules before applying them."}else{"JSON files and folders preserve OpenSnitch rule fields. Folder export creates a new child directory."}))
-                .when(import,|v|v.child(Checkbox::new("transfer-replace").label("Replace rules that have the same names").checked(self.replace).disabled(busy).on_change(cx.listener(|this,value:&bool,_,cx|{this.replace = *value;cx.notify();}))))
-                .when(bulk,|v|v.child(Checkbox::new("transfer-all-matching").label("Use every rule matching the current filter, across all pages").checked(self.bulk_all).disabled(busy).on_change(cx.listener(|this,value:&bool,window,cx|this.load_bulk_scope(*value,window,cx))))))
+                .child(div().text_sm().text_color(muted).child(if bulk {crate::i18n::tr("Apply affects the reviewed rules. Completed changes remain applied if you stop or a later rule fails.")} else if import{crate::i18n::tr("Read a JSON file, an OpenSnitch rule directory, or clipboard JSON. Review the rules before applying them.")}else{crate::i18n::tr("JSON files and folders preserve OpenSnitch rule fields. Folder export creates a new child directory.")}))
+                .when(import,|v|v.child(Checkbox::new("transfer-replace").label(crate::i18n::tr("Replace rules that have the same names")).checked(self.replace).disabled(busy).on_change(cx.listener(|this,value:&bool,_,cx|{this.replace = *value;cx.notify();}))))
+                .when(bulk,|v|v.child(Checkbox::new("transfer-all-matching").label(crate::i18n::tr("Use every rule matching the current filter, across all pages")).checked(self.bulk_all).disabled(busy).on_change(cx.listener(|this,value:&bool,window,cx|this.load_bulk_scope(*value,window,cx))))))
             .when_some(self.error.clone(),|v,error|v.child(super::banner(error,cx)))
-            .child(div().px_5().py_2().text_sm().child(self.message.clone()))
+            .child(div().px_5().py_2().text_sm().child(crate::i18n::presentation(&self.message)))
             .when(review,|v|v.child(rows))
             .when(!review,|v|v.child(div().flex_1()))
             .child(div().px_5().py_3().border_t_1().border_color(border).flex().justify_end().gap_2()
-                .when(review&&self.applying,|v|v.child(Button::new("transfer-stop").label("Stop after current rule").on_click(cx.listener(|this,_,_,cx|{this.stop.store(true,Ordering::Release);cx.notify();}))))
-                .child(Button::new("transfer-close").label("Close").disabled(busy).on_click(cx.listener(|_,_,window,_|window.remove_window())))
-                .when(review,|v|v.child(Button::new("transfer-apply").label(if matches!(self.mode,Mode::Bulk{action:Action::DeleteRule,..}){"Delete reviewed rules"}else{"Apply reviewed rules"}).disabled(busy||self.rules.is_empty()).on_click(cx.listener(|this,_,window,cx|this.apply(window,cx))))))
+                .when(review&&self.applying,|v|v.child(Button::new("transfer-stop").label(crate::i18n::tr("Stop after current rule")).on_click(cx.listener(|this,_,_,cx|{this.stop.store(true,Ordering::Release);cx.notify();}))))
+                .child(Button::new("transfer-close").label(crate::i18n::tr("Close")).disabled(busy).on_click(cx.listener(|_,_,window,_|window.remove_window())))
+                .when(review,|v|v.child(Button::new("transfer-apply").label(if matches!(self.mode,Mode::Bulk{action:Action::DeleteRule,..}){crate::i18n::tr("Delete reviewed rules")}else{crate::i18n::tr("Apply reviewed rules")}).disabled(busy||self.rules.is_empty()).on_click(cx.listener(|this,_,window,cx|this.apply(window,cx))))))
     }
 }

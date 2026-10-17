@@ -14,10 +14,11 @@ use tokio::sync::oneshot;
 mod bulk;
 mod collections;
 mod limits;
+mod notifications;
 mod rules;
 mod transfer;
 mod url_test;
-type Picker = Entity<SelectState<SearchableVec<SharedString>>>;
+type Picker = Entity<SelectState<SearchableVec<crate::i18n::LocalizedOption<SharedString>>>>;
 const FORMATS: &[(&str, &str)] = &[
     ("hosts", "Hosts file"),
     ("domains", "Domain names / patterns"),
@@ -42,6 +43,8 @@ enum After {
     Save,
     Action,
     Settings,
+    NotificationsLoad,
+    NotificationsSave,
     Preview,
     Logs,
 }
@@ -66,6 +69,7 @@ pub(super) struct SubscriptionsView {
     marked: std::collections::BTreeSet<u64>,
     bulk: Option<bulk::Bulk>,
     transfer: Option<transfer::Transfer>,
+    notifications: Option<notifications::Notifications>,
 }
 fn field(
     value: &str,
@@ -113,7 +117,9 @@ impl Form {
                 SearchableVec::new(
                     FORMATS
                         .iter()
-                        .map(|(_, label)| SharedString::from(*label))
+                        .map(|(_, label)| {
+                            crate::i18n::LocalizedOption::new(SharedString::from(*label), *label)
+                        })
                         .collect::<Vec<_>>(),
                 ),
                 Some(IndexPath::new(index)),
@@ -124,7 +130,10 @@ impl Form {
         });
         cx.subscribe(
             &format,
-            |_, _, _: &SelectEvent<SearchableVec<SharedString>>, cx| cx.notify(),
+            |_,
+             _,
+             _: &SelectEvent<SearchableVec<crate::i18n::LocalizedOption<SharedString>>>,
+             cx| cx.notify(),
         )
         .detach();
         Self {
@@ -229,7 +238,11 @@ impl SubscriptionsView {
     pub fn new(window: &mut Window, cx: &mut Context<Dashboard>) -> Self {
         let input = cx.new(|cx| {
             InputState::new(window, cx)
-                .placeholder("Search subscriptions…")
+                .placeholder(crate::i18n::placeholder(
+                    "Search subscriptions…",
+                    window,
+                    cx,
+                ))
                 .validate(|v, _| v.len() <= 256)
         });
         cx.subscribe(&input, |this, _, event, cx| {
@@ -263,6 +276,7 @@ impl SubscriptionsView {
             marked: Default::default(),
             bulk: None,
             transfer: None,
+            notifications: None,
         }
     }
     #[cfg(all(test, feature = "headless-tests"))]
@@ -283,6 +297,9 @@ impl SubscriptionsView {
                 .map(|r| (r.scanned, r.entries.len())),
             self.error.as_deref(),
         )
+    }
+    pub(super) fn has_notifications(&self) -> bool {
+        self.notifications.is_some()
     }
     pub(super) fn has_transfer(&self) -> bool {
         self.transfer.is_some()
@@ -355,8 +372,9 @@ impl SubscriptionsView {
             })
         {
             self.finish_rule_work();
-            self.error =
-                Some("Rule review or inspection was interrupted; reopen it to retry".into());
+            self.error = Some(crate::i18n::tr(
+                "Rule review or inspection was interrupted; reopen it to retry",
+            ));
             changed = true;
         }
         if let Some((after, rx)) = &mut self.pending {
@@ -395,12 +413,17 @@ impl SubscriptionsView {
                         Ok(Reply::Imported(count)) => {
                             self.transfer = None;
                             self.dirty = true;
-                            self.message = Some(format!("Imported {count} subscription changes"));
+                            self.message = Some(crate::i18n::tr_args(
+                                "Imported %{count} subscription changes",
+                                &[("count", &format!("{}", count))],
+                            ));
                             self.input.focus_handle(cx).focus(window, cx);
                         }
                         Ok(Reply::Exported(count)) => {
-                            self.message =
-                                Some(format!("Exported {count} subscriptions to a new file"));
+                            self.message = Some(crate::i18n::tr_args(
+                                "Exported %{count} subscriptions to a new file",
+                                &[("count", &format!("{}", count))],
+                            ));
                         }
                         Ok(Reply::BulkReview(review)) => {
                             if let Some(view) = &mut self.bulk {
@@ -411,7 +434,10 @@ impl SubscriptionsView {
                         Ok(Reply::BulkApplied(count)) => {
                             self.bulk = None;
                             self.dirty = true;
-                            self.message = Some(format!("Updated {count} subscriptions together"));
+                            self.message = Some(crate::i18n::tr_args(
+                                "Updated %{count} subscriptions together",
+                                &[("count", &format!("{}", count))],
+                            ));
                             self.input.focus_handle(cx).focus(window, cx);
                         }
                         Ok(Reply::Saved(id)) => {
@@ -419,7 +445,12 @@ impl SubscriptionsView {
                             self.input.focus_handle(cx).focus(window, cx);
                             self.selected = Some(id);
                             self.dirty = true;
-                            self.message = Some("Subscription saved".into());
+                            self.message = Some(crate::i18n::tr("Subscription saved"));
+                        }
+                        Ok(Reply::NotificationSettings(revision, config)) => {
+                            self.notifications = Some(notifications::Notifications::new(
+                                revision, config, window, cx,
+                            ));
                         }
                         Ok(Reply::Settings(revision, settings)) => {
                             self.form = Some(Form::settings(revision, settings, window, cx))
@@ -427,6 +458,10 @@ impl SubscriptionsView {
                         Ok(Reply::Preview(text)) => self.detail = Some(text),
                         Ok(Reply::Logs(lines)) => self.detail = Some(lines.join("\n")),
                         Ok(Reply::Done) => {
+                            if matches!(after, After::NotificationsSave) {
+                                self.notifications = None;
+                                self.input.focus_handle(cx).focus(window, cx);
+                            }
                             if matches!(after, After::Save) {
                                 self.form = None;
                                 self.input.focus_handle(cx).focus(window, cx);
@@ -434,7 +469,7 @@ impl SubscriptionsView {
                             self.remove = false;
                             self.dirty = true;
                             self.message = Some(
-                                if matches!(after, After::Save) {
+                                if matches!(after, After::Save | After::NotificationsSave) {
                                     "Subscription settings saved"
                                 } else {
                                     "Subscription request accepted"
@@ -467,6 +502,7 @@ impl SubscriptionsView {
         }
         if self.pending.is_none()
             && self.dirty
+            && self.notifications.is_none()
             && self.form.is_none()
             && self.bulk.is_none()
             && self.transfer.is_none()
@@ -489,6 +525,7 @@ impl SubscriptionsView {
 impl Dashboard {
     pub(super) fn new_subscription(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.subscriptions.pending.is_some()
+            || self.subscriptions.notifications.is_some()
             || self.subscriptions.form.is_some()
             || self.subscriptions.collections.is_some()
             || self.subscriptions.inspection.is_some()
@@ -513,6 +550,7 @@ impl Dashboard {
         if self.subscriptions.inspection.is_some()
             || self.subscriptions.bulk.is_some()
             || self.subscriptions.transfer.is_some()
+            || self.subscriptions.notifications.is_some()
             || self.subscriptions.form.is_some()
         {
             self.focus.focus(window, cx);
@@ -525,6 +563,10 @@ impl Dashboard {
     }
     pub(super) fn subscription_save(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.subscriptions.cancel_url_test();
+        if self.subscriptions.notifications.is_some() {
+            self.save_subscription_notifications(cx);
+            return;
+        }
         if self.subscriptions.membership_review.is_some() {
             return;
         }
@@ -540,20 +582,25 @@ impl Dashboard {
                             || old.spec.groups != spec.groups
                             || old.spec.format != spec.format =>
                         {
-                            Some(format!(
-                                "{}\nEnabled for updates and collections: {} → {}\nGroups: {} → {}\nInput format: {} → {}{}\nExisting group/all rules follow this membership. Retained direct-list files remain available to their rules.",
-                                old.spec.name,
-                                old.spec.enabled,
-                                spec.enabled,
-                                old.spec.groups.join(", "),
-                                spec.groups.join(", "),
-                                old.spec.format.key(),
-                                spec.format.key(),
-                                if old.removed {
-                                    "\nRestore this retained subscription into enabled collections."
-                                } else {
-                                    ""
-                                }
+                            Some(crate::i18n::tr_args(
+                                "%{arg0}\nEnabled for updates and collections: %{arg1} → %{arg2}\nGroups: %{arg3} → %{arg4}\nInput format: %{arg5} → %{arg6}%{arg7}\nExisting group/all rules follow this membership. Retained direct-list files remain available to their rules.",
+                                &[
+                                    ("arg0", &old.spec.name.to_string()),
+                                    ("arg1", &format!("{}", old.spec.enabled)),
+                                    ("arg2", &format!("{}", spec.enabled)),
+                                    ("arg3", &old.spec.groups.join(", ").to_string()),
+                                    ("arg4", &spec.groups.join(", ").to_string()),
+                                    ("arg5", old.spec.format.key()),
+                                    ("arg6", spec.format.key()),
+                                    (
+                                        "arg7",
+                                        (if old.removed {
+                                            "\nRestore this retained subscription into enabled collections."
+                                        } else {
+                                            ""
+                                        }),
+                                    ),
+                                ],
                             ))
                         }
                         _ => None,
@@ -583,7 +630,9 @@ impl Dashboard {
             .flex()
             .flex_col()
             .gap_3();
-        if self.subscriptions.transfer.is_some() {
+        if self.subscriptions.notifications.is_some() {
+            body = body.child(self.render_subscription_notifications(cx));
+        } else if self.subscriptions.transfer.is_some() {
             body = body.child(self.render_subscription_transfer(cx));
         } else if self.subscriptions.bulk.is_some() {
             body = body.child(self.render_subscription_bulk(cx));
@@ -591,7 +640,7 @@ impl Dashboard {
             body = body.child(self.render_subscription_rules(cx));
         } else if let Some((_, summary)) = &self.subscriptions.membership_review {
             body = body
-                .child("Review collection membership change")
+                .child(crate::i18n::tr("Review collection membership change"))
                 .child(div().text_sm().child(summary.clone()))
                 .child(
                     div()
@@ -599,7 +648,7 @@ impl Dashboard {
                         .gap_2()
                         .child(
                             Button::new("subs-membership-back")
-                                .label("Back to form")
+                                .label(crate::i18n::tr("Back to form"))
                                 .disabled(busy)
                                 .on_click(cx.listener(|this, _, _, cx| {
                                     this.subscriptions.membership_review = None;
@@ -608,7 +657,7 @@ impl Dashboard {
                         )
                         .child(
                             Button::new("subs-membership-confirm")
-                                .label("Save reviewed membership")
+                                .label(crate::i18n::tr("Save reviewed membership"))
                                 .disabled(busy)
                                 .on_click(cx.listener(|this, _, _, cx| {
                                     if let Some((request, _)) =
@@ -627,9 +676,9 @@ impl Dashboard {
         } else if self.subscriptions.collections.is_some() {
             body = body.child(self.render_collections(cx));
         } else if self.subscriptions.remove {
-            body=body.child("Remove this subscription from updates and group/all collections? Downloaded data is retained for direct-list rules. Removed entries can be restored from Show removed.")
-                .child(Button::new("subs-remove-confirm").label("Remove subscription").disabled(busy).on_click(cx.listener(|this,_,_,cx|{if let Some(row)=this.subscriptions.selected().cloned(){this.subscriptions.send(&this.backend.subscriptions,Request::Remove{id:row.id,revision:row.revision},After::Action);}cx.notify();})))
-                .child(Button::new("subs-remove-cancel").label("Keep subscription").disabled(busy).on_click(cx.listener(|this,_,_,cx|{this.subscriptions.remove=false;cx.notify();})));
+            body=body.child(crate::i18n::tr("Remove this subscription from updates and group/all collections? Downloaded data is retained for direct-list rules. Removed entries can be restored from Show removed."))
+                .child(Button::new("subs-remove-confirm").label(crate::i18n::tr("Remove subscription")).disabled(busy).on_click(cx.listener(|this,_,_,cx|{if let Some(row)=this.subscriptions.selected().cloned(){this.subscriptions.send(&this.backend.subscriptions,Request::Remove{id:row.id,revision:row.revision},After::Action);}cx.notify();})))
+                .child(Button::new("subs-remove-cancel").label(crate::i18n::tr("Keep subscription")).disabled(busy).on_click(cx.listener(|this,_,_,cx|{this.subscriptions.remove=false;cx.notify();})));
         } else if let Some(text) = self.subscriptions.detail.clone() {
             body = body
                 .child(
@@ -646,14 +695,14 @@ impl Dashboard {
                         .gap_2()
                         .child(
                             Button::new("subs-preview-copy")
-                                .label("Copy displayed text")
+                                .label(crate::i18n::tr("Copy displayed text"))
                                 .on_click(move |_, _, cx| {
                                     cx.write_to_clipboard(ClipboardItem::new_string(text.clone()))
                                 }),
                         )
                         .child(
                             Button::new("subs-preview-back")
-                                .label("Back to subscriptions")
+                                .label(crate::i18n::tr("Back to subscriptions"))
                                 .on_click(cx.listener(|this, _, _, cx| {
                                     this.subscriptions.detail = None;
                                     cx.notify();
@@ -720,7 +769,7 @@ impl Dashboard {
                         .flex()
                         .gap_3()
                         .items_center()
-                        .child(div().w(px(240.)).text_sm().child(label))
+                        .child(div().w(px(240.)).text_sm().child(crate::i18n::tr(label)))
                         .child(
                             div()
                                 .flex_1()
@@ -760,7 +809,7 @@ impl Dashboard {
                     )
                     .child(
                         Checkbox::new("subs-enabled")
-                            .label("Enabled for updates and collection rules")
+                            .label(crate::i18n::tr("Enabled for updates and collection rules"))
                             .checked(form.enabled)
                             .disabled(busy)
                             .on_change(cx.listener(|this, v: &bool, _, cx| {
@@ -773,11 +822,11 @@ impl Dashboard {
             }
             body = body
                 .child(if settings {
-                    "Subscription defaults"
+                    crate::i18n::tr("Subscription defaults")
                 } else if form.previous.is_some() {
-                    "Edit / restore subscription"
+                    crate::i18n::tr("Edit / restore subscription")
                 } else {
-                    "Add subscription"
+                    crate::i18n::tr("Add subscription")
                 })
                 .child(fields)
                 .when(!settings, |v| {
@@ -801,7 +850,7 @@ impl Dashboard {
                                 } else {
                                     cx.theme().foreground
                                 })
-                                .child(message),
+                                .child(crate::i18n::presentation(&message)),
                         )
                     })
                 })
@@ -811,7 +860,7 @@ impl Dashboard {
                         .gap_2()
                         .child(
                             Button::new("subs-save")
-                                .label("Save")
+                                .label(crate::i18n::tr("Save"))
                                 .disabled(busy)
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     this.subscription_save(window, cx)
@@ -819,7 +868,7 @@ impl Dashboard {
                         )
                         .child(
                             Button::new("subs-cancel")
-                                .label("Cancel")
+                                .label(crate::i18n::tr("Cancel"))
                                 .disabled(busy)
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     this.subscriptions.form = None;
@@ -831,7 +880,7 @@ impl Dashboard {
                         .when(!settings, |v| {
                             v.child(
                                 Button::new("subs-test-url")
-                                    .label("Test URL")
+                                    .label(crate::i18n::tr("Test URL"))
                                     .disabled(busy || form.url_test.busy())
                                     .on_click(
                                         cx.listener(|this, _, _, cx| {
@@ -841,7 +890,7 @@ impl Dashboard {
                             )
                             .child(
                                 Button::new("subs-test-cancel")
-                                    .label("Cancel URL test")
+                                    .label(crate::i18n::tr("Cancel URL test"))
                                     .disabled(!form.url_test.busy())
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         this.subscriptions.cancel_url_test();
@@ -857,7 +906,7 @@ impl Dashboard {
                 .gap_2()
                 .child(
                     Button::new("subs-collections")
-                        .label("Rule collections…")
+                        .label(crate::i18n::tr("Rule collections…"))
                         .disabled(busy)
                         .on_click(
                             cx.listener(|this, _, window, cx| this.open_collections(window, cx)),
@@ -865,7 +914,7 @@ impl Dashboard {
                 )
                 .child(
                     Button::new("subs-add")
-                        .label("Add subscription…")
+                        .label(crate::i18n::tr("Add subscription…"))
                         .disabled(busy)
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.new_subscription(window, cx);
@@ -873,7 +922,7 @@ impl Dashboard {
                 )
                 .child(
                     Button::new("subs-edit")
-                        .label("Edit / restore…")
+                        .label(crate::i18n::tr("Edit / restore…"))
                         .disabled(busy || selected.is_none())
                         .on_click(cx.listener(|this, _, window, cx| {
                             let row = this.subscriptions.selected().cloned();
@@ -894,7 +943,7 @@ impl Dashboard {
                 )
                 .child(
                     Button::new("subs-refresh")
-                        .label("Refresh selected")
+                        .label(crate::i18n::tr("Refresh selected"))
                         .disabled(busy || selected.as_ref().is_none_or(|r| r.removed))
                         .on_click(cx.listener(|this, _, _, cx| {
                             if let Some(id) = this.subscriptions.selected {
@@ -909,7 +958,7 @@ impl Dashboard {
                 )
                 .child(
                     Button::new("subs-force")
-                        .label("Force refresh")
+                        .label(crate::i18n::tr("Force refresh"))
                         .disabled(busy || selected.as_ref().is_none_or(|r| r.removed))
                         .on_click(cx.listener(|this, _, _, cx| {
                             if let Some(id) = this.subscriptions.selected {
@@ -924,7 +973,7 @@ impl Dashboard {
                 )
                 .child(
                     Button::new("subs-remove")
-                        .label("Remove…")
+                        .label(crate::i18n::tr("Remove…"))
                         .disabled(busy || selected.as_ref().is_none_or(|r| r.removed))
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.subscriptions.remove = true;
@@ -932,8 +981,21 @@ impl Dashboard {
                         })),
                 )
                 .child(
+                    Button::new("subs-notifications")
+                        .label(crate::i18n::tr("Notifications…"))
+                        .disabled(busy)
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.subscriptions.send(
+                                &this.backend.subscriptions,
+                                Request::NotificationSettings,
+                                After::NotificationsLoad,
+                            );
+                            cx.notify();
+                        })),
+                )
+                .child(
                     Button::new("subs-defaults")
-                        .label("Defaults…")
+                        .label(crate::i18n::tr("Defaults…"))
                         .disabled(busy)
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.subscriptions.send(
@@ -948,9 +1010,9 @@ impl Dashboard {
                 .child(
                     Button::new("subs-runtime")
                         .label(if state.automatic {
-                            "Pause automatic updates"
+                            crate::i18n::tr("Pause automatic updates")
                         } else {
-                            "Start automatic updates"
+                            crate::i18n::tr("Start automatic updates")
                         })
                         .disabled(busy)
                         .on_click(cx.listener(move |this, _, _, cx| {
@@ -964,7 +1026,7 @@ impl Dashboard {
                 )
                 .child(
                     Button::new("subs-stop")
-                        .label("Cancel queued/current download")
+                        .label(crate::i18n::tr("Cancel queued/current download"))
                         .disabled(busy)
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.subscriptions.send(
@@ -982,11 +1044,11 @@ impl Dashboard {
                 .flex()
                 .gap_2()
                 .items_center()
-                .child("Sort all matches:");
+                .child(crate::i18n::tr("Sort all matches:"));
             for (label, key) in [("Name", 0), ("Status", 1), ("Updated", 2), ("Size", 3)] {
                 sorting = sorting.child(
                     Button::new(("subs-sort", key as usize))
-                        .label(label)
+                        .label(crate::i18n::tr(label))
                         .selected(matches!(
                             (self.subscriptions.query.sort, key),
                             (Sort::Name, 0)
@@ -1010,7 +1072,7 @@ impl Dashboard {
             sorting = sorting
                 .child(
                     Checkbox::new("subs-descending")
-                        .label("Descending")
+                        .label(crate::i18n::tr("Descending"))
                         .checked(self.subscriptions.query.descending)
                         .on_change(cx.listener(|this, v: &bool, _, cx| {
                             this.subscriptions.query.descending = *v;
@@ -1021,7 +1083,7 @@ impl Dashboard {
                 )
                 .child(
                     Checkbox::new("subs-removed")
-                        .label("Show removed")
+                        .label(crate::i18n::tr("Show removed"))
                         .checked(self.subscriptions.query.removed)
                         .on_change(cx.listener(|this, v: &bool, _, cx| {
                             this.subscriptions.marked.clear();
@@ -1038,13 +1100,13 @@ impl Dashboard {
                     .flex_wrap()
                     .gap_2()
                     .items_center()
-                    .child(format!(
-                        "{} marked across pages",
-                        self.subscriptions.marked.len()
+                    .child(crate::i18n::tr_args(
+                        "%{arg0} marked across pages",
+                        &[("arg0", &(self.subscriptions.marked.len()).to_string())],
                     ))
                     .child(
                         Button::new("subs-mark-page")
-                            .label("Mark page")
+                            .label(crate::i18n::tr("Mark page"))
                             .disabled(busy || self.subscriptions.query.removed)
                             .on_click(cx.listener(|this, _, _, cx| {
                                 if let Some(page) = &this.subscriptions.page {
@@ -1061,7 +1123,7 @@ impl Dashboard {
                     )
                     .child(
                         Button::new("subs-clear-marks")
-                            .label("Clear marks")
+                            .label(crate::i18n::tr("Clear marks"))
                             .disabled(busy || self.subscriptions.marked.is_empty())
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.subscriptions.marked.clear();
@@ -1070,7 +1132,7 @@ impl Dashboard {
                     )
                     .child(
                         Button::new("subs-transfer")
-                            .label("Import / export…")
+                            .label(crate::i18n::tr("Import / export…"))
                             .disabled(busy || self.subscriptions.query.removed)
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.open_subscription_transfer(window, cx)
@@ -1078,7 +1140,7 @@ impl Dashboard {
                     )
                     .child(
                         Button::new("subs-bulk")
-                            .label("Bulk edit…")
+                            .label(crate::i18n::tr("Bulk edit…"))
                             .disabled(busy || self.subscriptions.query.removed)
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.open_subscription_bulk(window, cx)
@@ -1096,9 +1158,9 @@ impl Dashboard {
             if let Some(page) = &self.subscriptions.page {
                 if page.rows.is_empty() {
                     rows = rows.child(if self.subscriptions.query.search.is_empty() {
-                        "No subscriptions yet. Add a list URL to get started."
+                        crate::i18n::tr("No subscriptions yet. Add a list URL to get started.")
                     } else {
-                        "No matching subscriptions"
+                        crate::i18n::tr("No matching subscriptions")
                     });
                 }
                 for row in &page.rows {
@@ -1127,17 +1189,22 @@ impl Dashboard {
                                 ListItem::new(("subscription-row", id))
                                     .flex_1()
                                     .selected(self.subscriptions.selected == Some(id))
-                                    .child(format!(
-                                        "{} · {} · {} · {} bytes · {}",
-                                        row.spec.name,
-                                        row.spec.format.key(),
-                                        row.status,
-                                        row.bytes,
-                                        if row.spec.enabled {
-                                            "enabled"
-                                        } else {
-                                            "disabled"
-                                        }
+                                    .child(crate::i18n::tr_args(
+                                        "%{arg0} · %{arg1} · %{arg2} · %{arg3} bytes · %{arg4}",
+                                        &[
+                                            ("arg0", &(row.spec.name).to_string()),
+                                            ("arg1", (row.spec.format.key())),
+                                            ("arg2", &(row.status).to_string()),
+                                            ("arg3", &(row.bytes).to_string()),
+                                            (
+                                                "arg4",
+                                                (if row.spec.enabled {
+                                                    "enabled"
+                                                } else {
+                                                    "disabled"
+                                                }),
+                                            ),
+                                        ],
                                     ))
                                     .on_click(cx.listener(move |this, _, _, cx| {
                                         this.subscriptions.selected = Some(id);
@@ -1148,7 +1215,7 @@ impl Dashboard {
                     );
                 }
             } else {
-                rows = rows.child("Loading subscriptions…");
+                rows = rows.child(crate::i18n::tr("Loading subscriptions…"));
             }
             body = body.child(rows);
             if let Some(row) = selected {
@@ -1160,31 +1227,22 @@ impl Dashboard {
                 let ready = target.as_ref().is_some_and(|s| {
                     s.notifications && self.backend.history.health.catalogues.ready(s.id)
                 });
-                body=body.child(div().text_sm().child(format!("Local daemon target: {node_label}. Choose a different target on the Nodes page.")))
+                body=body.child(div().text_sm().child(crate::i18n::tr_args("Local daemon target: %{node_label}. Choose a different target on the Nodes page.", &[("node_label", (node_label))])))
                     .child(div().flex().gap_2()
-                        .child(Button::new("subs-rule-create").label("Review new list rule…").disabled(busy||!ready||row.removed||row.publication.is_none()||self.rules.editor_window.is_some()).on_click(cx.listener(|this,_,window,cx|this.prepare_subscription_rules(true,0,window,cx))))
-                        .child(Button::new("subs-rule-inspect").label("Inspect associated rules…").disabled(busy||target.is_none()||row.publication.is_none()).on_click(cx.listener(|this,_,window,cx|this.prepare_subscription_rules(false,0,window,cx)))))
-                    .when(row.publication.is_none(),|v|v.child(div().text_sm().child("Refresh this URL and format to prepare compatible daemon list data.")));
+                        .child(Button::new("subs-rule-create").label(crate::i18n::tr("Review new list rule…")).disabled(busy||!ready||row.removed||row.publication.is_none()||self.rules.editor_window.is_some()).on_click(cx.listener(|this,_,window,cx|this.prepare_subscription_rules(true,0,window,cx))))
+                        .child(Button::new("subs-rule-inspect").label(crate::i18n::tr("Inspect associated rules…")).disabled(busy||target.is_none()||row.publication.is_none()).on_click(cx.listener(|this,_,window,cx|this.prepare_subscription_rules(false,0,window,cx)))))
+                    .when(row.publication.is_none(),|v|v.child(div().text_sm().child(crate::i18n::tr("Refresh this URL and format to prepare compatible daemon list data."))));
                 body = body
-                    .child(div().text_sm().child(format!(
-                            "{}\n{}\nChecked {} · updated {} · next {} · failures {}\n{}",
-                            row.spec.url,
-                            row.file
+                    .child(div().text_sm().child(crate::i18n::tr_args("%{arg0}\n%{arg1}\nChecked %{arg2} · updated %{arg3} · next %{arg4} · failures %{arg5}\n%{arg6}", &[("arg0", &(row.spec.url).to_string()), ("arg1", &(row.file
                                 .clone()
-                                .unwrap_or_else(|| "No downloaded data yet".into()),
-                            row.checked,
-                            row.updated,
-                            row.next_due,
-                            row.failures,
-                            row.error
-                        )))
+                                .unwrap_or_else(|| "No downloaded data yet".into())).to_string()), ("arg2", &(row.checked).to_string()), ("arg3", &(row.updated).to_string()), ("arg4", &(row.next_due).to_string()), ("arg5", &(row.failures).to_string()), ("arg6", &(row.error).to_string())])))
                     .child(
                         div()
                             .flex()
                             .gap_2()
                             .child(
                                 Button::new("subs-preview")
-                                    .label("Inspect downloaded text")
+                                    .label(crate::i18n::tr("Inspect downloaded text"))
                                     .disabled(busy || row.file.is_none())
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         if let Some(id) = this.subscriptions.selected {
@@ -1199,7 +1257,7 @@ impl Dashboard {
                             )
                             .child(
                                 Button::new("subs-logs")
-                                    .label("Status history")
+                                    .label(crate::i18n::tr("Status history"))
                                     .disabled(busy)
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         if let Some(id) = this.subscriptions.selected {
@@ -1214,7 +1272,7 @@ impl Dashboard {
                             )
                             .child(
                                 Button::new("subs-copy-path")
-                                    .label("Copy list path")
+                                    .label(crate::i18n::tr("Copy list path"))
                                     .disabled(row.file.is_none())
                                     .on_click(move |_, _, cx| {
                                         if let Some(path) = &row.file {
@@ -1234,7 +1292,7 @@ impl Dashboard {
                     .gap_2()
                     .child(
                         Button::new("subs-previous")
-                            .label("Previous")
+                            .label(crate::i18n::tr("Previous"))
                             .disabled(offset == 0 || busy)
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.subscriptions.query.offset =
@@ -1243,14 +1301,20 @@ impl Dashboard {
                                 cx.notify();
                             })),
                     )
-                    .child(format!(
-                        "{}–{} of {total}",
-                        if total == 0 { 0 } else { offset + 1 },
-                        (offset + PAGE).min(total)
+                    .child(crate::i18n::tr_args(
+                        "%{arg0}–%{arg1} of %{total}",
+                        &[
+                            (
+                                "arg0",
+                                &(if total == 0 { 0 } else { offset + 1 }).to_string(),
+                            ),
+                            ("arg1", &((offset + PAGE).min(total)).to_string()),
+                            ("total", &(total).to_string()),
+                        ],
                     ))
                     .child(
                         Button::new("subs-next")
-                            .label("Next")
+                            .label(crate::i18n::tr("Next"))
                             .disabled(offset + PAGE >= total || busy)
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.subscriptions.query.offset += PAGE;
@@ -1260,10 +1324,10 @@ impl Dashboard {
                     ),
             );
         }
-        div().flex_1().min_h_0().flex().flex_col().gap_3().p_6().child("Blocklist subscriptions")
-            .child(div().text_sm().child(if let Some(id)=state.active{format!("Downloading subscription {id} · {} bytes",state.downloaded.load(std::sync::atomic::Ordering::Relaxed))}else if state.automatic&&!state.local_ready{"Automatic updates enabled; waiting for a local daemon".into()}else if state.automatic{"Automatic updates enabled".into()}else{"Automatic updates paused; manual refresh is available".into()}))
-            .child(div().text_sm().child("Downloading lists does not change firewall rules. Previous valid data is kept when a download fails."))
-            .when(state.archived_metadata>0,|v|v.child(div().text_sm().child(format!("{} older imported metadata records remain archived; reimport the original file to bind them to current identities.",state.archived_metadata))))
+        div().flex_1().min_h_0().flex().flex_col().gap_3().p_6().child(crate::i18n::tr("Blocklist subscriptions"))
+            .child(div().text_sm().child(if let Some(id)=state.active{crate::i18n::tr_args("Downloading subscription %{id} · %{arg0} bytes", &[("id", &format!("{}", id)), ("arg0", &format!("{}", state.downloaded.load(std::sync::atomic::Ordering::Relaxed)))])}else if state.automatic&&!state.local_ready{crate::i18n::tr("Automatic updates enabled; waiting for a local daemon")}else if state.automatic{crate::i18n::tr("Automatic updates enabled")}else{crate::i18n::tr("Automatic updates paused; manual refresh is available")}))
+            .child(div().text_sm().child(crate::i18n::tr("Downloading lists does not change firewall rules. Previous valid data is kept when a download fails.")))
+            .when(state.archived_metadata>0,|v|v.child(div().text_sm().child(crate::i18n::tr_args("%{arg0} older imported metadata records remain archived; reimport the original file to bind them to current identities.", &[("arg0", &(state.archived_metadata).to_string())]))))
             .when_some(state.error.clone().or_else(||self.subscriptions.error.clone()),|v,e|v.child(super::banner(e,cx)))
             .when_some(self.subscriptions.message.clone(),|v,m|v.child(div().text_sm().child(m))).child(body)
     }

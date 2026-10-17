@@ -2,8 +2,10 @@
 //! Neither gRPC nor GPUI waits for disk I/O.
 pub mod details;
 pub mod export;
+pub mod grouped;
 pub mod metadata;
 pub mod query;
+pub mod selection;
 pub mod settings;
 pub mod storage;
 use crate::{
@@ -47,10 +49,12 @@ pub struct Row {
 
 #[derive(Clone, Default)]
 pub struct Query {
+    pub node: String,
     pub before: Option<i64>,
     pub search: String,
     pub action: String,
     pub filters: Vec<query::Filter>,
+    pub logic: query::Logic,
     pub sort: Option<(query::Field, bool)>,
     pub cursor: Option<query::Cursor>,
     pub ceiling: Option<i64>,
@@ -140,6 +144,7 @@ struct Record {
     detail: Vec<u8>,
     truncated: u32,
     observed_rule: Option<Box<Rule>>,
+    observed_name: Option<String>,
     metadata: String,
 }
 
@@ -154,6 +159,11 @@ impl Record {
             })
             .cloned()
             .map(Box::new);
+        let observed_name = event
+            .rule
+            .as_ref()
+            .filter(|rule| !rule.name.is_empty() && rule.name.len() <= 1024)
+            .map(|rule| rule.name.clone());
         let con = event.connection.as_ref();
         let rule = event.rule.as_ref();
         let action = rule.map_or(String::new(), |r| bounded(&r.action, 32));
@@ -186,6 +196,7 @@ impl Record {
             detail,
             truncated,
             observed_rule,
+            observed_name,
             metadata,
         }
     }
@@ -197,6 +208,7 @@ impl Record {
             + self.destination.capacity()
             + self.detail.capacity()
             + self.metadata.capacity()
+            + self.observed_name.as_ref().map_or(0, String::capacity)
             + self
                 .observed_rule
                 .as_ref()
@@ -750,8 +762,13 @@ impl History {
         &self,
         mut query: rules::Query,
     ) -> Option<oneshot::Receiver<std::result::Result<rules::Page, String>>> {
-        query.search = bounded(&query.search, 256);
         let (tx, rx) = oneshot::channel();
+        if let Err(error) = rules::query::Predicate::new(&query) {
+            let _ = tx.send(Err(error.to_string()));
+            return Some(rx);
+        }
+        query.filters.shrink_to_fit();
+        query.logic.groups.shrink_to_fit();
         self.tx.try_send(Command::QueryRules(query, tx)).ok()?;
         Some(rx)
     }
@@ -878,6 +895,7 @@ impl History {
             return Some(rx);
         }
         query.filters.shrink_to_fit();
+        query.logic.groups.shrink_to_fit();
         self.tx.try_send(Command::Query(Box::new(query), tx)).ok()?;
         Some(rx)
     }
@@ -916,7 +934,12 @@ impl History {
         let (tx, rx) = oneshot::channel();
         // Used for shutdown/tests, never in an RPC or UI callback.
         let sender = self.tx.clone();
-        tokio::task::spawn_blocking(move || sender.send(Command::Barrier(tx))).await??;
+        tokio::task::spawn_blocking(move || {
+            sender
+                .send(Command::Barrier(tx))
+                .map_err(|_| anyhow::anyhow!("History worker stopped before flush"))
+        })
+        .await??;
         rx.await?;
         Ok(())
     }
@@ -948,7 +971,7 @@ fn open(path: &Path, mib: u32) -> Result<Connection> {
     ))?;
     let version: i64 = db.query_row("PRAGMA user_version", [], |r| r.get(0))?;
     anyhow::ensure!(
-        version <= 9,
+        version <= 11,
         "History schema {version} is newer than this application supports"
     );
     let tx = db.transaction()?;
@@ -962,6 +985,7 @@ fn open(path: &Path, mib: u32) -> Result<Connection> {
         CREATE INDEX IF NOT EXISTS events_time ON events(received,id);
         CREATE INDEX IF NOT EXISTS events_process ON events(process,id);
         CREATE INDEX IF NOT EXISTS events_action ON events(action,id);
+        CREATE INDEX IF NOT EXISTS events_node ON events(node,id);
         CREATE INDEX IF NOT EXISTS events_destination ON events(destination,id);
         CREATE TABLE IF NOT EXISTS usage (id INTEGER PRIMARY KEY CHECK(id=1), bytes INTEGER NOT NULL);
         INSERT OR IGNORE INTO usage VALUES(1,0);
@@ -984,39 +1008,15 @@ fn open(path: &Path, mib: u32) -> Result<Connection> {
     crate::statistics::schema(&tx)?;
     crate::alerts::schema(&tx)?;
     storage::schema(&tx)?;
-    tx.pragma_update(None, "user_version", 9)?;
+    tx.pragma_update(None, "user_version", 11)?;
     tx.commit()?;
     Ok(db)
 }
 
-// NULL marks legacy rows, so interrupted indexing resumes on next launch.
+// NULL/metadata schema markers let interrupted indexing resume on next launch.
 // Runs in the worker between commands, not before the RPC listener can start.
 pub(crate) fn backfill_chunk(db: &mut Connection, after: &mut i64) -> Result<bool> {
-    let pending: Vec<(i64, Option<Vec<u8>>, u32)> = {
-        let mut statement=db.prepare("SELECT e.id,d.payload,coalesce(d.truncated,0) FROM events e LEFT JOIN event_details d ON d.event_id=e.id WHERE e.id>? AND e.metadata IS NULL ORDER BY e.id LIMIT 32")?;
-        statement
-            .query_map([*after], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
-            .collect::<rusqlite::Result<_>>()?
-    };
-    if pending.is_empty() {
-        return Ok(false);
-    }
-    let tx = db.transaction()?;
-    let mut additional = 0;
-    for (id, wire, flags) in pending {
-        let mut metadata = wire
-            .and_then(|wire| Event::decode(wire.as_slice()).ok())
-            .map(|event| metadata::Metadata::from_event(&event))
-            .unwrap_or_default();
-        metadata.truncated |= flags != 0;
-        let json = serde_json::to_string(&metadata)?;
-        let bytes = json.len() + 24;
-        if tx.execute("UPDATE events SET metadata=?1,stored_bytes=stored_bytes+?2 WHERE id=?3 AND metadata IS NULL",params![json,bytes,id])?==1 {additional+=bytes;}
-        *after = id;
-    }
-    tx.execute("UPDATE usage SET bytes=bytes+?", [additional])?;
-    tx.commit()?;
-    Ok(true)
+    metadata::backfill_chunk(db, after)
 }
 
 fn insert(db: &mut Connection, node: &str, events: &[Record], reason: &str) -> Result<()> {
@@ -1044,6 +1044,14 @@ fn insert(db: &mut Connection, node: &str, events: &[Record], reason: &str) -> R
                     "INSERT INTO event_details(event_id,payload,truncated) VALUES(?,?,?)",
                     params![tx.last_insert_rowid(), event.detail, event.truncated],
                 )?;
+                // Only actual daemon telemetry advances the local observation clock.
+                // The INSERT SELECT can create no row outside the bounded catalogue.
+                if reason == "observed"
+                    && let Some(name) = &event.observed_name
+                {
+                    tx.execute("INSERT INTO rule_observations(node,name,received) SELECT node,name,?3 FROM application_rules WHERE node=?1 AND name=?2 UNION SELECT node,name,?3 FROM prompt_rules WHERE node=?1 AND name=?2 ON CONFLICT(node,name) DO UPDATE SET received=excluded.received", params![node,name,now_seconds()])?;
+                    rules::stamp_observation(&tx, node, name)?;
+                }
             }
         }
     }
@@ -1113,6 +1121,7 @@ fn prune_reserved(db: &Connection, days: u32, mib: u32, reserved: u64) -> Result
 }
 
 pub(crate) fn query_page(db: &Connection, query: &Query) -> Result<Page> {
+    metadata::ensure_ready(db, query)?;
     let ceiling = match query.ceiling {
         Some(id) => id,
         None => db.query_row("SELECT coalesce(max(id),0) FROM events", [], |row| {
@@ -1435,7 +1444,7 @@ mod tests {
         let mut db = open(&path, 16)?;
         assert_eq!(
             db.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))?,
-            9
+            11
         );
         let old = query_detail(&db, 1)?.unwrap();
         assert!(old.event.is_none());

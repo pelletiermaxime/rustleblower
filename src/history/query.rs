@@ -1,8 +1,33 @@
 //! Typed, bound-parameter history filters shared by pages and exports.
+mod formula;
 use super::Row;
 use anyhow::{Result, ensure};
+pub use formula::Formula;
 use rusqlite::types::Value;
 use serde::{Deserialize, Serialize};
+
+/// Bounded cached identities, including nodes whose daemon is now offline.
+/// Call on a background executor after the history writer's fence.
+pub fn node_choices(database: &std::path::Path) -> Result<Vec<String>> {
+    let db = rusqlite::Connection::open_with_flags(
+        database,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )?;
+    db.busy_timeout(std::time::Duration::from_millis(250))?;
+    db.execute_batch("PRAGMA query_only=ON; PRAGMA cache_size=-512; PRAGMA mmap_size=0;")?;
+    let mut statement = db.prepare("SELECT node FROM events WHERE node<>'' UNION SELECT name FROM node_info WHERE name<>'' ORDER BY 1 LIMIT 33")?;
+    let mut names = Vec::new();
+    for row in statement.query_map([], |row| row.get::<_, String>(0))? {
+        let name = row?;
+        ensure!(name.len() <= 128, "History node exceeds 128 bytes");
+        names.push(name);
+    }
+    ensure!(
+        names.len() <= crate::nodes::MAX_NODES,
+        "Cached node choices are unavailable"
+    );
+    Ok(names)
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -20,6 +45,7 @@ pub enum Field {
     Pid,
     Process,
     Command,
+    Cwd,
     Rule,
     Duration,
     Logged,
@@ -41,6 +67,7 @@ pub const FIELDS: &[Field] = &[
     Field::Pid,
     Field::Process,
     Field::Command,
+    Field::Cwd,
     Field::Rule,
     Field::Duration,
     Field::Logged,
@@ -67,6 +94,7 @@ impl Field {
             Self::Pid => "PID",
             Self::Process => "Executable",
             Self::Command => "Command line",
+            Self::Cwd => "Working directory",
             Self::Rule => "Matched rule",
             Self::Duration => "Rule duration",
             Self::Logged => "Logging",
@@ -116,6 +144,7 @@ impl Field {
             Self::User => "json_extract(metadata,'$.user')",
             Self::Pid => "json_extract(metadata,'$.pid')",
             Self::Command => "json_extract(metadata,'$.command')",
+            Self::Cwd => "nullif(json_extract(metadata,'$.cwd'),'')",
             Self::Rule => "json_extract(metadata,'$.rule')",
             Self::Duration => "json_extract(metadata,'$.duration')",
             Self::Logged => "json_extract(metadata,'$.logged')",
@@ -143,6 +172,7 @@ impl Field {
             Self::User => m.user.map(|n| n.to_string()).unwrap_or_default(),
             Self::Pid => m.pid.map(|n| n.to_string()).unwrap_or_default(),
             Self::Command => m.command.clone(),
+            Self::Cwd => m.cwd.clone(),
             Self::Rule => m.rule.clone(),
             Self::Duration => m.duration.clone(),
             Self::Logged => m
@@ -165,7 +195,7 @@ impl Field {
     }
     pub fn width(self) -> f32 {
         match self {
-            Self::Process | Self::Command => 280.,
+            Self::Process | Self::Command | Self::Cwd => 280.,
             Self::Time => 240.,
             Self::SourceIp | Self::DestinationIp | Self::Host | Self::Rule => 200.,
             _ => 120.,
@@ -176,21 +206,31 @@ impl Field {
 #[serde(rename_all = "snake_case")]
 pub enum Comparison {
     Contains,
+    NotContains,
+    StartsWith,
+    EndsWith,
     Equals,
     NotEquals,
     Exact,
     Before,
     After,
+    AtMost,
+    AtLeast,
     Missing,
     Present,
 }
 pub const COMPARISONS: &[(Comparison, &str)] = &[
     (Comparison::Contains, "Contains"),
+    (Comparison::NotContains, "Does not contain"),
+    (Comparison::StartsWith, "Starts with"),
+    (Comparison::EndsWith, "Ends with"),
     (Comparison::Equals, "Equals"),
     (Comparison::Exact, "Exact match"),
     (Comparison::NotEquals, "Does not equal"),
     (Comparison::Before, "Less than / before"),
     (Comparison::After, "Greater than / after"),
+    (Comparison::AtMost, "At most / at or before"),
+    (Comparison::AtLeast, "At least / at or after"),
     (Comparison::Missing, "Not reported"),
     (Comparison::Present, "Reported"),
 ];
@@ -214,7 +254,15 @@ impl Filter {
         if matches!(self.comparison, Comparison::Missing | Comparison::Present) {
             return Ok(Value::Null);
         }
-        if self.field.numeric() && self.comparison != Comparison::Contains {
+        if self.field.numeric()
+            && !matches!(
+                self.comparison,
+                Comparison::Contains
+                    | Comparison::NotContains
+                    | Comparison::StartsWith
+                    | Comparison::EndsWith
+            )
+        {
             let n = if self.field == Field::Time {
                 self.value
                     .parse::<i64>()
@@ -258,6 +306,160 @@ impl Filter {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Match {
+    #[default]
+    All,
+    Any,
+}
+impl Match {
+    fn sql(self) -> &'static str {
+        match self {
+            Self::All => " AND ",
+            Self::Any => " OR ",
+        }
+    }
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::All => "All (AND)",
+            Self::Any => "Any (OR)",
+        }
+    }
+    pub fn toggled(self) -> Self {
+        match self {
+            Self::All => Self::Any,
+            Self::Any => Self::All,
+        }
+    }
+}
+/// A group consumes the next `count` conditions in their displayed order.
+/// Counts partition the existing filter vector: no recursion, references or
+/// duplicated leaves can inflate the established eight-condition budget.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Group {
+    pub count: u8,
+    pub mode: Match,
+}
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Logic {
+    /// Optional bounded condition-number expression. Empty keeps the original
+    /// group controls and legacy all/any behavior.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub formula: String,
+    #[serde(default)]
+    pub mode: Match,
+    #[serde(default)]
+    pub groups: Vec<Group>,
+}
+impl Logic {
+    pub fn validate(&self, conditions: usize) -> Result<()> {
+        ensure!(
+            self.formula.len() <= 256,
+            "A formula is limited to 256 bytes"
+        );
+        if !self.formula.trim().is_empty() {
+            Formula::parse(&self.formula, conditions)?;
+        }
+        ensure!(
+            conditions <= 8 && self.groups.len() <= 8,
+            "Use at most eight conditions and groups"
+        );
+        if self.groups.is_empty() {
+            return Ok(());
+        }
+        ensure!(
+            self.groups.iter().all(|g| g.count > 0),
+            "Condition groups must not be empty"
+        );
+        ensure!(
+            self.groups
+                .iter()
+                .map(|g| usize::from(g.count))
+                .sum::<usize>()
+                == conditions,
+            "Condition groups must partition all conditions exactly once"
+        );
+        Ok(())
+    }
+    pub fn normalized(mut self, conditions: usize) -> Self {
+        if self.groups.is_empty() && conditions > 0 && conditions <= 8 {
+            self.groups.push(Group {
+                count: conditions as u8,
+                mode: self.mode,
+            });
+        }
+        self
+    }
+    pub fn append(&mut self, new_group: bool, existing: usize) {
+        self.formula.clear();
+        *self = self.clone().normalized(existing);
+        if new_group || self.groups.is_empty() {
+            self.groups.push(Group {
+                count: 1,
+                mode: Match::All,
+            });
+        } else if let Some(group) = self.groups.last_mut() {
+            group.count += 1;
+        }
+    }
+    pub fn remove(&mut self, index: usize, existing: usize) {
+        self.formula.clear();
+        *self = self.clone().normalized(existing);
+        let mut start = 0;
+        for group in &mut self.groups {
+            if (start..start + usize::from(group.count)).contains(&index) {
+                group.count -= 1;
+                break;
+            }
+            start += usize::from(group.count);
+        }
+        self.groups.retain(|g| g.count > 0);
+    }
+}
+
+fn filter_sql(filter: &Filter, values: &mut Vec<Value>) -> Result<String> {
+    let column = filter.field.sql();
+    let value = filter.value()?;
+    let result = match filter.comparison {
+        Comparison::Missing => format!("({column} IS NULL OR CAST({column} AS TEXT)='')"),
+        Comparison::Present => format!("({column} IS NOT NULL AND CAST({column} AS TEXT)!='')"),
+        Comparison::Contains | Comparison::NotContains | Comparison::StartsWith => {
+            let suffix = match filter.comparison {
+                Comparison::Contains => ">0",
+                Comparison::NotContains => "=0",
+                _ => "=1",
+            };
+            values.push(value);
+            format!("instr(lower(CAST({column} AS TEXT)),lower(?)){suffix}")
+        }
+        Comparison::EndsWith => {
+            values.extend([value.clone(), value]);
+            format!("substr(lower(CAST({column} AS TEXT)),-length(?))=lower(?)")
+        }
+        comparison => {
+            let op = match comparison {
+                Comparison::Equals | Comparison::Exact => "=",
+                Comparison::NotEquals => "!=",
+                Comparison::Before => "<",
+                Comparison::After => ">",
+                Comparison::AtMost => "<=",
+                Comparison::AtLeast => ">=",
+                _ => unreachable!(),
+            };
+            values.push(value);
+            if filter.field.numeric() || comparison == Comparison::Exact {
+                format!("{column}{op}?")
+            } else {
+                format!("lower({column}){op}lower(?)")
+            }
+        }
+    };
+    Ok(result)
+}
+
 #[derive(Clone, Debug)]
 pub struct Cursor {
     pub id: i64,
@@ -269,16 +471,22 @@ pub(super) fn sql(
     ceiling: i64,
     limit: usize,
 ) -> Result<(String, Vec<Value>)> {
+    ensure!(query.node.len() <= 128, "History node exceeds 128 bytes");
     ensure!(
         query.search.len() <= 256 && query.filters.len() <= 8,
         "Use at most eight filters and 256 bytes of search text"
     );
+    query.logic.validate(query.filters.len())?;
     ensure!(
         matches!(query.action.as_str(), "" | "allow" | "deny" | "reject"),
         "Unsupported history action"
     );
     let mut terms = vec!["id<=?".to_string()];
     let mut values = vec![Value::Integer(ceiling)];
+    if !query.node.is_empty() {
+        terms.push("node=?".into());
+        values.push(Value::Text(query.node.clone()));
+    }
     if let Some(before) = query.before {
         terms.push("id<?".into());
         values.push(Value::Integer(before));
@@ -296,49 +504,33 @@ pub(super) fn sql(
             Value::Text(query.search.clone()),
         ]);
     }
-    for filter in &query.filters {
-        let column = filter.field.sql();
-        let value = filter.value()?;
-        match filter.comparison {
-            Comparison::Missing => {
-                terms.push(format!("({column} IS NULL OR CAST({column} AS TEXT)='')"))
-            }
-            Comparison::Present => terms.push(format!(
-                "({column} IS NOT NULL AND CAST({column} AS TEXT)!='')"
-            )),
-            Comparison::Contains => {
-                terms.push(format!("instr(lower(CAST({column} AS TEXT)),lower(?))>0"));
-                values.push(value);
-            }
-            comparison => {
-                let op = match comparison {
-                    Comparison::Equals | Comparison::Exact => "=",
-                    Comparison::NotEquals => "!=",
-                    Comparison::Before => "<",
-                    Comparison::After => ">",
-                    _ => unreachable!(),
-                };
-                if filter.field.numeric() || comparison == Comparison::Exact {
-                    terms.push(format!("{column}{op}?"));
-                } else {
-                    terms.push(format!("lower({column}){op}lower(?)"));
-                }
-                values.push(value);
-            }
+    if !query.logic.formula.trim().is_empty() {
+        let formula = Formula::parse(&query.logic.formula, query.filters.len())?;
+        terms.push(formula.sql(&mut |index| filter_sql(&query.filters[index], &mut values))?);
+    } else if query.logic.groups.is_empty() {
+        if !query.filters.is_empty() {
+            let parts = query
+                .filters
+                .iter()
+                .map(|filter| filter_sql(filter, &mut values))
+                .collect::<Result<Vec<_>>>()?;
+            terms.push(format!("({})", parts.join(query.logic.mode.sql())));
         }
+    } else {
+        let mut start = 0;
+        let mut groups = Vec::new();
+        for group in &query.logic.groups {
+            let end = start + usize::from(group.count);
+            let parts = query.filters[start..end]
+                .iter()
+                .map(|f| filter_sql(f, &mut values))
+                .collect::<Result<Vec<_>>>()?;
+            groups.push(format!("({})", parts.join(group.mode.sql())));
+            start = end;
+        }
+        terms.push(format!("({})", groups.join(query.logic.mode.sql())));
     }
-    let (sort, ascending) = query
-        .sort
-        .map_or(("id".to_string(), false), |(field, ascending)| {
-            (
-                format!(
-                    "coalesce({}, {})",
-                    field.sql(),
-                    if field.numeric() { "-1" } else { "''" }
-                ),
-                ascending,
-            )
-        });
+    let (sort, ascending) = sort_sql(query);
     if let Some(cursor) = &query.cursor {
         let op = if ascending { ">" } else { "<" };
         terms.push(format!("({sort}{op}? OR ({sort}=? AND id{op}?))"));
@@ -356,4 +548,19 @@ pub(super) fn sql(
         ),
         values,
     ))
+}
+
+pub(super) fn sort_sql(query: &super::Query) -> (String, bool) {
+    query
+        .sort
+        .map_or(("id".to_string(), false), |(field, ascending)| {
+            (
+                format!(
+                    "coalesce({}, {})",
+                    field.sql(),
+                    if field.numeric() { "-1" } else { "''" }
+                ),
+                ascending,
+            )
+        })
 }

@@ -7,10 +7,7 @@ use std::{
     collections::BTreeMap,
     io::{BufWriter, Read, Seek, SeekFrom, Write},
     path::Path,
-    sync::{
-        Arc, OnceLock,
-        atomic::{AtomicBool, Ordering},
-    },
+    sync::{Arc, OnceLock, atomic::AtomicBool},
     time::Duration,
 };
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
@@ -18,6 +15,9 @@ pub const MAX_KEYS: usize = 10_000;
 pub const MAX_BYTES: usize = 2 * 1024 * 1024;
 pub const MAX_NODES: usize = 32;
 pub const PAGE_SIZE: usize = 200;
+
+mod selection;
+pub use selection::{COLUMNS, Column, Selection};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
@@ -348,65 +348,7 @@ impl Snapshot {
         replace: bool,
         stop: &AtomicBool,
     ) -> Result<usize> {
-        history::export::validate_target(&self.database, target, replace)?;
-        let mut output = tempfile::NamedTempFile::new_in(target.parent().unwrap())?;
-        let mut count = 0;
-        let mut bytes = 0;
-        {
-            let mut writer = BufWriter::with_capacity(16 * 1024, &mut output);
-            if !json {
-                let header = history::export::csv_line([
-                    "Value".into(),
-                    "Hits since local reset".into(),
-                    "Last reported total".into(),
-                    "Nodes".into(),
-                ]);
-                writer.write_all(header.as_bytes())?;
-                bytes += header.len();
-            }
-            for start in (0..self.len()).step_by(PAGE_SIZE) {
-                ensure!(
-                    !stop.load(Ordering::Relaxed),
-                    "Statistics export stopped; destination was not replaced"
-                );
-                for row in self.page(start)? {
-                    let line = if json {
-                        format!(
-                            "{}\n",
-                            serde_json::json!({"value":row.key,"hits":row.hits.to_string(),"reported":row.reported.to_string(),"nodes":row.nodes})
-                        )
-                    } else {
-                        history::export::csv_line([
-                            row.key,
-                            row.hits.to_string(),
-                            row.reported.to_string(),
-                            row.nodes.to_string(),
-                        ])
-                    };
-                    ensure!(
-                        bytes + line.len() <= 16 * 1024 * 1024,
-                        "Statistics export exceeds 16 MiB"
-                    );
-                    writer.write_all(line.as_bytes())?;
-                    bytes += line.len();
-                    count += 1;
-                }
-            }
-            writer.flush()?;
-        }
-        ensure!(
-            !stop.load(Ordering::Relaxed),
-            "Statistics export stopped; destination was not replaced"
-        );
-        output.as_file().sync_all()?;
-        if replace {
-            output.persist(target).map_err(|error| error.error)?;
-        } else {
-            output
-                .persist_noclobber(target)
-                .map_err(|error| error.error)?;
-        }
-        Ok(count)
+        selection::save_all(self, target, json, replace, stop)
     }
 }
 pub fn capture_permit() -> Option<OwnedSemaphorePermit> {

@@ -9,7 +9,11 @@ impl Collections {
     pub fn new(window: &mut Window, cx: &mut Context<Dashboard>) -> Self {
         let input = cx.new(|cx| {
             InputState::new(window, cx)
-                .placeholder("Search group or list type…")
+                .placeholder(crate::i18n::placeholder(
+                    "Search group or list type…",
+                    window,
+                    cx,
+                ))
                 .validate(|s, _| s.len() <= 256)
         });
         cx.subscribe(&input, |this, _, event, cx| {
@@ -64,7 +68,7 @@ impl Dashboard {
             .gap_2();
         if let Some(page) = &view.page {
             if page.rows.is_empty() {
-                rows=rows.child("No matching collections. Add groups to subscriptions and refresh their data to populate group collections.");
+                rows=rows.child(crate::i18n::tr("No matching collections. Add groups to subscriptions and refresh their data to populate group collections."));
             }
             for (index, collection) in page.rows.iter().enumerate() {
                 let review = collection.clone();
@@ -75,18 +79,25 @@ impl Dashboard {
                         .flex_wrap()
                         .gap_2()
                         .items_center()
-                        .child(div().flex_1().child(format!(
-                                "{} · {} · {} active sources",
-                                collection
-                                    .group
-                                    .as_deref()
-                                    .unwrap_or("All enabled subscriptions"),
-                                collection.format.directory(),
-                                collection.members
-                            )))
+                        .child(
+                            div().flex_1().child(crate::i18n::tr_args(
+                                "%{arg0} · %{arg1} · %{arg2} active sources",
+                                &[
+                                    (
+                                        "arg0",
+                                        (collection
+                                            .group
+                                            .as_deref()
+                                            .unwrap_or("All enabled subscriptions")),
+                                    ),
+                                    ("arg1", (collection.format.directory())),
+                                    ("arg2", &(collection.members).to_string()),
+                                ],
+                            )),
+                        )
                         .child(
                             Button::new(("subs-collection-review", index))
-                                .label("Review new rule…")
+                                .label(crate::i18n::tr("Review new rule…"))
                                 .disabled(busy || !ready || self.rules.editor_window.is_some())
                                 .on_click(cx.listener(move |this, _, window, cx| {
                                     this.prepare_collection_rules(review.clone(), true, window, cx)
@@ -94,7 +105,7 @@ impl Dashboard {
                         )
                         .child(
                             Button::new(("subs-collection-inspect", index))
-                                .label("Associated rules…")
+                                .label(crate::i18n::tr("Associated rules…"))
                                 .disabled(busy || node.is_none())
                                 .on_click(cx.listener(move |this, _, window, cx| {
                                     this.prepare_collection_rules(
@@ -108,11 +119,15 @@ impl Dashboard {
                 );
             }
         } else {
-            rows = rows.child("Loading collections…");
+            rows = rows.child(crate::i18n::tr("Loading collections…"));
         }
         let offset = view.query.offset;
         let total = view.page.as_ref().map_or(0, |p| p.total);
-        let mut sorts = div().flex().flex_wrap().gap_2().child("Sort all matches:");
+        let mut sorts = div()
+            .flex()
+            .flex_wrap()
+            .gap_2()
+            .child(crate::i18n::tr("Sort all matches:"));
         for (index, label, sort) in [
             (0usize, "Group", data::Sort::Group),
             (1, "Type", data::Sort::Kind),
@@ -120,7 +135,7 @@ impl Dashboard {
         ] {
             sorts = sorts.child(
                 Button::new(("subs-collection-sort", index))
-                    .label(label)
+                    .label(crate::i18n::tr(label))
                     .selected(
                         std::mem::discriminant(&view.query.sort) == std::mem::discriminant(&sort),
                     )
@@ -136,7 +151,7 @@ impl Dashboard {
         }
         sorts = sorts.child(
             Checkbox::new("subs-collection-descending")
-                .label("Descending")
+                .label(crate::i18n::tr("Descending"))
                 .checked(view.query.descending)
                 .on_change(cx.listener(|this, value: &bool, _, cx| {
                     if let Some(view) = &mut this.subscriptions.collections {
@@ -148,14 +163,14 @@ impl Dashboard {
                 })),
         );
         div().flex_1().min_h_0().flex().flex_col().gap_3()
-            .child("Rule collections")
-            .child(div().text_sm().child("Existing collection rules follow enabled membership and refreshed data. Each new rule is reviewed for the selected local node and your user ID. Empty collections match nothing until sources are added."))
-            .child(div().text_sm().child(format!("Target node: {}",node.as_ref().map(|s|s.name.as_str()).unwrap_or("none selected; choose a local node on Nodes"))))
+            .child(crate::i18n::tr("Rule collections"))
+            .child(div().text_sm().child(crate::i18n::tr("Existing collection rules follow enabled membership and refreshed data. Each new rule is reviewed for the selected local node and your user ID. Empty collections match nothing until sources are added.")))
+            .child(div().text_sm().child(crate::i18n::tr_args("Target node: %{arg0}", &[("arg0", (node.as_ref().map(|s|s.name.as_str()).unwrap_or("none selected; choose a local node on Nodes")))])))
             .child(Input::new(&view.input).id("subs-collection-search")).child(sorts).child(rows)
             .child(div().flex().flex_wrap().gap_2()
-                .child(Button::new("subs-collection-previous").label("Previous").disabled(busy||offset==0).on_click(cx.listener(|this,_,_,cx|{if let Some(view)=&mut this.subscriptions.collections{view.query.offset=view.query.offset.saturating_sub(PAGE);}this.subscriptions.dirty=true;cx.notify();})))
-                .child(format!("{}–{} of {total}",if total==0{0}else{offset+1},(offset+PAGE).min(total)))
-                .child(Button::new("subs-collection-next").label("Next").disabled(busy||offset+PAGE>=total).on_click(cx.listener(|this,_,_,cx|{if let Some(view)=&mut this.subscriptions.collections{view.query.offset+=PAGE;}this.subscriptions.dirty=true;cx.notify();})))
-                .child(Button::new("subs-collection-back").label("Back to subscriptions").disabled(busy).on_click(cx.listener(|this,_,window,cx|{this.subscriptions.collections=None;this.subscriptions.dirty=true;this.subscriptions.input.focus_handle(cx).focus(window,cx);cx.notify();}))))
+                .child(Button::new("subs-collection-previous").label(crate::i18n::tr("Previous")).disabled(busy||offset==0).on_click(cx.listener(|this,_,_,cx|{if let Some(view)=&mut this.subscriptions.collections{view.query.offset=view.query.offset.saturating_sub(PAGE);}this.subscriptions.dirty=true;cx.notify();})))
+                .child(crate::i18n::tr_args("%{arg0}–%{arg1} of %{total}", &[("arg0", &(if total==0{0}else{offset+1}).to_string()), ("arg1", &((offset+PAGE).min(total)).to_string()), ("total", &(total).to_string())]))
+                .child(Button::new("subs-collection-next").label(crate::i18n::tr("Next")).disabled(busy||offset+PAGE>=total).on_click(cx.listener(|this,_,_,cx|{if let Some(view)=&mut this.subscriptions.collections{view.query.offset+=PAGE;}this.subscriptions.dirty=true;cx.notify();})))
+                .child(Button::new("subs-collection-back").label(crate::i18n::tr("Back to subscriptions")).disabled(busy).on_click(cx.listener(|this,_,window,cx|{this.subscriptions.collections=None;this.subscriptions.dirty=true;this.subscriptions.input.focus_handle(cx).focus(window,cx);cx.notify();}))))
     }
 }

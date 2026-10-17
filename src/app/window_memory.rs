@@ -48,7 +48,10 @@ impl Client {
                     }
                     Err(e) => {
                         let message = crate::history::bounded(
-                            &format!("Window layout could not be loaded: {e:#}"),
+                            &crate::i18n::tr_args(
+                                "Window layout could not be loaded: %{e}",
+                                &[("e", &format!("{:#}", e))],
+                            ),
                             1024,
                         );
                         let _ = ready.send(Err(message.clone()));
@@ -101,7 +104,10 @@ impl Client {
                                 #[cfg(all(test, feature = "headless-tests"))]
                                 writes,
                                 error: Some(crate::history::bounded(
-                                    &format!("Window layout could not be saved: {e:#}"),
+                                    &crate::i18n::tr_args(
+                                        "Window layout could not be saved: %{e}",
+                                        &[("e", &format!("{:#}", e))],
+                                    ),
                                     1024,
                                 )),
                             });
@@ -232,7 +238,7 @@ fn open_inner(
             show: false,
             focus: false,
             titlebar: Some(TitlebarOptions {
-                title: Some("Rustleblower — initializing".into()),
+                title: Some(crate::i18n::tr("Rustleblower — initializing").into()),
                 ..Default::default()
             }),
             window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
@@ -252,6 +258,7 @@ fn open_inner(
             })
         },
     )?;
+    crate::i18n::register_title(bootstrap, "Rustleblower — initializing", cx);
     let weak = view.downgrade();
     let timer = cx.background_executor().timer(Duration::from_millis(250));
     cx.spawn(async move |cx| {

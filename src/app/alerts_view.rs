@@ -69,17 +69,29 @@ impl AlertsView {
     pub fn new(window: &mut Window, cx: &mut Context<Dashboard>) -> Self {
         let input = cx.new(|cx| {
             InputState::new(window, cx)
-                .placeholder("Search alert text or payload…")
+                .placeholder(crate::i18n::placeholder(
+                    "Search alert text or payload…",
+                    window,
+                    cx,
+                ))
                 .validate(|v, _| v.len() <= 256)
         });
         let node = cx.new(|cx| {
             InputState::new(window, cx)
-                .placeholder("Exact node name (all when empty)")
+                .placeholder(crate::i18n::placeholder(
+                    "Exact node name (all when empty)",
+                    window,
+                    cx,
+                ))
                 .validate(|v, _| v.len() <= 128)
         });
         let path = cx.new(|cx| {
             InputState::new(window, cx)
-                .placeholder("/absolute/path/alerts.jsonl")
+                .placeholder(crate::i18n::placeholder(
+                    "/absolute/path/alerts.jsonl",
+                    window,
+                    cx,
+                ))
                 .validate(|v, _| v.len() <= 4096)
         });
         cx.subscribe(&input, |this, input, event, cx| {
@@ -149,7 +161,10 @@ impl AlertsView {
                     self.command = None;
                     self.confirm = None;
                     self.message = Some(match result {
-                        Ok(count) => format!("Updated {count} archived alert(s)."),
+                        Ok(count) => crate::i18n::tr_args(
+                            "Updated %{count} archived alert(s).",
+                            &[("count", &format!("{}", count))],
+                        ),
                         Err(error) => {
                             self.error = Some(error);
                             "Alert archive was not changed successfully.".into()
@@ -160,7 +175,7 @@ impl AlertsView {
                 }
                 Err(oneshot::error::TryRecvError::Closed) => {
                     self.command = None;
-                    self.error = Some("Alert archive command stopped".into());
+                    self.error = Some(crate::i18n::tr("Alert archive command stopped"));
                     changed = true;
                 }
                 _ => {}
@@ -172,9 +187,12 @@ impl AlertsView {
                     self.exporting = None;
                     match result {
                         Ok(report) => {
-                            self.message = Some(format!(
-                                "Exported {} alert(s), {} bytes.",
-                                report.rows, report.bytes
+                            self.message = Some(crate::i18n::tr_args(
+                                "Exported %{arg0} alert(s), %{arg1} bytes.",
+                                &[
+                                    ("arg0", &format!("{}", report.rows)),
+                                    ("arg1", &format!("{}", report.bytes)),
+                                ],
                             ))
                         }
                         Err(error) => self.error = Some(error),
@@ -183,7 +201,7 @@ impl AlertsView {
                 }
                 Err(oneshot::error::TryRecvError::Closed) => {
                     self.exporting = None;
-                    self.error = Some("Alert export stopped before completion".into());
+                    self.error = Some(crate::i18n::tr("Alert export stopped before completion"));
                     changed = true;
                 }
                 _ => {}
@@ -203,7 +221,8 @@ impl AlertsView {
                             Ok(Read::Detail(detail)) => {
                                 self.detail = detail;
                                 if self.detail.is_none() {
-                                    self.error = Some("This alert is no longer retained.".into());
+                                    self.error =
+                                        Some(crate::i18n::tr("This alert is no longer retained."));
                                 }
                             }
                             Err(error) => self.error = Some(error),
@@ -213,7 +232,7 @@ impl AlertsView {
                 }
                 Err(oneshot::error::TryRecvError::Closed) => {
                     self.pending = None;
-                    self.error = Some("Alert reader stopped".into());
+                    self.error = Some(crate::i18n::tr("Alert reader stopped"));
                     changed = true;
                 }
                 _ => {}
@@ -292,8 +311,9 @@ impl AlertsView {
             return;
         }
         let Some(permit) = permit() else {
-            self.error =
-                Some("Alert reader is busy; retry after the current read finishes.".into());
+            self.error = Some(crate::i18n::tr(
+                "Alert reader is busy; retry after the current read finishes.",
+            ));
             return;
         };
         let path = std::path::PathBuf::from(self.path.read(cx).value().to_string());
@@ -368,7 +388,7 @@ impl Dashboard {
                 .enumerate()
                 .map(|(index, (value, label))| {
                     Button::new(("alerts-severity", index))
-                        .label(label)
+                        .label(crate::i18n::tr(label))
                         .selected(self.alerts.query.severity == value)
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.alerts.query.severity = value;
@@ -379,7 +399,7 @@ impl Dashboard {
             )
             .child(
                 Checkbox::new("alerts-unread")
-                    .label("Unread only")
+                    .label(crate::i18n::tr("Unread only"))
                     .checked(self.alerts.query.unread)
                     .on_change(cx.listener(|this, value: &bool, _, cx| {
                         this.alerts.query.unread = *value;
@@ -389,7 +409,7 @@ impl Dashboard {
             )
             .child(
                 Button::new("alerts-latest")
-                    .label("Latest")
+                    .label(crate::i18n::tr("Latest"))
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.alerts.reset();
                         cx.notify();
@@ -397,7 +417,7 @@ impl Dashboard {
             )
             .child(
                 Button::new("alerts-previous")
-                    .label("Previous")
+                    .label(crate::i18n::tr("Previous"))
                     .disabled(self.alerts.older.is_empty() || self.alerts.pending.is_some())
                     .on_click(cx.listener(|this, _, _, cx| {
                         if let Some(before) = this.alerts.older.pop() {
@@ -413,7 +433,7 @@ impl Dashboard {
             )
             .child(
                 Button::new("alerts-older")
-                    .label("Older")
+                    .label(crate::i18n::tr("Older"))
                     .disabled(
                         !self.alerts.page.has_more
                             || self.alerts.pending.is_some()
@@ -435,10 +455,40 @@ impl Dashboard {
             "alerts-list",
             self.alerts.page.rows.len(),
             cx.processor(|this, range: std::ops::Range<usize>, _, cx| {
+                let highlights = this.backend.highlighting.snapshot();
                 range
                     .map(|index| {
                         let row = &this.alerts.page.rows[index];
                         let id = row.id;
+                        let severity = crate::i18n::presentation(&alerts::severity(row.severity));
+                        let time = alerts::timestamp(row.received);
+                        let read = if row.read {
+                            String::new()
+                        } else {
+                            crate::i18n::tr("Unread")
+                        };
+                        let cells = [
+                            ("severity", severity.as_str()),
+                            ("node", row.node.as_str()),
+                            ("time", time.as_str()),
+                            ("read", read.as_str()),
+                            ("summary", row.summary.as_str()),
+                        ];
+                        let prepared = highlights.prepare_row(
+                            crate::highlighting::View::Alerts,
+                            &cells,
+                            this.alerts.selected == Some(id),
+                        );
+                        let style = |key: &str, value: &str, cell: Div| {
+                            super::highlighting::cell_prepared(
+                                &highlights,
+                                crate::highlighting::View::Alerts,
+                                key,
+                                value,
+                                prepared,
+                                cell,
+                            )
+                        };
                         ListItem::new(("alert-row", id as u64))
                             .selected(this.alerts.selected == Some(id))
                             .child(
@@ -446,14 +496,36 @@ impl Dashboard {
                                     .flex()
                                     .flex_col()
                                     .gap_1()
-                                    .child(div().text_sm().child(format!(
-                                        "{} · {} · {}{}",
-                                        alerts::severity(row.severity),
-                                        row.node,
-                                        alerts::timestamp(row.received),
-                                        if row.read { "" } else { " · Unread" }
-                                    )))
-                                    .child(div().text_sm().truncate().child(row.summary.clone())),
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .gap_2()
+                                            .child(style(
+                                                "severity",
+                                                &severity,
+                                                div().text_sm().child(severity.clone()),
+                                            ))
+                                            .child(style(
+                                                "node",
+                                                &row.node,
+                                                div().text_sm().child(row.node.clone()),
+                                            ))
+                                            .child(style(
+                                                "time",
+                                                &time,
+                                                div().text_sm().child(time.clone()),
+                                            ))
+                                            .child(style(
+                                                "read",
+                                                &read,
+                                                div().text_sm().child(read.clone()),
+                                            )),
+                                    )
+                                    .child(style(
+                                        "summary",
+                                        &row.summary,
+                                        div().text_sm().truncate().child(row.summary.clone()),
+                                    )),
                             )
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.alerts.select(id);
@@ -482,7 +554,7 @@ impl Dashboard {
                 )))
                 .child(
                     Button::new("alerts-copy-detail")
-                        .label("Copy complete JSON")
+                        .label(crate::i18n::tr("Copy complete JSON"))
                         .on_click(cx.listener(|this, _, _, cx| {
                             if let Some(preview) = this.alerts.detail.as_ref() {
                                 cx.write_to_clipboard(ClipboardItem::new_string(
@@ -492,12 +564,9 @@ impl Dashboard {
                         })),
                 )
                 .when(preview.shortened, |view| {
-                    view.child(
-                        div()
-                            .text_xs()
-                            .text_color(muted)
-                            .child("Preview shortened. Copy/export retains the complete payload."),
-                    )
+                    view.child(div().text_xs().text_color(muted).child(crate::i18n::tr(
+                        "Preview shortened. Copy/export retains the complete payload.",
+                    )))
                 })
                 .child(
                     uniform_list(
@@ -519,9 +588,9 @@ impl Dashboard {
         } else {
             details = details.child(div().text_sm().text_color(muted).child(
                 if self.alerts.selected.is_some() {
-                    "Loading alert details…"
+                    crate::i18n::tr("Loading alert details…")
                 } else {
-                    "Select an alert for details."
+                    crate::i18n::tr("Select an alert for details.")
                 },
             ));
         }
@@ -531,7 +600,7 @@ impl Dashboard {
             .gap_3()
             .child(
                 Button::new("alerts-read")
-                    .label("Mark read")
+                    .label(crate::i18n::tr("Mark read"))
                     .disabled(busy || self.alerts.selected.is_none())
                     .on_click(cx.listener(|this, _, _, cx| {
                         if let Some(id) = this.alerts.selected {
@@ -542,7 +611,7 @@ impl Dashboard {
             )
             .child(
                 Button::new("alerts-delete")
-                    .label("Delete selected…")
+                    .label(crate::i18n::tr("Delete selected…"))
                     .disabled(busy || self.alerts.selected.is_none())
                     .on_click(cx.listener(|this, _, _, cx| {
                         if let Some(id) = this.alerts.selected {
@@ -553,7 +622,7 @@ impl Dashboard {
             )
             .child(
                 Button::new("alerts-clear")
-                    .label("Delete matching…")
+                    .label(crate::i18n::tr("Delete matching…"))
                     .disabled(busy || self.alerts.page.rows.is_empty())
                     .on_click(cx.listener(|this, _, _, cx| {
                         let mut q = this.alerts.query.clone();
@@ -565,7 +634,7 @@ impl Dashboard {
             )
             .child(
                 Button::new("alerts-copy-page")
-                    .label("Copy page as CSV")
+                    .label(crate::i18n::tr("Copy page as CSV"))
                     .on_click(cx.listener(|this, _, _, cx| {
                         match alerts::clipboard(&this.alerts.page.rows) {
                             Ok(text) => cx.write_to_clipboard(ClipboardItem::new_string(text)),
@@ -574,25 +643,22 @@ impl Dashboard {
                         cx.notify();
                     })),
             )
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(muted)
-                    .child("Archive retention: up to 10,000 alerts / 2 MiB plus configured age."),
-            );
+            .child(div().text_xs().text_color(muted).child(crate::i18n::tr(
+                "Archive retention: up to 10,000 alerts / 2 MiB plus configured age.",
+            )));
         let confirm = div()
             .flex()
             .gap_3()
             .child(div().text_sm().child(
                 if matches!(self.alerts.confirm, Some(Change::Clear(_))) {
-                    "Delete all matching archived alerts? Newly arriving alerts are kept."
+                    crate::i18n::tr("Delete all matching archived alerts? Newly arriving alerts are kept.")
                 } else {
-                    "Delete this archived alert? Firewall rules and daemon state are unchanged."
+                    crate::i18n::tr("Delete this archived alert? Firewall rules and daemon state are unchanged.")
                 },
             ))
             .child(
                 Button::new("alerts-delete-confirm")
-                    .label("Confirm delete")
+                    .label(crate::i18n::tr("Confirm delete"))
                     .disabled(busy)
                     .on_click(cx.listener(|this, _, _, cx| {
                         if let Some(change) = this.alerts.confirm.clone() {
@@ -603,7 +669,7 @@ impl Dashboard {
             )
             .child(
                 Button::new("alerts-delete-cancel")
-                    .label("Cancel")
+                    .label(crate::i18n::tr("Cancel"))
                     .disabled(busy)
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.alerts.confirm = None;
@@ -622,7 +688,7 @@ impl Dashboard {
             )
             .child(
                 Checkbox::new("alerts-export-replace")
-                    .label("Replace")
+                    .label(crate::i18n::tr("Replace"))
                     .checked(self.alerts.replace)
                     .disabled(exporting)
                     .on_change(cx.listener(|this, value: &bool, _, cx| {
@@ -632,7 +698,7 @@ impl Dashboard {
             )
             .child(
                 Button::new("alerts-export-csv")
-                    .label("Export CSV")
+                    .label(crate::i18n::tr("Export CSV"))
                     .disabled(exporting)
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.alerts
@@ -642,7 +708,7 @@ impl Dashboard {
             )
             .child(
                 Button::new("alerts-export-json")
-                    .label("Export JSON")
+                    .label(crate::i18n::tr("Export JSON"))
                     .disabled(exporting)
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.alerts
@@ -652,7 +718,7 @@ impl Dashboard {
             )
             .child(
                 Button::new("alerts-export-stop")
-                    .label("Stop")
+                    .label(crate::i18n::tr("Stop"))
                     .disabled(!exporting)
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.alerts.stop.store(true, Ordering::Relaxed);
@@ -669,14 +735,14 @@ impl Dashboard {
             .child(filters)
             .child(severity)
             .when_some(self.backend.desktop_notices.error.lock().unwrap().clone(), |view, error| {
-                view.child(div().text_sm().child(format!("Desktop notifications: {error}. Retained alerts remain available here.")))
+                view.child(div().text_sm().child(crate::i18n::tr_args("Desktop notifications: %{error}. Retained alerts remain available here.", &[("error", &(error).to_string())])))
             })
             .when(self.backend.desktop_notices.skipped.load(Ordering::Relaxed) > 0, |view| {
-                view.child(div().text_sm().child(format!("{} desktop notices skipped during bursts; archive recording is independent.", self.backend.desktop_notices.skipped.load(Ordering::Relaxed))))
+                view.child(div().text_sm().child(crate::i18n::tr_args("%{arg0} desktop notices skipped during bursts; archive recording is independent.", &[("arg0", &(self.backend.desktop_notices.skipped.load(Ordering::Relaxed)).to_string())])))
             })
             .when(skipped > 0, |view| {
                 view.child(super::banner(
-                    format!("Alert archive incomplete: {skipped} alert(s) could not be recorded."),
+                    crate::i18n::tr_args("Alert archive incomplete: %{skipped} alert(s) could not be recorded.", &[("skipped", &format!("{}", skipped))]),
                     cx,
                 ))
             })
@@ -687,10 +753,10 @@ impl Dashboard {
                 view.child(super::banner(error, cx))
             })
             .when_some(self.alerts.message.clone(), |view, message| {
-                view.child(div().text_sm().child(message))
+                view.child(div().text_sm().child(crate::i18n::presentation(&message)))
             })
             .when(self.alerts.page.rows.is_empty(), |view| {
-                view.child(div().text_sm().child("No matching retained alerts."))
+                view.child(div().text_sm().child(crate::i18n::tr("No matching retained alerts.")))
             })
             .child(div().flex_1().min_h_0().flex().child(list).child(details))
             .child(actions)

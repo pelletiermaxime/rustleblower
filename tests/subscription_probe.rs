@@ -259,6 +259,7 @@ async fn permission_rpc_remains_independent_of_a_held_url_probe() -> Result<()> 
     let server = fixture::Server::start().await;
     let dir = tempfile::tempdir()?;
     let cfg = Config {
+        transport: Default::default(),
         database: dir.path().join("history.sqlite3"),
         socket: dir.path().join("ui.sock"),
         prompt_timeout: 30,

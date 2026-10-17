@@ -22,6 +22,7 @@ use std::{
 use tonic::transport::{Channel, Endpoint};
 fn options(p: &Path) -> Config {
     Config {
+        transport: Default::default(),
         socket: p.join("ui.sock"),
         database: p.join("history.sqlite3"),
         prompt_timeout: 10,

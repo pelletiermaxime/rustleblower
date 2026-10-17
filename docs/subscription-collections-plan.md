@@ -82,7 +82,8 @@ Reviewed bulk configuration and bounded native/OpenSnitch action/config transfer
 are now implemented; see the current subscription feature map for evidence.
 Complete-catalogue replacement, duplicate display identities and stable per-ID
 extra fields are now implemented, with conservative legacy metadata archives.
-Legacy default-unit coupling, notifications, retained-format inspection/cleanup
+Independent count/unit inheritance now covers individual/default and bulk forms,
+with frozen-default effective reviews. Notifications, retained-format inspection/cleanup
 and complete crash recovery still remain, along with external HTTPS and broad
 native/resource/package proof. The metadata archive inspection/manual-resolution
 interface is a Rustleblower recovery improvement, not a source-backed upstream

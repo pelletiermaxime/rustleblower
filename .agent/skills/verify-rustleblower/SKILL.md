@@ -28,6 +28,12 @@ For the normal background development check, which does not take desktop focus:
 python scripts/verify-headless.py
 ```
 
+Use `python scripts/verify-headless.py --feature settings` for the fourteen-frame
+[shared settings window](features/settings.md) journey: every sidebar category,
+retained popup/history drafts, independent preference-file reopening, real
+permission input during retention review, shared-window reuse, close/reopen and
+minimum-size painting.
+
 Use `python scripts/verify-headless.py --feature tray` for the four-frame
 [window/tray lifecycle](features/connection.md) journey: retained dashboard,
 permission input while hidden, repeated Open, tray-host loss and dashboard Quit.
@@ -81,10 +87,26 @@ and command conditions, rejects an invalid port, saves/reopens selected columns,
 sorts through the actual Kit header, exports all matches to CSV/JSON Lines,
 checks existing-file preservation, copies a matching page and pages sorted results.
 
-Use `python scripts/verify-headless.py --feature statistics` for the ten-frame
+Use `python scripts/verify-headless.py --feature history-selection` for the nine-frame
+[History captured selection](features/history.md) journey: actual pointer/Shift
+marks across pages, First page, frozen Select all/exclusion, chosen-column
+CSV/JSON Lines and exact clipboard output, independent Details and permission,
+and Latest/sort/filter clearing. It uses205 owned history events.
+
+Use `python scripts/verify-headless.py --feature browsing` for the focused
+seven-frame History/Application rules journey: searchable cached/offline node
+scope, independent action/duration filters over whole catalogue pages, spacing
+below navigation, actual list/table scrollbar dragging, and node/table preferences
+flushed through production Quit. It owns its daemon socket and database. See the
+History/rules feature maps and `.verification/browsing/result.json` for the exact
+checkpoint; later concurrent dependency changes need their own integration proof.
+
+Use `python scripts/verify-headless.py --feature statistics` for the fourteen-frame
 [statistics](features/statistics.md) journey: all categories, actual chart and
 selectors, frozen paging, CSV/JSON/clipboard, exact history drilldown and confirmed
-selected/category resets through the production gRPC counter path.
+selected/category resets through the production gRPC counter path. It also checks
+actual cross-page Shift selection, chosen-column frozen selected output, exact
+clipboard contents and independent permission while the output window is open.
 
 Use `python scripts/verify-headless.py --feature nodes` for the seventeen-frame
 [Nodes](features/nodes.md) journey: two live gRPC fixtures, actual node/rule
@@ -210,6 +232,13 @@ four-frame saved-toggle/hidden-dashboard/restoration journey. Run
 for actual protocol and failure handling on a private owned D-Bus session.
 Read [desktop notifications](features/desktop-notifications.md) for exact bounds
 and the distinction between service acceptance and painted desktop delivery.
+
+Use `python scripts/verify-headless.py --feature live-table` for ten focused frames
+of650-row numeric header sorting, cross-page Shift selection, frozen selected/full
+CSV and raw JSON output, clipboard equality, saved columns/widths, stale refusal
+and fresh backend/GPUI stopped restoration. The actual first held task still
+permits an independent permission reply. See [Live](features/live.md) for exact
+source snapshots and the separate native-compositor/kernel/package/RSS boundaries.
 
 Use `python scripts/verify-headless.py --feature live` for the eleven-frame
 [live inspection](features/live.md) journey. It verifies task start/stop JSON,
@@ -416,7 +445,7 @@ with automatic updates paused and zero HTTP or policy commands. Preserve the
 separation between downloads, canonical daemon list matching and associated rules.
 
 
-The subscription journey now includes fifty-six frames covering canonical data and
+The subscription journey now includes sixty-one frames covering canonical data and
 single/group/all collections and associated rules: reviewed/cancelled creation, exact held ACK,
 independent permission and confirmed-rule second-page editing/rejection. The shared
 editor displays its target node; rerun the general journey after changing it.
@@ -571,7 +600,7 @@ appearance slice records 157 passing core cases plus the final history-export
 protection case, strict Clippy and eleven/48/four GPU frames.
 
 
-Use `python scripts/verify-headless.py --feature window-state` for the eleven-frame
+Use `python scripts/verify-headless.py --feature window-state` for the thirteen-frame
 [main-window persistence](features/connection.md#remembered-main-window) journey.
 Require real navigation/Quit/permission input, exact warm/cold saved state,
 coalesced geometry updates, held load-result timeout without request gating,
@@ -625,3 +654,18 @@ change keyboard navigation. Keep the 56/11/48/four subscription/URL/general/tray
 GPU regressions and rebuild desktop after core tests. Independent bulk unit
 controls, native default/stale/reopen variants, real schedule timing, package/RSS
 and final UX remain separate; do not claim them from this slice.
+
+
+The current subscription journey retains 61 frames. Its five added bulk-limit
+frames require real checked count/unit Select input, independent inheritance,
+Back preservation, effective before/after values, stale-default refusal with no
+partial write, explicit rebuild and confirmed durable apply. Two new core cases
+bring full core to 176 and cover untouched legacy absolute limits, zero/domain/
+overflow rejection, changed or tampered defaults, late-row SQL/log rollback and
+reopen after new default counts/units. One settings snapshot/revision travels
+with the bounded review; application revalidates it inside the transaction.
+The pinned bulk dialog clears units for zero counts; native unit-only bulk
+selection is an intentional consistency extension of the shared model and
+individual controls. Native unit gestures, notification parity, filesystem crash
+recovery, resource/package proof for new changes and final UX remain separate.
+Read `.verification/subscription-bulk-units-result.json` for exact evidence.

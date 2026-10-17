@@ -28,6 +28,7 @@ async fn client(path: &Path) -> Result<UiClient<Channel>> {
 }
 fn config(path: &Path) -> Config {
     Config {
+        transport: Default::default(),
         socket: path.join("ui.sock"),
         database: path.join("history.sqlite3"),
         prompt_timeout: 30,
@@ -88,6 +89,13 @@ async fn streaming_updates_stop_generation_errors_bounds_and_permission_isolatio
         .map_err(anyhow::Error::msg)?;
     let command = stream.message().await?.unwrap();
     assert_eq!(command.r#type, 13);
+    // daemon/ui/notifications_tasks.go::monitorTaskEvents routes IDs <=10000
+    // to generic alerts instead of the requesting Notifications stream.
+    assert!(
+        command.id > 10_000,
+        "The daemon would route task {} to alerts, leaving Live without updates",
+        command.id
+    );
     let doc: serde_json::Value = serde_json::from_str(&command.data)?;
     assert_eq!(
         doc,

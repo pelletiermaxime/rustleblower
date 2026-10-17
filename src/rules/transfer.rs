@@ -291,7 +291,10 @@ pub fn export_directory(
             format!("{}.json", rule.name)
         } else {
             use sha2::{Digest, Sha256};
-            format!("rule-{:x}.json", Sha256::digest(rule.name.as_bytes()))
+            format!(
+                "rule-{}.json",
+                hex::encode(Sha256::digest(rule.name.as_bytes()))
+            )
         };
         let mut file = File::options()
             .create_new(true)

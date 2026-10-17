@@ -31,7 +31,7 @@ pub(super) fn open(backend: Handle, filter: Query, cx: &mut App) -> gpui::Result
             ))),
             window_min_size: Some(size(px(720.), px(560.))),
             titlebar: Some(TitlebarOptions {
-                title: Some("Rustleblower — export nodes".into()),
+                title: Some(crate::i18n::tr("Rustleblower — export nodes").into()),
                 ..Default::default()
             }),
             app_id: Some("dev.rustleblower.Rustleblower".into()),
@@ -47,6 +47,7 @@ pub(super) fn open(backend: Handle, filter: Query, cx: &mut App) -> gpui::Result
             })
         },
     )?;
+    crate::i18n::register_title(window, "Rustleblower — export nodes", cx);
     Ok(window)
 }
 pub(super) struct Exports {
@@ -76,7 +77,11 @@ impl Exports {
         });
         let path = cx.new(|cx| {
             InputState::new(window, cx)
-                .placeholder("Parent directory for a new export folder")
+                .placeholder(crate::i18n::placeholder(
+                    "Parent directory for a new export folder",
+                    window,
+                    cx,
+                ))
                 .validate(|v, _| v.len() <= 4096)
         });
         path.focus_handle(cx).focus(window, cx);
@@ -134,7 +139,10 @@ impl Exports {
         let filter = if self.filtered {
             self.filter.clone()
         } else {
-            Query::default()
+            Query {
+                policy: self.filter.policy,
+                ..Default::default()
+            }
         };
         let db = self.backend.history.database_path().to_owned();
         let stop = self.stop.clone();
@@ -147,11 +155,7 @@ impl Exports {
                 this.busy = false;
                 match result {
                     Ok(review) => {
-                        this.message = format!(
-                            "{} rules captured for {} nodes. Review the counts before exporting.",
-                            review.rules,
-                            review.nodes.len()
-                        );
+                        this.message = crate::i18n::tr_args("%{arg0} rules captured for %{arg1} nodes. Review the counts before exporting.", &[("arg0", &format!("{}", review.rules)), ("arg1", &format!("{}", review.nodes.len()))]);
                         this.review = Some(Arc::new(review));
                     }
                     Err(e) => {
@@ -181,7 +185,7 @@ impl Exports {
         let task = cx
             .background_executor()
             .spawn(async move { export_nodes::publish(&review, &parent, &stop) });
-        cx.spawn_in(window,async move|this,cx|{let result=task.await;let _=this.update_in(cx,|this,_,cx|{this.busy=false;match result{Ok(path)=>this.message=format!("Export complete: {}. Each node folder contains importable OpenSnitch JSON rules.",path.display()),Err(e)=>{this.message="Export did not complete".into();this.error=Some(format!("{e:#}"));}}cx.notify();});}).detach();
+        cx.spawn_in(window,async move|this,cx|{let result=task.await;let _=this.update_in(cx,|this,_,cx|{this.busy=false;match result{Ok(path)=>this.message=crate::i18n::tr_args("Export complete: %{arg0}. Each node folder contains importable OpenSnitch JSON rules.", &[("arg0", &format!("{}", path.display()))]),Err(e)=>{this.message="Export did not complete".into();this.error=Some(format!("{e:#}"));}}cx.notify();});}).detach();
         cx.notify();
     }
     fn browse(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -209,7 +213,10 @@ impl Exports {
                     }
                     Ok(Ok(None)) => {}
                     other => {
-                        this.error = Some(format!("Cannot choose export directory: {other:?}"))
+                        this.error = Some(crate::i18n::tr_args(
+                            "Cannot choose export directory: %{other}",
+                            &[("other", &format!("{:?}", other))],
+                        ))
                     }
                 }
                 cx.notify();
@@ -235,19 +242,19 @@ impl Render for Exports {
             )
             .child(
                 Button::new("nodes-export-browse")
-                    .label("Choose parent directory…")
+                    .label(crate::i18n::tr("Choose parent directory…"))
                     .disabled(busy)
                     .on_click(cx.listener(|this, _, window, cx| this.browse(window, cx))),
             );
         if let Some(review) = &self.review {
-            body=body.child(format!("{} rules · {} nodes · {} KiB of JSON. The captured contents stay unchanged if nodes reconnect or their rules change.",review.rules,review.nodes.len(),review.bytes.div_ceil(1024)))
-        .child("A new folder contains one subfolder per node plus manifest.json. Import a node subfolder to restore its rules. Proposals awaiting observation remain unconfirmed.")
-        .child(uniform_list("nodes-export-review",review.nodes.len(),cx.processor(|this,range:std::ops::Range<usize>,_,_|range.map(|i|{let n=&this.review.as_ref().unwrap().nodes[i];div().w_full().h(px(84.)).flex().flex_col().gap_1().child(n.name.clone()).child(format!("{} rules · {} awaiting observation · {} KiB",n.rules,n.awaiting,n.bytes.div_ceil(1024))).child(div().text_sm().truncate().child(n.directory.clone()))}).collect::<Vec<_>>())).flex_1().min_h_0());
+            body=body.child(crate::i18n::tr_args("%{arg0} rules · %{arg1} nodes · %{arg2} KiB of JSON. The captured contents stay unchanged if nodes reconnect or their rules change.", &[("arg0", &(review.rules).to_string()), ("arg1", &(review.nodes.len()).to_string()), ("arg2", &(review.bytes.div_ceil(1024)).to_string())]))
+        .child(crate::i18n::tr("A new folder contains one subfolder per node plus manifest.json. Import a node subfolder to restore its rules. Proposals awaiting observation remain unconfirmed."))
+        .child(uniform_list("nodes-export-review",review.nodes.len(),cx.processor(|this,range:std::ops::Range<usize>,_,_|range.map(|i|{let n=&this.review.as_ref().unwrap().nodes[i];div().w_full().h(px(84.)).flex().flex_col().gap_1().child(n.name.clone()).child(crate::i18n::tr_args("%{arg0} rules · %{arg1} awaiting observation · %{arg2} KiB", &[("arg0", &(n.rules).to_string()), ("arg1", &(n.awaiting).to_string()), ("arg2", &(n.bytes.div_ceil(1024)).to_string())])).child(div().text_sm().truncate().child(n.directory.clone()))}).collect::<Vec<_>>())).flex_1().min_h_0());
         } else {
-            body=body.child("Choose cached nodes, including offline nodes. All rules are included unless you select the captured filter below.")
-        .child(Checkbox::new("nodes-export-filter").label(format!("Use captured filter on every node: search {:?}, {}",self.filter.search,match self.filter.temporary{Some(true)=>"temporary",Some(false)=>"permanent",None=>"all durations"})).checked(self.filtered).disabled(busy).on_change(cx.listener(|this,value:&bool,_,cx|{this.filtered = *value;cx.notify();})))
-        .child(div().flex().gap_2().child(Button::new("nodes-export-refresh").label("Refresh cached nodes").disabled(busy).on_click(cx.listener(|this,_,window,cx|this.refresh(window,cx)))).child(Button::new("nodes-export-all").label("Select all nodes").disabled(busy).on_click(cx.listener(|this,_,_,cx|{this.selected=this.nodes.iter().cloned().collect();cx.notify();}))))
-        .child(format!("{} selected nodes",self.selected.len()))
+            body=body.child(crate::i18n::tr("Choose cached nodes, including offline nodes. All rules are included unless you select the captured filter below."))
+        .child(Checkbox::new("nodes-export-filter").label(crate::i18n::tr_args("Use captured filter on every node: search %{arg0}, %{arg1}", &[("arg0", &format!("{:?}", self.filter.search)), ("arg1", (match self.filter.temporary{Some(true)=>"temporary",Some(false)=>"permanent",None=>"all durations"}))])).checked(self.filtered).disabled(busy).on_change(cx.listener(|this,value:&bool,_,cx|{this.filtered = *value;cx.notify();})))
+        .child(div().flex().gap_2().child(Button::new("nodes-export-refresh").label(crate::i18n::tr("Refresh cached nodes")).disabled(busy).on_click(cx.listener(|this,_,window,cx|this.refresh(window,cx)))).child(Button::new("nodes-export-all").label(crate::i18n::tr("Select all nodes")).disabled(busy).on_click(cx.listener(|this,_,_,cx|{this.selected=this.nodes.iter().cloned().collect();cx.notify();}))))
+        .child(crate::i18n::tr_args("%{arg0} selected nodes", &[("arg0", &(self.selected.len()).to_string())]))
         .child(uniform_list("nodes-export-choices",self.nodes.len(),cx.processor(|this,range:std::ops::Range<usize>,_,cx|range.map(|i|{let name=this.nodes[i].clone();div().w_full().h(px(52.)).child(Checkbox::new(("nodes-export-node",i)).label(name.clone()).checked(this.selected.contains(&name)).disabled(this.busy).on_change(cx.listener(move|this,value:&bool,_,cx|{if *value{this.selected.insert(name.clone());}else{this.selected.remove(&name);}cx.notify();})))}).collect::<Vec<_>>())).flex_1().min_h_0());
         }
         div()
@@ -264,10 +271,16 @@ impl Render for Exports {
                     .border_b_1()
                     .border_color(border)
                     .text_lg()
-                    .child("Export rules from nodes"),
+                    .child(crate::i18n::tr("Export rules from nodes")),
             )
             .when_some(self.error.clone(), |v, e| v.child(super::banner(e, cx)))
-            .child(div().px_5().py_2().text_sm().child(self.message.clone()))
+            .child(
+                div()
+                    .px_5()
+                    .py_2()
+                    .text_sm()
+                    .child(crate::i18n::presentation(&self.message)),
+            )
             .child(body)
             .child(
                 div()
@@ -280,7 +293,7 @@ impl Render for Exports {
                     .gap_2()
                     .child(
                         Button::new("nodes-export-close")
-                            .label("Cancel / close")
+                            .label(crate::i18n::tr("Cancel / close"))
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.stop.store(true, Ordering::Release);
                                 window.remove_window();
@@ -290,7 +303,7 @@ impl Render for Exports {
                     .when(busy, |v| {
                         v.child(
                             Button::new("nodes-export-stop")
-                                .label("Cancel work")
+                                .label(crate::i18n::tr("Cancel work"))
                                 .on_click(cx.listener(|this, _, _, cx| {
                                     this.stop.store(true, Ordering::Release);
                                     cx.notify();
@@ -300,7 +313,7 @@ impl Render for Exports {
                     .when(self.review.is_some(), |v| {
                         v.child(
                             Button::new("nodes-export-back")
-                                .label("Change nodes / rebuild")
+                                .label(crate::i18n::tr("Change nodes / rebuild"))
                                 .disabled(busy)
                                 .on_click(cx.listener(|this, _, _, cx| {
                                     this.review = None;
@@ -313,9 +326,9 @@ impl Render for Exports {
                     .child(
                         Button::new("nodes-export-apply")
                             .label(if self.review.is_some() {
-                                "Export reviewed folders"
+                                crate::i18n::tr("Export reviewed folders")
                             } else {
-                                "Review export"
+                                crate::i18n::tr("Review export")
                             })
                             .disabled(busy || (self.review.is_none() && self.selected.is_empty()))
                             .on_click(cx.listener(|this, _, window, cx| {

@@ -40,7 +40,7 @@ impl Client {
                 match store.save_presentation(update.value) {
                     Ok(()) => { status.send_replace(Status {saved:update.generation, error:None}); }
                     Err(e) => {
-                        status.send_replace(Status {saved:0,error:Some(crate::history::bounded(&format!("History view is session-only: {e:#}. Restart after repairing the settings file to resume saving."),1024))});
+                        status.send_replace(Status {saved:0,error:Some(crate::history::bounded(&crate::i18n::tr_args("History view is session-only: %{e}. Restart after repairing the settings file to resume saving.", &[("e", &format!("{:#}", e))]),1024))});
                         break;
                     }
                 }
