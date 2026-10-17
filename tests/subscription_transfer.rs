@@ -951,6 +951,9 @@ async fn legacy_name_metadata_migrates_once_and_archives_ambiguous_records_until
     let worker = Worker::start(dir.path());
     let h = worker.handle();
     assert!(request(&h, Request::Settings).await.is_err());
+    // Closing the request channel can wake us before startup publishes its
+    // error on the independent state channel. Join before inspecting it.
+    worker.join();
     assert!(
         h.state()
             .error
@@ -958,6 +961,5 @@ async fn legacy_name_metadata_migrates_once_and_archives_ambiguous_records_until
             .unwrap_or("")
             .contains("exceeds 2 MiB")
     );
-    worker.join();
     Ok(())
 }
