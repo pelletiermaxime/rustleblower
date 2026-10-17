@@ -1537,7 +1537,14 @@ fn journey(test_cx: &mut TestAppContext) {
     click(&mut cx, window, "subs-remove");
     flush(&mut cx);
     click(&mut cx, window, "subs-remove-confirm");
-    flush(&mut cx);
+    wait_for(&mut cx, |cx| {
+        cx.read_entity(&view, |v, _| {
+            v.subscriptions
+                .page
+                .as_ref()
+                .is_some_and(|page| page.total == 64 && page.offset == 0)
+        })
+    });
     assert_eq!(current_page(&cx).1, 64);
     assert_eq!(
         current_page(&cx).0,

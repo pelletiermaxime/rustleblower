@@ -231,7 +231,12 @@ fn journey(test_cx: &mut TestAppContext) {
             ..Default::default()
         }))
         .unwrap();
-    flush(&mut cx);
+    wait_for(&mut cx, |_| {
+        nodes::detail(&config.database, "alpha-node")
+            .unwrap()
+            .config
+            == document
+    });
     assert_eq!(
         nodes::detail(&config.database, "alpha-node")
             .unwrap()
