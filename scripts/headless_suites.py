@@ -4,6 +4,7 @@ import argparse
 import re
 
 FEATURE_TESTS = {'browsing': 'browsing::journey',
+ 'bandwidth': 'bandwidth::journey',
  'settings': 'settings::journey',
  'tray': 'tray_lifecycle::journey',
  'permission-icons': 'permission_icons::journey',

@@ -2,7 +2,7 @@ Rustleblower for Linux x86-64
 
 Requires Ubuntu 24.04 or a compatible Linux distribution (glibc 2.39 or newer),
 a working graphics driver, a Wayland or X11/XWayland desktop, and access to an existing
-OpenSnitch daemon. Install the daemon separately; this release contains only its UI.
+OpenSnitch daemon. Install the daemon separately; this release contains its frontend and an optional data-usage collector.
 
 Debian package:
   sudo apt install ./rustleblower_@VERSION@_amd64.deb
@@ -21,7 +21,10 @@ AppImage:
 Tar archive:
   Extract the archive, open a desktop terminal in the extracted directory,
   and run: ./rustleblower
-  Optional installation: install -Dm755 rustleblower ~/.local/bin/rustleblower
+  Optional installation:
+    install -Dm755 rustleblower ~/.local/bin/rustleblower
+    mkdir -p ~/.local/libexec
+    cp -R libexec/rustleblower ~/.local/libexec/
   To add the application launcher and its colour mascot icons:
     install -Dm644 dev.rustleblower.Rustleblower.desktop ~/.local/share/applications/dev.rustleblower.Rustleblower.desktop
     mkdir -p ~/.local/share/icons
@@ -48,5 +51,17 @@ Switching from opensnitch-ui:
   Quit Rustleblower through its Quit button; closing its window minimizes it.
   History starts with newly received reports; existing UI history is not imported.
 
-This first development release has an unfinished interface. Remote TCP/TLS,
-system-firewall editing, tray integration and full opensnitch-ui parity are pending.
+Data usage (Ctrl+8):
+  The bundled collector provides live per-app rates and session totals. Start
+  monitoring opens the system password dialog; install pkexec and a desktop
+  polkit authentication agent. Keep the GUI running as your normal user.
+  This experimental feature needs compatible kernel BTF, TCP/UDP hooks, BPF LSM
+  and executable/path kfuncs. Missing support is shown explicitly.
+  Monitoring stops after one hour; Start begins a new session. Totals are not
+  persisted across sessions. Closing to tray keeps monitoring active.
+  Collector files are copied to a private temporary directory before elevation;
+  the temporary filesystem must permit executable files. Stop or Quit releases
+  the helper. No service, firewall change or passwordless rule is installed.
+  Guide: https://github.com/pelletiermaxime/rustleblower/blob/main/docs/data-usage.md
+
+Full opensnitch-ui parity and broader distribution testing remain ongoing.

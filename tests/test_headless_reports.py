@@ -53,8 +53,8 @@ class KitEvidence(unittest.TestCase):
              redirect_stdout(io.StringIO()):
             self.assertEqual(verifier.main(), 1)
         report = json.loads((destination / "result.json").read_text())
-        self.assertEqual(verify.call_count, 42)
-        self.assertEqual(report["passed"], 41)
+        self.assertEqual(verify.call_count, len(verifier.FEATURE_TESTS))
+        self.assertEqual(report["passed"], len(verifier.FEATURE_TESTS) - 1)
         self.assertEqual(report["status"], "failed")
         self.assertIs(report["real_gpu"], False)
 

@@ -21,6 +21,7 @@ fi
 
 test -x target/release/rustleblower
 python3 scripts/collect-licenses.py
+python3 scripts/package-collector.py
 command -v dpkg-deb >/dev/null
 command -v dpkg-shlibdeps >/dev/null
 
@@ -31,6 +32,8 @@ mkdir -p "$output"
 archive="rustleblower-$version-linux-x86_64"
 mkdir -p "$stage/$archive"
 install -m755 target/release/rustleblower "$stage/$archive/rustleblower"
+mkdir -p "$stage/$archive/libexec"
+cp -R target/collector-package "$stage/$archive/libexec/rustleblower"
 install -m644 LICENSE "$stage/$archive/"
 cp -R LICENSES "$stage/$archive/"
 install -m644 target/release-notices/THIRD_PARTY_NOTICES.txt "$stage/$archive/"
@@ -43,6 +46,8 @@ deb="$stage/debian/rustleblower"
 mkdir -p "$deb/DEBIAN" "$deb/usr/bin" "$deb/usr/share/applications" \
   "$deb/usr/share/doc/rustleblower" "$stage/debian"
 install -m755 target/release/rustleblower "$deb/usr/bin/rustleblower"
+mkdir -p "$deb/usr/libexec"
+cp -R target/collector-package "$deb/usr/libexec/rustleblower"
 install -m644 packaging/linux/dev.rustleblower.Rustleblower.desktop "$deb/usr/share/applications/"
 bash scripts/install-icons.sh "$deb/usr/share"
 install -m644 LICENSE "$deb/usr/share/doc/rustleblower/copyright"
@@ -75,7 +80,7 @@ Maintainer: Maxime Pelletier <pelletiermaxime@users.noreply.github.com>
 Homepage: https://github.com/pelletiermaxime/rustleblower
 Installed-Size: $installed_size
 Depends: $dependencies, libvulkan1, libegl1, libwayland-client0, libwayland-cursor0, libwayland-egl1
-Recommends: fonts-dejavu-core
+Recommends: fonts-dejavu-core, pkexec
 Description: Native frontend for the OpenSnitch firewall daemon
  Review connection prompts, manage application rules, and browse connection
  history and statistics. Requires Wayland or X11, a graphics driver, and an

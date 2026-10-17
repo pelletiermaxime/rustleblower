@@ -91,7 +91,12 @@ proof separately in the verification map. Keep unproven work marked pending.
   References: [Picosnitch](https://github.com/elesiuta/picosnitch),
   [Netdata socket collector](https://learn.netdata.cloud/docs/collecting-metrics/collectors/operating-systems/ebpf-socket),
   and [OpenSnitch's experimental bandwidth work](https://github.com/evilsocket/opensnitch/issues/1081).
-  This is a deferred TODO, not authorization to start implementation automatically.
+  The user selected live rates and session totals on October 17, 2026. An isolated
+  collector has passed nine owned live-kernel cases and the native Data usage
+  preview has stream/input and independent-permission proof. See [setup](data-usage.md)
+  and [measurement semantics and remaining verification gates](bandwidth-plan.md).
+  The UI requests helper authorization through polkit; native/package/overhead
+  checks remain separate.
 
 ## Execution notes
 

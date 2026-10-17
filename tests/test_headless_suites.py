@@ -32,7 +32,7 @@ class JourneyCoverage(unittest.TestCase):
         actual = {path.stem for path in (ROOT / "src/app/kit_tests").glob("*.rs")
                   if "#[gpui_kit::test]" in path.read_text()}
         self.assertEqual(registered, actual)
-        self.assertEqual(len(registered), 42)
+        self.assertEqual(len(registered), len(suites.FEATURE_TESTS))
 
     def test_inventory_cli_lists_every_journey_once(self):
         output = io.StringIO()

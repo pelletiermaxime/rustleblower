@@ -19,6 +19,16 @@ def main():
         icon_checks.append(f'printf \'%s  %s\\n\' \'{icon["png_sha256"]}\' "$1/{relative}" | sha256sum --check')
     icon_checks.append("}")
     icon_checks = "\n".join(icon_checks) + "\n"
+    collector_checks = r'''check_collector() {
+  test -s "$1/accounting.bpf.o"
+  test -s "$1/THIRD_PARTY_NOTICES.txt"
+  test -s "$1/licenses/LGPL-2.1"
+  test -s "$1/lib/libbpf.so.1"
+  env -u LD_LIBRARY_PATH "$1/collector" --help >/tmp/collector-help 2>&1
+  grep -F -- '--object' /tmp/collector-help
+  ! ldd "$1/collector" | grep -F 'not found'
+}
+'''
     scripts = {
         "deb-and-archive": r'''set -eu
 apt-get update
@@ -26,10 +36,12 @@ apt-get install -y /packages/rustleblower_*.deb
 test -f /usr/share/applications/dev.rustleblower.Rustleblower.desktop
 check_icons /usr/share/icons/hicolor
 test -f /usr/share/doc/rustleblower/copyright
+check_collector /usr/libexec/rustleblower
 rustleblower --version | grep -Fx "rustleblower @VERSION@"
 mkdir /archive
 tar -xzf /packages/rustleblower-*-linux-x86_64.tar.gz -C /archive
 check_icons /archive/rustleblower-@VERSION@-linux-x86_64/share/icons/hicolor
+check_collector /archive/rustleblower-@VERSION@-linux-x86_64/libexec/rustleblower
 /archive/rustleblower-*/rustleblower --version | grep -Fx "rustleblower @VERSION@"
 set +e
 env -u DISPLAY -u WAYLAND_DISPLAY rustleblower --socket /tmp/package-proof.sock --database /tmp/package-proof.sqlite3 2>/tmp/display-error
@@ -44,6 +56,7 @@ mkdir /appimage
 cd /appimage
 /packages/rustleblower-*-linux-x86_64.AppImage --appimage-extract >/dev/null
 check_icons /appimage/squashfs-root/usr/share/icons/hicolor
+check_collector /appimage/squashfs-root/usr/libexec/rustleblower
 /packages/rustleblower-*-linux-x86_64.AppImage --appimage-extract-and-run --version | grep -Fx "rustleblower @VERSION@"
 set +e
 env -u DISPLAY -u WAYLAND_DISPLAY /packages/rustleblower-*-linux-x86_64.AppImage --appimage-extract-and-run --socket /tmp/package-proof.sock --database /tmp/package-proof.sqlite3 2>/tmp/display-error
@@ -56,7 +69,7 @@ test ! -e /tmp/package-proof.sock
     }
     for name, script in scripts.items():
         print(f"Checking {name}", flush=True)
-        subprocess.run(["docker", "run", "--rm", "-v", f"{PACKAGES}:/packages:ro", "ubuntu:24.04", "bash", "-euc", icon_checks + script.replace("@VERSION@", VERSION)], check=True)
+        subprocess.run(["docker", "run", "--rm", "-v", f"{PACKAGES}:/packages:ro", "ubuntu:24.04", "bash", "-euc", icon_checks + collector_checks + script.replace("@VERSION@", VERSION)], check=True)
     print(json.dumps({"status": "passed", "version": VERSION, "checks": list(scripts)}))
 
 

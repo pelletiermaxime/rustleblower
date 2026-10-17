@@ -1,6 +1,7 @@
 pub mod alerts;
 pub mod appearance;
 pub mod backend;
+pub mod bandwidth;
 pub mod config;
 pub mod desktop_notifications;
 pub mod firewall;

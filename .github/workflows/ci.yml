@@ -41,6 +41,11 @@ jobs:
         run: python3 scripts/cargo.py fmt --all --check
       - name: Verification helper guards
         run: python3 -m unittest discover -s tests -p 'test_*.py' -v
+      - name: Build portable usage collector and check its transport
+        run: |
+          python3 scripts/bandwidth/build.py --portable
+          python3 scripts/bandwidth/test_verify.py
+          python3 scripts/bandwidth/test_transport.py --build target/bandwidth
       - name: Clippy
         run: python3 scripts/cargo.py clippy --all-targets --all-features --locked -- -D warnings
       - name: Core protocol and persistence tests

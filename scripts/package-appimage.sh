@@ -63,6 +63,10 @@ bash scripts/install-icons.sh "$appdir/usr/share"
   --exclude-library 'libGL*.so*' \
   --exclude-library 'libOpenGL.so*' \
   --exclude-library 'libwayland-*.so*'
+# Keep the collector's private $ORIGIN/lib bundle separate from GUI deployment.
+# The UI copies it out of the FUSE mount before invoking the system auth agent.
+mkdir -p "$appdir/usr/libexec"
+cp -R target/collector-package "$appdir/usr/libexec/rustleblower"
 ARCH=x86_64 "$stage/appimagetool/squashfs-root/AppRun" \
   --runtime-file "$tools/runtime-x86_64" "$appdir" \
   "$output/rustleblower-$version-linux-x86_64.AppImage"

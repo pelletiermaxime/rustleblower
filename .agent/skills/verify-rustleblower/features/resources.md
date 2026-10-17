@@ -34,6 +34,18 @@ history remains bounded and reports any loss.
   current/pending/export, a 200-row UI page and top ten. CSV/JSON output is at most
   16 MiB, clipboard 4 MiB, with a 16-KiB buffer. Separate skip/error/eviction health
   does not inflate history loss.
+- `resource-bandwidth`: one independent socket worker, one latest query and
+  immutable output page, four pending header-sort events, 4,096 cumulative
+  byte identities, 4,096 immutable executable metadata records (512-byte paths,
+  plus one fixed scratch buffer per CPU), 2-MiB JSON frames and 100 displayed rows. Parsing, grouping
+  and global sorting run off the UI thread. A partial frame expires after two
+  seconds; three seconds without an update makes rates unavailable. The socket
+  checks kernel peer credentials and removes only its own directory entry. One
+  owned authorization/collector process has a two-minute startup deadline;
+  diagnostics retain 4 KiB and drain at most 16 KiB per tick. Child reaping runs
+  on the worker after the receiver closes.
+  Usage never waits on SQLite or the daemon command path; the bandwidth Kit
+  journey answers a permission RPC while holding an incomplete usage frame.
 - `resource-isolation`: disk contention cannot block prompt decisions or Ping.
 - `resource-preferences`: reads are capped at 4 KiB; saves run on the background
   executor, serialize independently and hold no prompt-facing lock during I/O.

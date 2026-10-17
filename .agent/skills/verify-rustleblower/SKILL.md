@@ -12,7 +12,7 @@ the system daemon or replace an existing socket to run verification.
 
 ## Headless interaction and layout checks
 
-All 42 headless journeys now use GPUI Kit's `test-support`, `TestAppContext`,
+The headless journeys use GPUI Kit's `test-support`, `TestAppContext`,
 native event helpers and bounded condition waits. They use the standard test
 text system, not a WGPU renderer. No headless screenshot, painted-color or
 real-font proof is produced.

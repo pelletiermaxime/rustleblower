@@ -100,7 +100,7 @@ def main():
     parser.add_argument("--timeout", type=int, default=120)
     selection = parser.add_mutually_exclusive_group()
     selection.add_argument("--feature", choices=tuple(FEATURE_TESTS), default="all")
-    selection.add_argument("--all", action="store_true", help="Run all 42 journeys in isolated processes")
+    selection.add_argument("--all", action="store_true", help="Run the complete journey inventory in isolated processes")
     args = parser.parse_args()
     evidence = (args.evidence or ROOT / ".verification/headless" /
                 (datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid.uuid4().hex[:8])).resolve()

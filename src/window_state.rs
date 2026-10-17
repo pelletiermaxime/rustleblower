@@ -14,6 +14,7 @@ pub enum Page {
     History,
     Rules,
     Statistics,
+    Bandwidth,
     Nodes,
     Alerts,
     Live,

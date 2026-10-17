@@ -363,6 +363,7 @@ fn advanced_defaults(cx: &mut TestAppContext, window: AnyWindowHandle) {
 }
 
 mod alerts;
+mod bandwidth;
 
 mod appearance;
 

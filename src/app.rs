@@ -2,6 +2,7 @@
 mod alerts_view;
 mod app_icon;
 mod appearance;
+mod bandwidth_view;
 mod brand_icons;
 mod catalogue_preferences;
 mod connection_details;
@@ -57,6 +58,7 @@ actions!(
         ShowHistory,
         ShowRules,
         ShowStatistics,
+        ShowBandwidth,
         ShowNodes,
         ShowAlerts,
         ShowLive,
@@ -81,6 +83,7 @@ fn bind_keys(cx: &mut App) {
         KeyBinding::new("ctrl-5", ShowAlerts, Some("Rustleblower")),
         KeyBinding::new("ctrl-6", ShowLive, Some("Rustleblower")),
         KeyBinding::new("ctrl-7", ShowSubscriptions, Some("Rustleblower")),
+        KeyBinding::new("ctrl-8", ShowBandwidth, Some("Rustleblower")),
         KeyBinding::new("ctrl-shift-l", ShowCollections, Some("Rustleblower")),
         KeyBinding::new("ctrl-shift-b", BulkSubscriptions, Some("Rustleblower")),
         KeyBinding::new("ctrl-shift-t", TransferSubscriptions, Some("Rustleblower")),
@@ -97,6 +100,7 @@ fn bind_keys(cx: &mut App) {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Screen {
+    Bandwidth,
     History,
     Rules,
     Statistics,
@@ -171,6 +175,7 @@ struct Dashboard {
     history: HistoryView,
     rules: rules_view::RulesView,
     statistics: statistics_view::StatisticsView,
+    bandwidth: bandwidth_view::BandwidthView,
     nodes: nodes_view::NodesView,
     alerts: alerts_view::AlertsView,
     live: live_view::LiveView,
@@ -191,6 +196,7 @@ impl Dashboard {
             Screen::History => self.history.test_idle(),
             Screen::Rules => self.rules.test_query_ready(),
             Screen::Statistics => self.statistics.test_query_ready(),
+            Screen::Bandwidth => self.bandwidth.test_query_ready(),
             Screen::Nodes => self.nodes.test_query_ready(),
             Screen::Alerts => self.alerts.test_query_ready(),
             Screen::Live => self.live.test_query_ready(),
@@ -204,6 +210,7 @@ impl Dashboard {
         let history = HistoryView::new(&backend.history, backend.highlighting.clone(), window, cx);
         let rules = rules_view::RulesView::new(window, cx);
         let statistics = statistics_view::StatisticsView::new(window, cx);
+        let bandwidth = bandwidth_view::BandwidthView::new(window, cx);
         let nodes = nodes_view::NodesView::new(window, cx);
         let alerts = alerts_view::AlertsView::new(window, cx);
         let live = live_view::LiveView::new(&backend, window, cx);
@@ -250,6 +257,7 @@ impl Dashboard {
             history,
             rules,
             statistics,
+            bandwidth,
             nodes,
             alerts,
             live,
@@ -363,6 +371,7 @@ impl Dashboard {
         {
             memory.record(state, true);
         }
+        self.bandwidth.stop();
         self.backend.shutdown();
         {
             let done = self.memory.as_ref().map(window_memory::Client::finish);
@@ -382,6 +391,9 @@ impl Dashboard {
         }
     }
     fn tick_background(&mut self, cx: &mut Context<Self>) {
+        if self.bandwidth.poll(cx) {
+            cx.notify();
+        }
         if self.screen != Screen::Subscriptions || self.main_window.is_none() {
             self.subscriptions.cancel_url_test();
         }
@@ -523,6 +535,7 @@ impl Dashboard {
                 Screen::History => &self.history.input,
                 Screen::Rules => &self.rules.input,
                 Screen::Statistics => &self.statistics.input,
+                Screen::Bandwidth => &self.bandwidth.input,
                 Screen::Nodes => &self.nodes.input,
                 Screen::Alerts => &self.alerts.input,
                 Screen::Live => &self.live.input,
@@ -713,12 +726,18 @@ impl Render for Dashboard {
                 this.statistics.input.focus_handle(cx).focus(window, cx);
                 cx.notify();
             }))
+            .on_action(cx.listener(|this, _: &ShowBandwidth, window, cx| {
+                this.screen = Screen::Bandwidth;
+                this.bandwidth.input.focus_handle(cx).focus(window, cx);
+                cx.notify();
+            }))
             .on_action(cx.listener(|this, _: &FocusSearch, window, cx| {
                 if this.screen==Screen::Subscriptions{this.focus_subscription_search(window,cx);return;}
                 let input = match this.screen {
                     Screen::History => &this.history.input,
                     Screen::Rules => &this.rules.input,
                     Screen::Statistics => &this.statistics.input,
+                    Screen::Bandwidth => &this.bandwidth.input,
                     Screen::Nodes => &this.nodes.input,
                     Screen::Alerts => &this.alerts.input,
                     Screen::Live => &this.live.input,
@@ -777,7 +796,7 @@ impl Render for Dashboard {
                     .small()
                     .underline()
                     .px_4()
-                    .selected_index(match self.screen { Screen::History => 0, Screen::Rules => 1, Screen::Statistics => 2, Screen::Nodes => 3, Screen::Alerts => 4, Screen::Live => 5, Screen::Subscriptions=>6 })
+                    .selected_index(match self.screen { Screen::History => 0, Screen::Rules => 1, Screen::Statistics => 2, Screen::Nodes => 3, Screen::Alerts => 4, Screen::Live => 5, Screen::Subscriptions=>6, Screen::Bandwidth=>7 })
                     .children([
                         Tab::new().label(crate::i18n::tr("History")),
                         Tab::new().label(crate::i18n::tr("Application rules")),
@@ -786,9 +805,10 @@ impl Render for Dashboard {
                         Tab::new().label(crate::i18n::tr("Alerts")),
                         Tab::new().label(crate::i18n::tr("Live")),
                         Tab::new().label(crate::i18n::tr("Blocklists")),
+                        Tab::new().label(crate::i18n::tr("Data usage")),
                     ])
                     .on_click(cx.listener(|this, index: &usize, _, cx| {
-                        this.screen = match *index { 0 => Screen::History, 1 => Screen::Rules, 2 => Screen::Statistics, 3 => Screen::Nodes, 4 => Screen::Alerts, 5=>Screen::Live, _=>Screen::Subscriptions };
+                        this.screen = match *index { 0 => Screen::History, 1 => Screen::Rules, 2 => Screen::Statistics, 3 => Screen::Nodes, 4 => Screen::Alerts, 5=>Screen::Live, 6=>Screen::Subscriptions, _=>Screen::Bandwidth };
                         cx.notify();
                     })))
                 },
@@ -797,6 +817,7 @@ impl Render for Dashboard {
                 Screen::History => self.render_history(cx),
                 Screen::Rules => self.render_rules(cx),
                 Screen::Statistics => self.render_statistics(cx),
+                Screen::Bandwidth => self.render_bandwidth(cx),
                 Screen::Nodes => self.render_nodes(cx),
                 Screen::Alerts => self.render_alerts(cx),
                 Screen::Live => self.render_live(cx),

@@ -32,15 +32,15 @@ separately; Rustleblower contains only its frontend.
 For the AppImage:
 
 ```sh
-chmod +x rustleblower-0.3.0-linux-x86_64.AppImage
-./rustleblower-0.3.0-linux-x86_64.AppImage
+chmod +x rustleblower-0.4.0-linux-x86_64.AppImage
+./rustleblower-0.4.0-linux-x86_64.AppImage
 ```
 
 Without FUSE, add `--appimage-extract-and-run`. On Ubuntu/Debian, the `.deb`
 installs library dependencies and adds the application to your launcher:
 
 ```sh
-sudo apt install ./rustleblower_0.3.0_amd64.deb
+sudo apt install ./rustleblower_0.4.0_amd64.deb
 rustleblower
 ```
 
@@ -101,6 +101,13 @@ the chosen interval before their first run. You can run a saved group manually o
 cancel it; failed or cancelled downloads preserve the previous file. Success and
 failure notifications can open this window. Downloads do not create firewall
 rules or activate downloaded lists.
+
+The experimental **Data usage** page (`Ctrl+8`) shows
+per-application upload/download rates and totals since monitoring started.
+It uses a separate Linux collector while the desktop app stays unprivileged.
+Stale or unavailable collection is shown explicitly. Start monitoring opens the
+system authentication dialog for the collector; see
+[Data usage setup and limitations](docs/data-usage.md).
 
 The main window remembers its size, maximized/fullscreen state and last page
 for the next launch. Its saved bounds are fitted to connected displays when it

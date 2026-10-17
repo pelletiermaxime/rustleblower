@@ -14,7 +14,8 @@ runs:
         sudo apt-get install -y build-essential pkg-config cmake clang patch dpkg-dev curl file \
           libssl-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev \
           libfontconfig1-dev libfreetype-dev libxcb1-dev libx11-dev libxi-dev \
-          libxcursor-dev libxrandr-dev libegl1 mesa-vulkan-drivers fonts-dejavu-core dbus iproute2 util-linux
+          libxcursor-dev libxrandr-dev libegl1 mesa-vulkan-drivers fonts-dejavu-core dbus iproute2 util-linux \
+          libbpf-dev libelf-dev zlib1g-dev
     - name: Prepare isolated fixture namespaces on the disposable runner
       shell: bash
       run: |
