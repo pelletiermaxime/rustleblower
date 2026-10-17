@@ -821,10 +821,17 @@ candidate `v0.2.2` then stopped on a five-second completion wait for the 20-MiB
 disk-budget fixture. Only that wait now allows 60 seconds; publication/old-file
 assertions and independent 500-ms permission/Ping limits remain unchanged. Failed
 tags are retained. The successful `v0.2.3` candidate used the manual Release workflow on `main`.
-New releases use that same path: checks and packages complete before the annotated
-tag and stable release are created.
-Invoke it with `gh workflow run release.yml --ref main -f tag=v0.3.0` (substitute
-the matching Cargo version for future releases). Tag pushes remain supported.
+New releases start from an annotated tag pushed with maintainer credentials:
+`git tag -a v0.3.0 -m "Rustleblower v0.3.0" <release-commit>`, then
+`git push origin refs/tags/v0.3.0` (substitute the matching Cargo version). The tag
+push starts the full checks/package workflow. Failed tags remain for traceability.
+Manual retries select that existing tag, for example
+`gh workflow run release.yml --ref v0.3.0 -f tag=v0.3.0`.
+A cheap preflight requires matching Cargo version, release notes, an annotated
+existing tag and the exact checked commit before starting any expensive jobs.
+The workflow token only publishes assets for the verified tag. It never pushes
+tags: GitHub can reject its tag push when workflow files differ from current main,
+since that token has no workflow-writing permission. No extra token scope is needed.
 
 The initial v0.1.0 tag failed its GPU gate and has no published release. Ubuntu's
 DejaVu font exposed a countdown-status wrap that moved a checksum button between

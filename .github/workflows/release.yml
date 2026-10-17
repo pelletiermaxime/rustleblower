@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: New release tag matching Cargo.toml (created after checks)
+        description: Existing annotated tag matching Cargo.toml; select that tag as the workflow ref
         type: string
         required: true
 
@@ -14,7 +14,34 @@ permissions:
   contents: read
 
 jobs:
+  release-target:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          fetch-tags: true
+      - name: Verify the existing annotated release tag before expensive checks
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          python3 - <<'PYCODE'
+          import os, pathlib, subprocess, tomllib
+          tag = os.environ['RELEASE_TAG']
+          version = tomllib.loads(pathlib.Path('Cargo.toml').read_text())['package']['version']
+          assert tag == f'v{version}', 'Tag and Cargo version differ'
+          assert pathlib.Path(f'docs/releases/{tag}.md').is_file(), 'Release notes missing'
+          ref = f'refs/tags/{tag}'
+          assert subprocess.run(['git', 'show-ref', '--verify', '--quiet', ref]).returncode == 0, 'Push the annotated release tag with maintainer credentials first'
+          assert subprocess.check_output(['git', 'cat-file', '-t', ref], text=True).strip() == 'tag', 'Release tags must be annotated'
+          commit = subprocess.check_output(['git', 'rev-parse', f'{ref}^{{commit}}'], text=True).strip()
+          assert commit == os.environ['GITHUB_SHA'], 'Select the existing tag as the workflow ref; it must match the checked commit'
+          print(f'Verified {tag} at {commit}')
+          PYCODE
+
   checks-and-packages:
+    needs: release-target
     uses: ./.github/workflows/ci.yml
     with:
       packages: true
@@ -40,13 +67,6 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
         run: |
-          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then
-            git config user.name 'github-actions[bot]'
-            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-            git tag -a "$RELEASE_TAG" "$GITHUB_SHA" -m "Rustleblower $RELEASE_TAG"
-            gh auth setup-git
-            git push origin "refs/tags/$RELEASE_TAG"
-          fi
           gh release create "$RELEASE_TAG" dist/* \
             --verify-tag --latest --title "Rustleblower $RELEASE_TAG" \
             --notes-file "docs/releases/$RELEASE_TAG.md"
