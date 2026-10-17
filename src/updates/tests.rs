@@ -235,20 +235,27 @@ async fn owned_http_manual_optin_release_precedence_and_notice_deduplication() {
         0,
         "disabled must never check automatically"
     );
-    fixture.push(Response::json(
-        r#"{"tag_name":"v0.3.0","html_url":"https://untrusted.invalid/"}"#,
-    ));
+    let current = Version::parse(APP_VERSION).unwrap();
+    let next = Version::new(current.major, current.minor + 1, 0);
+    let release = serde_json::json!({
+        "tag_name": format!("v{next}"),
+        "html_url": "https://untrusted.invalid/"
+    })
+    .to_string();
+    fixture.push(Response::json(&release));
     let state = check_once(&handle).await;
     assert_eq!(state.outcome, Outcome::Available);
     assert_eq!(state.current.unwrap().version, APP_VERSION);
     assert_eq!(state.next_due, None);
     assert_eq!(
-        state.release_url.as_deref(),
-        Some("https://github.com/pelletiermaxime/rustleblower/releases/tag/v0.3.0")
+        state.release_url,
+        Some(format!(
+            "https://github.com/pelletiermaxime/rustleblower/releases/tag/v{next}"
+        ))
     );
     assert_eq!(notices.lock().unwrap().len(), 1);
     command(&handle, Command::Reload).await;
-    fixture.push(Response::json(r#"{"tag_name":"v0.3.0"}"#));
+    fixture.push(Response::json(&release));
     assert_eq!(check_once(&handle).await.outcome, Outcome::Available);
     assert_eq!(notices.lock().unwrap().len(), 1);
     assert!(
@@ -295,7 +302,7 @@ async fn owned_http_stable_absence_rate_limit_body_limit_and_invalid_release() {
             Outcome::NoComparableRelease,
         ),
         (
-            Response::json(r#"{"tag_name":"0.2.3+different"}"#),
+            Response::json(&format!(r#"{{"tag_name":"{APP_VERSION}+different"}}"#)),
             Outcome::Current,
         ),
         (
