@@ -1,4 +1,4 @@
-"""Keep parallel GPU coverage complete and distinguish compilation from input time."""
+"""Keep parallel Kit coverage complete and distinguish compilation from input time."""
 import ast
 from contextlib import redirect_stdout
 import importlib.util
@@ -19,9 +19,21 @@ class BatchCoverage(unittest.TestCase):
         suites.validate_shards()
         workflow = (ROOT / ".github/workflows/ci.yml").read_text()
         matrix = re.search(r"^\s+shard: (\[[^\n]+\])$", workflow, re.MULTILINE)
-        self.assertIsNotNone(matrix, "The workflow must enumerate the GPU batches")
+        self.assertIsNotNone(matrix, "The workflow must enumerate the Kit batches")
         self.assertEqual(ast.literal_eval(matrix[1]), list(range(len(suites.SHARDS))))
         self.assertEqual(len(set(suites.FEATURE_TESTS.values())), len(suites.FEATURE_TESTS))
+
+    def test_every_registered_journey_uses_the_kit_runner(self):
+        registered = set()
+        for target in suites.FEATURE_TESTS.values():
+            module, test = target.split("::")
+            source = (ROOT / "src/app/kit_tests" / f"{module}.rs").read_text()
+            self.assertRegex(source, rf"#\[gpui_kit::test\]\s+(?:async\s+)?fn {test}\(")
+            registered.add(module)
+        actual = {path.stem for path in (ROOT / "src/app/kit_tests").glob("*.rs")
+                  if "#[gpui_kit::test]" in path.read_text()}
+        self.assertEqual(registered, actual)
+        self.assertEqual(len(registered), 42)
 
     def test_missing_duplicate_unknown_and_empty_batches_are_refused(self):
         batches = [list(batch) for batch in suites.SHARDS]

@@ -1,9 +1,21 @@
 # Live socket table, selection and saved view
 
-Read [source and bounded contract](../../../../docs/live-table-plan.md). Kit DataTable exposes the source thirteen columns with global typed sorting before200row paging. Marks/ranges/all-matching selection are tied to one captured session/revision; frozen CSV chosen-column or raw socket JSON output keeps exact scope while updates continue. Four focused core cases and strict core all-target Clippy pass. The linked native adapter/tools pass concrete headless and strict lib Clippy; the final ten-frame GPU/input journey passes, including650→651 snapshots, numeric reversible header sorting,201row Shift selection, frozen CSV/JSON output, save/reopen/stale/reload and held-update permission input. The earlier11frame task/process/error/close regression separately passes.
+Read [source and bounded contract](../../../../docs/live-table-plan.md). The Kit
+table exposes thirteen columns, with typed global sorting before 200-row paging.
+Marks, ranges and all-matching selection capture one session/revision. Frozen CSV
+with chosen columns or raw socket JSON keeps that scope while updates continue.
+Incoming KitDefault maps to Descending for a reversible two-state sort cycle.
 
-`live-view-tools` works before monitoring. Saved numeric filters, interval, search, sort and1–13visible columns/widths append `.live-view.json`; reload/save are off-thread and stale-safe. Loading saved state leaves monitoring stopped. Mark IDs are `("live-mark", raw_index)`; source column indices0–12 are Command/Process/State/SourcePort/SourceIP/DestinationIP/DestinationPort/Protocol/UID/PID/Family/Interface/Metadata. Tools expose exact captured row count/session/revision, nonsearchable typed format, bounded path and cancellation.
+`live-view-tools` works before monitoring. Saved numeric filters, interval,
+search, sort and 1–13 visible columns/widths use `<database>.live-view.json`.
+Loading and saving run off the UI thread and reject stale revisions. Loading a
+saved view leaves monitoring stopped. Marks use `("live-mark", raw_index)`;
+column indices 0–12 are Command, Process, State, SourcePort, SourceIP,
+DestinationIP, DestinationPort, Protocol, UID, PID, Family, Interface and Metadata.
+Tools show the captured row count/session/revision, typed format, bounded path
+and cancellation.
 
-Retained evidence `.verification/live-table-20261017/`. New native scopes do not change daemon task/permission/policy ownership; no real daemon, compositor, package or RSS proof is implied.
-
-Final native run `.verification/headless/20261017T045655Z-0be9c4c2` (36.39s), source/binary retained; all ten overlapping final production hashes match `.verification/live-table-gpu3-source/manifest.json`. The strict stabilization checkpoint also checks all headless targets. Incoming KitDefault maps to Descending to keep the always-sorted two-state header cycle reversible.
+Run `python scripts/verify-headless.py --feature live-table`. Require numeric
+header sorting in both directions, Shift selection across pages, exact frozen
+CSV/JSON output, save/reopen/stale/reload behavior, stopped restoration and
+independent permission input while a live update is held.

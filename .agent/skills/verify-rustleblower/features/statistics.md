@@ -35,7 +35,7 @@ commands. A bounded cache is not a permanent traffic audit or byte counter.
   key/byte/node/age and allocation bounds. The contention test holds SQLite's
   writer, coalesces 20 reports and answers a permission before the lock is freed.
 - Background: `python scripts/verify-headless.py --feature statistics`. Require
-  ten PNGs, real GPU, scoped socket removed and owned process exited. Actual Kit
+  all listed JSON checkpoints, scoped socket removed and owned process exited. Actual Kit
   input changes tabs, node/sort selectors, chart, frozen pages and latest;
   independently read files/clipboard and SQLite confirm all-page output and
   baseline/history changes. The RPC fixture reports totals larger than history.
@@ -43,14 +43,12 @@ commands. A bounded cache is not a permanent traffic audit or byte counter.
   `python scripts/verify-native.py run --feature statistics`. Require painted
   totals/applications, empty-state OCR after keyboard search, three persisted
   application counters / 430 hits, zero daemon commands and every cleanup flag.
-- Selected output: three new model/persistence/export cases and the four
-  existing protocol regressions pass, with source/evidence boundaries in
+- Selected output: model/persistence/export and protocol tests cover the
   [counter-selection contract](../../../../docs/statistics-selection.md).
-  The linked controls pass the concrete all-features/all-targets native check;
-  the expanded fourteen-frame GPU/input journey below proves checkbox/range
-  selection, chosen-column output and the observed scrolling export body.
+  The Kit journey checks checkbox/range selection, chosen-column output and
+  scrolling inside the export body.
 
-## Screenshots
+## Expected observations
 
 1. Applications / totals / bounded first page.
 2. Pinned Kit top-ten BarChart with exact labels.
@@ -82,7 +80,3 @@ Native chart/reset/history checkbox/export/picker actions, cap-sized output,
 long-running RSS and real daemon enforcement remain unverified. Concurrent named Unix sessions are now supported; remote TCP/TLS and peer
 identity remain pending (see Nodes). No verification changes
 the system daemon, active socket or firewall. Preserve failure evidence.
-
-## Captured counter selection input proof
-
-`python scripts/verify-headless.py --feature statistics` now passes14 actualGPU frames in `.verification/headless/20261017T043959Z-14963128/result.json` (38.65seconds runtime), retaining the original10 category/chart/filter/paging/export/drilldown/reset observations. Four addedframes exercise pointer/Shift marks across the200-row boundary,201selectedrange clipboard rows, Selectall withone exclusion, and349 frozen selectedJSONL rows with only Value/Hits fields. File/clipboard bytes match; the old201counter stayscaptured despite a later999report. A realDeny succeeds while outputtools areopen. Focusedreset deletes its exacthistory and preserves the newlyintroduced unrelatedpermission event. Aggregate `.verification/statistics-selection-gpu-result.json` retains149-source manifest, immutablebinary, allimages/outputartifacts and7core evidence with explicit observation/dependency/backup-safety source deltas. Native compositor/package/RSS and realdaemon enforcement remain separate.

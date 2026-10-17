@@ -76,7 +76,7 @@ reload ACK, review parser or window visibility.
   clipboard roundtrip, and rejected-draft/cache preservation. The fixture holds the
   shared reader across ACK, then releases it to prove the post-save view catches up. Input must focus
   the actual Kit Textarea; its accessibility label is not an ElementId selector.
-- Core, GPU, desktop build and native proof are separate. The field-form
+- Core, Kit, desktop build and native proof are separate. The field-form
   checkpoint below adds native chain-name input; enforcement remains unverified.
 
 ## Native field editors
@@ -133,7 +133,7 @@ local step. Nested Ctrl+Enter must never skip unsaved expression/value inputs.
 
 Native file/profile/rule/expression/value/picker controls; expression/value paging
 input beyond the first page; backend-specific condition presets/validation and
-long-duration RSS. A near-wire-cap synthetic snapshot has interactive GPU proof;
+long-duration RSS. The Kit journey exercises a near-wire-cap synthetic snapshot;
 that does not establish real kernel validity or memory performance at all caps.
 The full system-firewall feature and broader port goal remain incomplete.
 
@@ -178,18 +178,9 @@ page's focus so Ctrl+Enter can review again.
   full/profile file and clipboard export, existing-file preservation, full draft
   replacement, Review/Back/keyboard review, exact complete gRPC payload, independent
   permission during held ACK, accepted persistence and offline export. Require
-  eleven PNGs, successful flow report and owned socket/process cleanup. This
+  eleven JSON checkpoints, successful flow report and owned socket/process cleanup. This
   exercises typed paths; OS dialog interaction and native compositor controls
   remain separate. The policy/state journey below covers the staged transition.
-
-Current checkpoint: `.verification/firewall-files-result.json` is the aggregate
-for this slice. It distinguishes the final envelope-compatible eleven-frame
-journey and installed-Python interoperability proof from the earlier bare-only
-checkpoints. The existing thirteen-frame forms and eight-frame JSON journeys
-passed again with the new tab; their production paths were unchanged by the
-subsequent isolated profile-envelope parser correction. Old report text saying
-other workflows were unfinished describes that journey's coverage, not a current
-blanket feature status; future report labels state the coverage boundary directly.
 
 ## Built-in policies and reviewed state transitions
 
@@ -253,7 +244,6 @@ reports are preserved, while the next priority is the native subscription manage
 and then port ranges. System-firewall backend-specific condition helpers and
 broader native/RSS proof still remain in the full goal.
 
-
 ## Guided statement and verdict helpers
 
 Expressions → Add guided statement… opens finite Kit family/option/comparison
@@ -264,30 +254,3 @@ review/ACK path; Cancel/Escape preserves raw and unknown fields. Bounded local
 service-name and interface suggestions supplement numerical ports/ranges/lists
 and manual interface names/wildcards. Read
 [exact scope and bounds](../../../../docs/firewall-helpers-plan.md).
-
-`python scripts/verify-headless.py --feature firewall-forms` now retains 18 frames.
-Frames 15–18 exercise actual dual-protocol/not-equal port input, IPv6 CIDR,
-SNAT hook refusal and queue parameters; common assertions require complete wire
-payload, held ACK/independent permission and reconnect behavior. The passing run
-is `.verification/headless/20261017T022741Z-b0a175e2/result.json`. Preserve the
-failed `20261017T022336Z-66b482c8` attempt that found stretched Select hit bounds;
-fixed rem-height rows now match their painted triggers. Five dedicated
-`tests/firewall_helpers.rs` core cases pass in the final focused run; the original
-four are also included in the retained 200-case full-core report. The fifth
-requires guided DNAT/redirect hook refusal without moving a captured chain,
-while preserving raw-editor reachability. This does not prove native compositor helper input,
-all helper option combinations, kernel enforcement or final whole-app visuals.
-
-
-The expanded current `firewall-forms` journey passes 22 frames under
-`.verification/headless/20261017T030013Z-f8b4702d/result.json`. New 19–22 exercise
-actual service protocol ambiguity refusal, exact 5553/udp selection, local owned0
-interface selection and reload from mutated owned discovery files while keeping
-the typed 1234 value. The new selections are checked in the whole expected wire
-snapshot before existing held-ACK/permission/stale-reconnect regressions.
-Two focused discovery/constructor cases pass in
-`.verification/firewall-suggestions-core2.log`. All PNGs and owned process/socket
-cleanup pass; scoped hashes/boundaries: `.verification/firewall-suggestions-result.json`.
-The test-only RAII hook supplies filesystem paths to production discovery; no
-host catalogue, environment or policy is changed. Interfaces remain local to
-the UI host. A stale hint in these screenshots receives a copy-only followup.

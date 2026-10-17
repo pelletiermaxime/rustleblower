@@ -103,14 +103,6 @@ uncertain retry; refresh staged destination generations after fixture reconnect;
 recognize completed copies; explicitly replace a conflict; force-destroy the
 owned window under a final held ACK and require no unsent target mutation.
 Inventories/reconnections enter through the production daemon fixture boundary.
-The general 48-frame GPU regression covers existing rules/editor/transfer/bulk
-and permission behavior after the shared snapshot-helper/command changes.
-
-These prove owned protocol/cache/GPU input, not native compositor controls,
-network-wide/kernel enforcement, comparative RSS or completed whole-app UX.
-Native OS picker interaction remains unproved for imports. Retain all
-`.verification/` reports, failed attempts and screenshots; clean only owned
-processes and sockets. Rebuild the desktop after no-default-features core tests.
 
 ## Unsaved drafts and ordered rename
 
@@ -163,13 +155,8 @@ Stop before original deletion; continuation and exact durable rules on both
 nodes; typed invalid/valid file import; changed-file-after-review preservation;
 invalid clipboard with no path fallback; captured clipboard changed after review
 with only the reviewed rule applied. Two synthetic daemons observe exactly five
-commands each. Inspect every recorded PNG; use the final result's process/socket
+commands each. Inspect the JSON checkpoints; use the final result's process/socket
 cleanup flags. The retained first failed compile attempt is not passing proof.
-
-The current six core cases, both 14-frame focused flows and the general 48-frame
-regression are indexed in `.verification/multi-node-drafts-result.json`. These
-do not complete multi-node export, per-target operand-difference inspection,
-new native compositor/picker interactions or the final whole-app UI/UX pass.
 
 ## Multi-node folder export
 
@@ -230,13 +217,7 @@ a live inventory replacement that does not alter the captured export, invalid
 destination preservation and successful retry. The offline inventory enters
 through the production history boundary; connected inventories use Subscribe.
 No policy commands are issued. Permission proof here is during open review, not
-a deliberately stalled disk write. The general 48-frame GPU regression covers
-existing toolbar/editor/permission controls after the added entry point.
-
-Read `.verification/multi-node-export-result.json` for exact current reports.
-Native OS picker/compositor input, actual daemon import/kernel enforcement,
-long-duration resource/package proof and the final whole-app visual pass remain
-separate requirements. Historical sections retain their original proof scope.
+a deliberately stalled disk write.
 
 A per-target operand-difference inspector is an optional usability idea; the
 pinned UI source does not make it a parity requirement. Existing count review

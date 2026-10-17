@@ -1,9 +1,10 @@
-//! Settings shell regression: real menu/control input and independent persistence/RPC assertions.
 use super::*;
+// Settings shell regression: real menu/control input and independent persistence/RPC assertions.
+
 use crate::app::settings;
 
 fn footer(
-    cx: &mut HeadlessAppContext,
+    cx: &mut TestAppContext,
     window: AnyWindowHandle,
     close: &'static str,
     save: impl Into<Option<&'static str>>,
@@ -31,17 +32,17 @@ fn footer(
     .unwrap();
 }
 
-#[test]
-fn headless_settings() {
+#[gpui_kit::test]
+fn journey(test_cx: &mut TestAppContext) {
     use gpui::prelude::*;
     let evidence = evidence();
     let owned = tempfile::tempdir().unwrap();
     let config = options(owned.path());
     let backend = Backend::start(config.clone()).unwrap();
-    let mut cx = context();
+    let mut cx = context(test_cx);
     let mut dashboard = None;
     let main = cx
-        .open_window(size(px(1240.), px(940.)), |window, cx| {
+        .open_test_window(size(px(1240.), px(940.)), |window, cx| {
             let view =
                 cx.new(|cx| Dashboard::new(backend.handle.clone(), config.clone(), window, cx));
             dashboard = Some(view.clone());
@@ -49,31 +50,31 @@ fn headless_settings() {
         })
         .unwrap()
         .into();
-    settle(&mut cx);
+    flush(&mut cx);
     click(&mut cx, main, "settings-menu-trigger");
-    settle(&mut cx);
+    flush(&mut cx);
     let settings = cx.update(|cx| settings::test_window(cx));
     let appearance = crate::appearance::Store::new(&config.database);
     let before = appearance.load().unwrap();
-    let active = cx.update(|cx| super::super::appearance::test_state(cx).1);
+    let active = cx.update(|cx| crate::app::appearance::test_state(cx).1);
     click(&mut cx, settings, "appearance-dark");
-    settle(&mut cx);
+    flush(&mut cx);
     assert_eq!(appearance.load().unwrap().mode, before.mode);
     assert_eq!(
-        cx.update(|cx| super::super::appearance::test_state(cx).1),
+        cx.update(|cx| crate::app::appearance::test_state(cx).1),
         active
     );
     footer(&mut cx, settings, "appearance-close", "appearance-save");
     click(&mut cx, settings, "appearance-save");
-    settle(&mut cx);
+    flush(&mut cx);
     assert_eq!(
         appearance.load().unwrap().mode,
         crate::appearance::ColorMode::Dark
     );
-    capture(&mut cx, settings, &evidence.join("01-appearance.png"));
+    checkpoint(&mut cx, settings, &evidence.join("01-appearance.json"));
     cx.update_window(settings, |_, window, cx| window.press("ctrl-tab", cx))
         .unwrap();
-    settle(&mut cx);
+    flush(&mut cx);
     assert!(
         cx.update_window(settings, |_, window, _| window
             .try_find("startup-enabled")
@@ -82,7 +83,7 @@ fn headless_settings() {
     );
     cx.update_window(settings, |_, window, cx| window.press("ctrl-shift-tab", cx))
         .unwrap();
-    settle(&mut cx);
+    flush(&mut cx);
     let baseline_windows = cx.update(|cx| cx.windows().len());
     click(&mut cx, settings, "settings-popup");
     footer(&mut cx, settings, "preferences-close", "preferences-save");
@@ -91,16 +92,13 @@ fn headless_settings() {
     click(&mut cx, settings, "preferences-priority");
     click(&mut cx, settings, "settings-updates");
     footer(&mut cx, settings, "updates-close", "updates-save");
-    capture(&mut cx, settings, &evidence.join("02-updates.png"));
+    checkpoint(&mut cx, settings, &evidence.join("02-updates.json"));
     click(&mut cx, settings, "settings-popup");
     assert_eq!(backend.handle.preferences.snapshot().priority, original);
     click(&mut cx, settings, "preferences-save");
-    for _ in 0..40 {
-        settle(&mut cx);
-        if backend.handle.preferences.snapshot().priority != original {
-            break;
-        }
-    }
+    wait_for(&mut cx, |_cx| {
+        backend.handle.preferences.snapshot().priority != original
+    });
     assert_eq!(
         crate::preferences::Store::open(&config.database)
             .unwrap()
@@ -108,22 +106,22 @@ fn headless_settings() {
             .priority,
         !original
     );
-    capture(&mut cx, settings, &evidence.join("03-popup-saved.png"));
+    checkpoint(&mut cx, settings, &evidence.join("03-popup-saved.json"));
     let mut frames = vec![
-        "01-appearance.png".to_owned(),
-        "02-updates.png".into(),
-        "03-popup-saved.png".into(),
+        "01-appearance.json".to_owned(),
+        "02-updates.json".into(),
+        "03-popup-saved.json".into(),
     ];
     for (id, name) in [
-        ("settings-startup", "04-startup.png"),
-        ("settings-history", "05-history.png"),
-        ("settings-catalogue", "06-catalogue.png"),
-        ("settings-reputation", "07-reputation.png"),
-        ("settings-downloads", "08-downloads.png"),
-        ("settings-highlighting", "09-highlighting.png"),
+        ("settings-startup", "04-startup.json"),
+        ("settings-history", "05-history.json"),
+        ("settings-catalogue", "06-catalogue.json"),
+        ("settings-reputation", "07-reputation.json"),
+        ("settings-downloads", "08-downloads.json"),
+        ("settings-highlighting", "09-highlighting.json"),
     ] {
         click(&mut cx, settings, id);
-        settle(&mut cx);
+        flush(&mut cx);
         let (close, save) = match id {
             "settings-startup" => ("startup-close", Some("startup-save")),
             "settings-history" => (
@@ -137,7 +135,7 @@ fn headless_settings() {
             _ => unreachable!(),
         };
         footer(&mut cx, settings, close, save);
-        capture(&mut cx, settings, &evidence.join(name));
+        checkpoint(&mut cx, settings, &evidence.join(name));
         frames.push(name.into());
         assert_eq!(
             cx.update(|cx| cx.windows().len()),
@@ -149,36 +147,36 @@ fn headless_settings() {
     click(&mut cx, main, "settings-menu-trigger");
     assert_eq!(cx.update(|cx| settings::test_window(cx)), settings);
     click(&mut cx, settings, "appearance-light");
-    settle(&mut cx);
+    flush(&mut cx);
     assert_eq!(
         appearance.load().unwrap().mode,
         crate::appearance::ColorMode::Dark
     );
-    capture(
+    checkpoint(
         &mut cx,
         settings,
-        &evidence.join("14-appearance-staged.png"),
+        &evidence.join("14-appearance-staged.json"),
     );
-    frames.push("14-appearance-staged.png".into());
+    frames.push("14-appearance-staged.json".into());
     click(&mut cx, main, "history-preferences");
     assert_eq!(cx.update(|cx| settings::test_window(cx)), settings);
     fill(&mut cx, settings, "history-days", "19");
     click(&mut cx, settings, "settings-popup");
     click(&mut cx, settings, "settings-history");
     click(&mut cx, settings, "history-retention-review");
-    settle(&mut cx);
+    flush(&mut cx);
     footer(
         &mut cx,
         settings,
         "history-preferences-close",
         "history-retention-apply",
     );
-    capture(
+    checkpoint(
         &mut cx,
         settings,
-        &evidence.join("10-retained-history-review.png"),
+        &evidence.join("10-retained-history-review.json"),
     );
-    frames.push("10-retained-history-review.png".into());
+    frames.push("10-retained-history-review.json".into());
     assert_eq!(
         backend.handle.history.storage.snapshot().config.days,
         config.history_days
@@ -229,22 +227,20 @@ fn headless_settings() {
             .unwrap()
             .into_inner()
     });
-    for _ in 0..40 {
-        settle(&mut cx);
-        if !backend.handle.prompts.snapshot().is_empty() {
-            break;
-        }
-    }
-    let prompt = cx.read_entity(dashboard.as_ref().unwrap(), |view, _| {
-        view.prompt_window.unwrap()
+    wait_for(&mut cx, |_cx| !backend.handle.prompts.snapshot().is_empty());
+    wait_for(&mut cx, |cx| {
+        cx.read_entity(dashboard.as_ref().unwrap(), |view, _| {
+            view.prompt_window.is_some()
+        })
     });
-    settle(&mut cx);
-    capture(
+    let prompt = permission_window(&mut cx, dashboard.as_ref().unwrap());
+    flush(&mut cx);
+    checkpoint(
         &mut cx,
         prompt,
-        &evidence.join("11-independent-permission.png"),
+        &evidence.join("11-independent-permission.json"),
     );
-    frames.push("11-independent-permission.png".into());
+    frames.push("11-independent-permission.json".into());
     click(&mut cx, prompt, "deny-once");
     let rule = runtime.block_on(async {
         tokio::time::timeout(Duration::from_secs(2), reply)
@@ -258,47 +254,47 @@ fn headless_settings() {
     );
     click(&mut cx, settings, "history-retention-back");
     click(&mut cx, settings, "history-preferences-close");
-    settle(&mut cx);
+    flush(&mut cx);
     click(&mut cx, main, "settings-menu-trigger");
     let reopened = cx.update(|cx| settings::test_window(cx));
-    settle(&mut cx);
+    flush(&mut cx);
     assert_eq!(
         appearance.load().unwrap().mode,
         crate::appearance::ColorMode::Dark
     );
     assert_eq!(
-        cx.update(|cx| super::super::appearance::test_state(cx).1),
+        cx.update(|cx| crate::app::appearance::test_state(cx).1),
         crate::appearance::ColorMode::Dark
     );
     assert_ne!(settings, reopened);
     click(&mut cx, reopened, "settings-popup");
-    capture(&mut cx, reopened, &evidence.join("12-reopened.png"));
-    frames.push("12-reopened.png".into());
+    checkpoint(&mut cx, reopened, &evidence.join("12-reopened.json"));
+    frames.push("12-reopened.json".into());
     // Also paint the same menu at its supported minimum size.
     cx.update_window(reopened, |_, window, _| {
         window.resize(size(px(900.), px(620.)))
     })
     .unwrap();
-    settle(&mut cx);
+    flush(&mut cx);
     footer(&mut cx, reopened, "preferences-close", "preferences-save");
-    capture(&mut cx, reopened, &evidence.join("13-minimum-size.png"));
-    frames.push("13-minimum-size.png".into());
+    checkpoint(&mut cx, reopened, &evidence.join("13-minimum-size.json"));
+    frames.push("13-minimum-size.json".into());
     cx.update_window(reopened, |_, window, cx| window.press("ctrl-w", cx))
         .unwrap();
-    settle(&mut cx);
+    flush(&mut cx);
     assert!(cx.update_window(reopened, |_, _, _| ()).is_err());
     cx.update_window(prompt, |_, window, _| window.remove_window())
         .ok();
     cx.update_window(main, |_, window, _| window.remove_window())
         .unwrap();
     drop(dashboard);
-    drop(cx);
+    shutdown(cx);
     drop(daemon);
     backend.handle.shutdown();
     backend.join();
     assert!(!config.socket.exists());
     std::fs::write(evidence.join("headless.json"), serde_json::to_vec_pretty(&serde_json::json!({
-        "status": "passed", "real_gpu": true, "scoped_socket_removed": true, "screenshots": frames,
+        "status": "passed", "framework": "gpui-kit", "real_gpu": false, "scoped_socket_removed": true, "checkpoints": frames,
         "proof_boundary": "Actual Kit sidebar and settings controls in one window, retained popup/history drafts, independent file reopening, minimum size, close/reopen and independent real AskRule reply with retention review open. Owned synthetic socket/database only; no real daemon, compositor or packaging proof."
     })).unwrap()).unwrap();
     std::fs::write(

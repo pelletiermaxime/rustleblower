@@ -88,7 +88,7 @@ class NativeDesktop:
             raise RuntimeError('Transport dependency is not prepared; run python scripts/cargo.py build --locked first')
         # This module is cfg(test) and is not an input to the desktop binary.
         # Cargo correctly leaves that binary untouched after only its tests change.
-        sources = ([path for path in (ROOT / 'src').rglob('*.rs') if path != ROOT / 'src/app/headless_tests.rs']
+        sources = ([path for path in (ROOT / 'src').rglob('*.rs') if path.name != 'kit_tests.rs' and 'kit_tests' not in path.parts]
                    + list(DESTINATION.rglob('*.rs'))
                    + list((ROOT / 'patches').glob('*.patch'))
                    + [ROOT / 'Cargo.toml', ROOT / 'Cargo.lock', ROOT / 'scripts/prepare_dependencies.py'])

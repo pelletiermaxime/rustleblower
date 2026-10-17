@@ -15,7 +15,7 @@ history remains bounded and reports any loss.
 - `resource-icons`: two background lookup/decode workers, 128 cached 64-pixel
   icons/misses for 60 seconds, 2048 desktop entries / 8 MiB per scan and 1 MiB
   encoded icon input. PNG decoding has dimension/allocation limits; SVG image
-  references are disabled. The `permission-icons` GPU flow holds both workers
+  references are disabled. The `permission-icons` Kit journey holds both workers
   and requires an immediate permission reply with initials still available.
 - `resource-retention`: old history expires and a conservative disk target applies.
 - `resource-history-tools`: a shared 200-row page, eight 256-byte AND conditions,
@@ -81,16 +81,16 @@ Preconditions: disposable socket/database, no real firewall requests or policy c
   128 rows, fails the next chunk, and checks that only the remaining two records
   count as storage failures. Recovery clears the active error. The shared-budget
   test proves that held startup batches consume the normal budget and release it.
-- **Warning rendering.** The background GPU flow captures
-  `07-history-warning.png` after an oversized batch, with its specific reason.
+- **Warning rendering.** The Kit journey checks the history warning after an oversized
+  batch, including its specific reason.
 - **Retention.** The large-record storage test inserts enough maximum-length
   records to force eviction and checks retained logical bytes and SQLite files.
 - **Rule transfers.** The core transfer tests export/import 260 rules, verify
   later pages and a stable snapshot during concurrent writes, preserve existing
   files on failure, reject oversized JSON/counts, and roundtrip OpenSnitch formats.
-  The GPU flow answers a separate permission window while holding a bulk reply;
-  `25-prompt-during-bulk.png` is that input proof. `26-bulk-all-pages.png` reviews
-  229 rules; assertions verify acknowledged commands and later-page persistence.
+  The Kit journey answers a separate permission window while holding a bulk reply;
+  it also reviews 229 rules and verifies acknowledged commands and later-page
+  persistence.
 - **Detailed history.** Snapshots share the normal 8 MiB queue budget and are
   limited to 24 KiB each. Incremental reservation releases partial work on failure.
   Schema/retention tests verify cascading detail deletion, byte accounting,
@@ -127,7 +127,7 @@ coalescing and a 500-ms interval limit Notify traffic; connection/method timeout
 and cancellation avoid per-notice threads. Service-owned expiry/visibility is not
 a memory or delivery guarantee. Alert archival and permission responses have no
 dependency on this worker. The desktop-notifications feature specifies exact
-bounds, private-bus failure proof and GPU toggle/restoration proof.
+bounds, private-bus failure proof and Kit toggle/restoration checks.
 
 ## Live inspections
 

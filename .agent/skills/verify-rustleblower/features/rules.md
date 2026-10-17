@@ -89,8 +89,7 @@ data lives in SQLite; changes go through the existing daemon notification stream
 The focused `python scripts/verify-headless.py --feature browsing` journey checks
 quick action filters across 200+20 matching rules, combined Permanent scope and
 actual pointer dragging to row 200. Its two-node History fixture also exercises
-node selection and list/table scrollbars. See `.verification/browsing/result.json`
-for the current evidence and boundaries.
+node selection and list/table scrollbars.
 
 Run `python scripts/cargo.py test --no-default-features --locked`. The rule protocol
 tests exercise a real UI-side gRPC server, daemon command/reply streams, catalogue
@@ -101,46 +100,46 @@ pending-operation capacity, expiry, inventory readiness and filename validation.
 Run `python scripts/verify-headless.py`. The expanded flow uses actual Kit tab,
 ListItem, Input and Button events against an isolated gRPC command fixture:
 
-1. Open Application rules; inspect `08-application-rules.png`.
-2. Next/First; select a rule and allow it; inspect `09-rule-allowed.png`.
-3. Create a permanent rule; Ctrl+F and type its executable; inspect `10-rule-created.png`.
+1. Open Application rules; inspect `08-application-rules.json`.
+2. Next/First; select a rule and allow it; inspect `09-rule-allowed.json`.
+3. Create a permanent rule; Ctrl+F and type its executable; inspect `10-rule-created.json`.
 4. Reject a daemon command, require the old action and visible error;
-   inspect `11-rule-rejected.png`.
-5. Cancel deletion, then confirm it; inspect `12-rule-deleted.png` and the empty page.
+   inspect `11-rule-rejected.json`.
+5. Cancel deletion, then confirm it; inspect `12-rule-deleted.json` and the empty page.
 6. Edit a source rule, rename, set description/priority/logging/duration, and add
-   a case-insensitive host regex; inspect `13-rule-editor.png` and
-   `14-rule-edited-draft.png`. Require acknowledged ChangeRule then DeleteRule,
+   a case-insensitive host regex; inspect `13-rule-editor.json` and
+   `14-rule-edited-draft.json`. Require acknowledged ChangeRule then DeleteRule,
    the updated persisted values and editor closure/focus restoration.
 7. Cancel a duplicate (no command), reopen it, roundtrip Match JSON, and try an
    invalid custom duration (no command). Enter `90s` and save. Require two rules,
-   original unchanged and copied operators equal; inspect `15-rule-duplicate.png`,
-   `16-rule-match-json.png`, `17-rule-invalid-duration.png`.
+   original unchanged and copied operators equal; inspect `15-rule-duplicate.json`,
+   `16-rule-match-json.json`, `17-rule-invalid-duration.json`.
 8. Export the filter to file/clipboard; import that file with duplicate skipping;
    import adjacent JSON from the clipboard, fail the second command, then retry
-   only the remaining rule. Inspect `18-rules-export.png`, `19-import-skipped.png`,
-   `20-import-review.png`, `21-import-partial-failure.png`.
+   only the remaining rule. Inspect `18-rules-export.json`, `19-import-skipped.json`,
+   `20-import-review.json`, `21-import-partial-failure.json`.
 9. Mark a row/Select page; review Disable; hold its daemon reply and answer a
    separate permission popup, then Stop and resume. Review Delete, close it
-   without commands, reopen and confirm it. Inspect `22-bulk-selection.png`,
-   `23-bulk-stopped.png`, `24-bulk-delete-review.png`, `25-prompt-during-bulk.png`.
+   without commands, reopen and confirm it. Inspect `22-bulk-selection.json`,
+   `23-bulk-stopped.json`, `24-bulk-delete-review.json`, `25-prompt-during-bulk.json`.
 10. Explicitly replace an existing name. Select 201 names across two pages and
     export exactly that subset. Then apply Disable to all 229 remaining matches
-    and require later-page persistence; inspect `26-bulk-all-pages.png`.
-11. Answer a permanent popup; inspect `37-popup-rule-awaiting.png` for its label
+    and require later-page persistence; inspect `26-bulk-all-pages.json`.
+11. Answer a permanent popup; inspect `37-popup-rule-awaiting.json` for its label
     and disabled edits. Report that rule through the fixture's Ping and require
-    the daemon-reported metadata plus `38-popup-rule-observed.png`.
+    the daemon-reported metadata plus `38-popup-rule-observed.json`.
 
 `tests/rule_transfer.rs` and the snapshot unit test separately verify 260-rule
 file/folder/clipboard roundtrips, filtering/selection, snapshot consistency under
 concurrent writes, filename suffix collisions, existing destination preservation,
 JSON/object/count limits and import formats. Native platform file pickers are
-not yet input-tested; the GPU journey types paths and uses the real clipboard API.
+not yet input-tested; the Kit journey types paths and uses the real clipboard API.
 
 The Python demo fixture supplies six application rules by default (`--rules N`
 changes that) and processes commands in memory. `--reject-rule-changes` enables
 the error path. It never changes real firewall rules. Existing native history
 and prompt checks still use owned instances, but rules input itself currently
-has background GPU proof, not compositor/native-input proof.
+has Kit input coverage; compositor/native-input checks remain separate.
 
 ## Remaining parity work
 
@@ -154,7 +153,6 @@ checksum and every field variant still need dedicated input proof. Core JSON
 tests cover timestamps, legacy list encoding, omitted protobuf flags, safe
 field/type pairs and custom duration units. The original daemon's flat AND
 serialization limitation is preserved explicitly; nested groups cannot be saved.
-
 
 ## Inclusive port ranges
 
@@ -193,13 +191,13 @@ boundary matches using local Go with module networking disabled, and links no
 daemon/interception/RPC packages. This establishes parser/matcher equivalence,
 not real-daemon capability or kernel enforcement.
 
-`python scripts/verify-headless.py --feature port-ranges` drives eight GPU frames:
+`python scripts/verify-headless.py --feature port-ranges` drives eight Kit checkpoints:
 invalid bounds, unknown capability refusal, Match JSON roundtrip, held ACK,
 independent permission input, confirmed range persistence, rejected-draft
 preservation and exact clipboard export/import. It uses actual Kit Select/Input,
 button and scroll events. The editor scroll body uses Kit's official test-only
 observation hook; root assertions read through Kit Root. This is background
-GPU/input/protocol/storage proof. Native compositor range editing remains pending.
+Kit input/protocol/storage checks. Native compositor range editing remains pending.
 
 ## Typed catalogue search extension
 
@@ -218,60 +216,7 @@ lookahead and 8-MiB decoded-page cap. It never passes SQL/expression text throug
 or rewrites cached protobuf bytes. Existing unknown operator strings/data and
 pending-observation/stale snapshot protections remain intact.
 
-`tests/rule_search.rs` covers typed fields/negation/prefix/suffix/inclusive
-boundaries, literal/injection strings, group/value caps, matching pages and
-selected/full-filter consistency, unknown cached wire preservation, immutable
-multi-node capture and pending review refusal. The predicate module has a grouped
-multi-page snapshot unit case with an actual later-page writer change. All eighteen
-focused integration cases passed (four rule search, five existing rules, five
-rule transfer and four multi-node export), and the grouped snapshot unit case passed. Exact commands,
-logs, namespace proof and source hashes are preserved in
-`.verification/rule-search-implementation-20261017T023808Z/result.json`.
-The focused `--feature rules-advanced` journey passes eight background GPU/input
-frames at `.verification/headless/20261017T024640Z-55e71c6e/result.json`: actual
-invalid boolean refusal, action/enabled plus description/inclusive-created
-groups, root/inner All/Any, exact catalogue rows, staged Close/reopen, matching
-whole-wire JSON export, removal and clear. Process/socket cleanup passes; scoped
-hashes and boundaries are in `.verification/rules-advanced-result.json`.
-Native compositor and other-page presentation persistence remain separate.
-Explicit Any operator fields search the bounded full tree; root-only fields retain
-their existing semantics and no daemon/first-seen timestamp is invented.
 
-## Nested formula input proof
-
-The expanded focused journey passes ten real-GPU frames in
-`.verification/headless/20261017T032547Z-ab61a107/result.json` (51.60 seconds).
-Duplicate/out-of-range and SQL-like formula Apply preserve the prior catalogue.
-Actual reordered `4 OR (1 AND (3 OR 2))` changes the exact rows and full protobuf
-JSON export to four matches. Reopened actual Input copies that exact expression;
-root group clicks remain inert while formula is present, then Add/Remove
-reactivate group toggling. Staged Close preserves the applied formula, and all
-previous group/partition/Clear assertions pass. Invalid feedback, numbered
-conditions and export states were visually inspected. Full source/image hashes,
-core parser/integration and compile/lint boundaries are recorded in
-`.verification/search-formula-result.json`. This formula grammar does not change
-the separate nested-operator serialization limitation above.
-
-## Received time and nested field input proof
-
-The focused rules journey now passes fourteen real-GPU frames in
-`.verification/headless/20261017T035229Z-9481b893/result.json` (77.16 seconds).
-All ten formula/group regressions remain. Actual Last received by UI date input
-refuses an invalid date without changing the prior six rows; At least 0 includes
-the received fixtures. Exact Any operator operand `dest.host` combined with Any
-operator data containing `leaf.deep` finds only the deeply nested fixture.
-Actual full-filter export equals its complete JSON document, including siblings;
-Does not contain excludes the entire matching tree and retains five others.
-
-Read-only export intentionally retains nested cached wire. Mutation Import still
-refuses that nested group and the test explicitly asserts this boundary. The
-initial verifier's mistaken use of the mutation importer is retained in the
-failed attempt. `.verification/rule-receipt-tree-gpu-result.json` links exact
-134-file rendered source, PNG/export hashes, immutable binary and the separate
-31-case core checkpoint. Six unused preference-view warnings existed before its
-caller integration; this compile is not strict-Clippy evidence. Images 11/12/14
-were visually inspected with readable controls and result counts. Native
-compositor, policy mutation/enforcement and packaging remain separate.
 
 ## Added date column
 
@@ -282,28 +227,7 @@ global ordering implementation, so Next/First pages and captured read-only
 exports share the selected order. No database schema or daemon policy change is
 needed.
 
-The focused rules-advanced journey now passes seventeen real GPU/input frames
-in `.verification/headless/20261017T051318Z-e77f969d/result.json`. Three added
-frames verify header input, exact date ordering and header/cell alignment; the
-existing fourteen filter/tree/export frames remain. The existing 650-rule
-global sorting/paging/export regression, strict all-target headless Clippy,
-catalogue check and normal application build pass. Exact source/evidence hashes
-are in `.verification/rule-added-result.json`; fixtures do not change the host
-daemon or rules.
-
-The subsequent column-order refinement places Rule name, Added and
-Action/Duration/Status in separate aligned columns. The same seventeen-frame
-journey passes in `.verification/headless/20261017T052052Z-ad1f79e1/result.json`
-(82.99-second runtime), including an assertion that status space follows Added.
-The current scoped report is `.verification/rules-column-order-result.json`.
-
-### 2026-10-17 browsing checkpoint
-
-The seven-frame GPU journey passed at
-`.verification/headless/20261017T060246Z-c979b303/result.json`; all requested
-filter and pointer-drag assertions passed. Eighteen focused storage/catalogue
-tests and eight localization tests passed at the recorded checkpoints. Later
-major dependency upgrades in the shared checkout caused whole-project API/type
-compile errors; this checkpoint does not establish a successful current normal
-desktop build. The aggregate retains compiler logs and exact boundaries in
-`.verification/browsing/result.json`.
+Run `python scripts/verify-headless.py --feature rules-advanced` for typed/formula
+search, nested operator fields, date ordering and exact full-filter JSON output.
+Read-only export preserves complete nested cached operator trees; mutation import
+continues to reject unsupported nested groups.

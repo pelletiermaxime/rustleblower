@@ -68,8 +68,8 @@ Export path protection already covers this document.
   migration/merge/invalid values. A real one-minute idle test waits without new
   ingestion and observes expired data disappear; it does not accelerate the clock.
   A schema-7 database lacking the new table migrates with its event intact.
-- GPU: `python scripts/verify-headless.py --feature history-preferences`.
-  Require ten frames, real GPU and owned cleanup. Actual Kit input rejects zero
+- Kit: `python scripts/verify-headless.py --feature history-preferences`.
+  Require ten JSON checkpoints, `real_gpu: false` and owned cleanup. Actual Kit input rejects zero
   days, reviews/back/applies 1 day/32 MiB/1-minute cleanup, answers a real permission
   while SQLite is locked, rejects refresh 61, saves manual mode, proves continued
   recording without page replacement, Refresh now, saved automatic interval,

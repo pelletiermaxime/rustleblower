@@ -1,14 +1,9 @@
-//! User-input regression for the two main browsing pages, using owned fixtures.
 use super::*;
+// User-input regression for the two main browsing pages, using owned fixtures.
 
-#[test]
-fn headless_browsing() {
-    fn drag(
-        cx: &mut HeadlessAppContext,
-        main: AnyWindowHandle,
-        viewport: &'static str,
-        down: bool,
-    ) {
+#[gpui_kit::test]
+fn journey(test_cx: &mut TestAppContext) {
+    fn drag(cx: &mut TestAppContext, main: AnyWindowHandle, viewport: &'static str, down: bool) {
         cx.update_window(main, |_, w, cx| {
             w.render_frame(cx);
             let bounds = w.find(viewport).bounds();
@@ -23,10 +18,10 @@ fn headless_browsing() {
             w.drag(from, to, cx);
         })
         .unwrap();
-        settle(cx);
+        flush(cx);
     }
     fn bottom_row(
-        cx: &mut HeadlessAppContext,
+        cx: &mut TestAppContext,
         main: AnyWindowHandle,
         viewport: &'static str,
         row: &'static str,
@@ -42,40 +37,22 @@ fn headless_browsing() {
         })
         .unwrap();
     }
-    fn history(
-        cx: &mut HeadlessAppContext,
-        view: &gpui::Entity<Dashboard>,
-        node: &str,
-        count: usize,
-    ) {
-        for _ in 0..40 {
-            settle(cx);
-            if cx.read_entity(view, |v, _| {
+    fn history(cx: &mut TestAppContext, view: &gpui::Entity<Dashboard>, node: &str, count: usize) {
+        wait_for(cx, |cx| {
+            cx.read_entity(view, |v, _| {
                 v.history.page.rows.len() == count
                     && (node.is_empty() || v.history.page.rows.iter().all(|row| row.node == node))
-            }) {
-                return;
-            }
-        }
-        panic!("History scope/count did not settle for {node}/{count}");
+            })
+        });
     }
-    fn rules(
-        cx: &mut HeadlessAppContext,
-        view: &gpui::Entity<Dashboard>,
-        action: &str,
-        count: usize,
-    ) {
-        for _ in 0..40 {
-            settle(cx);
-            if cx.read_entity(view, |v, _| {
+    fn rules(cx: &mut TestAppContext, view: &gpui::Entity<Dashboard>, action: &str, count: usize) {
+        wait_for(cx, |cx| {
+            cx.read_entity(view, |v, _| {
                 v.rules.page.rules.len() == count
                     && (action.is_empty()
                         || v.rules.page.rules.iter().all(|rule| rule.action == action))
-            }) {
-                return;
-            }
-        }
-        panic!("Rules scope/count did not settle for {action}/{count}");
+            })
+        });
     }
     let evidence = evidence();
     let owned = tempfile::tempdir().unwrap();
@@ -158,10 +135,10 @@ fn headless_browsing() {
         );
     }
     runtime.block_on(backend.handle.history.flush()).unwrap();
-    let mut cx = context();
+    let mut cx = context(test_cx);
     let mut view = None;
     let main = cx
-        .open_window(size(px(1200.), px(900.)), |w, cx| {
+        .open_test_window(size(px(1200.), px(900.)), |w, cx| {
             let dashboard =
                 cx.new(|cx| Dashboard::new(backend.handle.clone(), config.clone(), w, cx));
             view = Some(dashboard.clone());
@@ -172,8 +149,8 @@ fn headless_browsing() {
     let view = view.unwrap();
     history(&mut cx, &view, "", 200);
     let mut frames = Vec::new();
-    let mut snap = |cx: &mut HeadlessAppContext, name: &str| {
-        capture(cx, main, &evidence.join(name));
+    let mut snap = |cx: &mut TestAppContext, name: &str| {
+        checkpoint(cx, main, &evidence.join(name));
         frames.push(name.to_owned());
     };
     cx.update_window(main, |_, w, cx| {
@@ -186,17 +163,17 @@ fn headless_browsing() {
         );
     })
     .unwrap();
-    snap(&mut cx, "01-history-spacing-and-all-nodes.png");
+    snap(&mut cx, "01-history-spacing-and-all-nodes.json");
     pick(&mut cx, main, "history-node", "node-b-offline");
     history(&mut cx, &view, "node-b-offline", 200);
     click(&mut cx, main, "deny");
     history(&mut cx, &view, "node-b-offline", 130);
-    snap(&mut cx, "02-offline-node-and-action.png");
+    snap(&mut cx, "02-offline-node-and-action.json");
     click(&mut cx, main, "all");
     history(&mut cx, &view, "node-b-offline", 200);
     drag(&mut cx, main, "history-list-viewport", true);
     bottom_row(&mut cx, main, "history-list-viewport", "history-row");
-    snap(&mut cx, "03-history-scrollbar-dragged.png");
+    snap(&mut cx, "03-history-scrollbar-dragged.json");
     drag(&mut cx, main, "history-list-viewport", false);
     pick(&mut cx, main, "history-node", "All nodes");
     assert!(cx.read_entity(&view, |v, _| v.history.query.node.is_empty()));
@@ -205,7 +182,7 @@ fn headless_browsing() {
     cx.update_window(main, |_, w, cx| w.press("ctrl-2", cx))
         .unwrap();
     rules(&mut cx, &view, "", 200);
-    snap(&mut cx, "04-rules-spacing-and-action-filters.png");
+    snap(&mut cx, "04-rules-spacing-and-action-filters.json");
     for (id, action) in [
         ("rules-action-allow", "allow"),
         ("rules-action-deny", "deny"),
@@ -227,24 +204,24 @@ fn headless_browsing() {
             .iter()
             .all(|rule| rule.duration == "always")
     }));
-    snap(&mut cx, "05-rule-action-and-duration.png");
+    snap(&mut cx, "05-rule-action-and-duration.json");
     click(&mut cx, main, "rules-all");
     click(&mut cx, main, "rules-action-all");
     rules(&mut cx, &view, "", 200);
     drag(&mut cx, main, "rules-list-viewport", true);
     bottom_row(&mut cx, main, "rules-list-viewport", "rule-row");
-    snap(&mut cx, "06-rules-scrollbar-dragged.png");
+    snap(&mut cx, "06-rules-scrollbar-dragged.json");
     cx.update_window(main, |_, w, cx| w.press("ctrl-1", cx))
         .unwrap();
-    settle(&mut cx);
+    flush(&mut cx);
     click(&mut cx, main, "history-tools");
-    settle(&mut cx);
+    flush(&mut cx);
     let tool = cx.update(|cx| cx.windows().into_iter().find(|w| *w != main).unwrap());
     cx.update_window(tool, |_, w, cx| {
         w.within("history-tools-tabs").click(1usize, cx)
     })
     .unwrap();
-    settle(&mut cx);
+    flush(&mut cx);
     click(&mut cx, tool, "history-table-mode");
     // Save is below the column list: reach it with actual wheel input.
     for _ in 0..20 {
@@ -266,10 +243,10 @@ fn headless_browsing() {
             )
         })
         .unwrap();
-        settle(&mut cx);
+        flush(&mut cx);
     }
     click(&mut cx, tool, "history-columns-save");
-    settle(&mut cx);
+    flush(&mut cx);
     click(&mut cx, tool, "history-tools-close");
     history(&mut cx, &view, "node-b-offline", 200);
     let before = cx.read_entity(&view, |v, cx| v.history.test_table_offset(cx));
@@ -279,17 +256,12 @@ fn headless_browsing() {
         after.y < before.y - px(100.),
         "table scrollbar must scroll actual rows: {before:?} -> {after:?}"
     );
-    snap(&mut cx, "07-history-table-scrollbar-dragged.png");
+    snap(&mut cx, "07-history-table-scrollbar-dragged.json");
     // The production Quit action flushes pending presentation saves.
     click(&mut cx, main, "settings-menu-trigger");
-    settle(&mut cx);
+    flush(&mut cx);
     click(&mut cx, main, "quit");
-    for _ in 0..30 {
-        settle(&mut cx);
-        if backend.handle.cancel.is_cancelled() {
-            break;
-        }
-    }
+    wait_for(&mut cx, |_cx| backend.handle.cancel.is_cancelled());
     let saved = crate::history::settings::Store::open(&config.database)
         .unwrap()
         .snapshot();
@@ -298,12 +270,12 @@ fn headless_browsing() {
     drop(stream);
     drop(sender);
     drop(daemon);
-    drop(cx);
+    shutdown(cx);
     backend.handle.shutdown();
     backend.join();
     assert!(!config.socket.exists());
     std::fs::write(evidence.join("headless.json"), serde_json::to_vec_pretty(&serde_json::json!({
-        "status":"passed", "real_gpu":true, "scoped_socket_removed":true, "screenshots":frames,
+        "status":"passed", "framework":"gpui-kit","real_gpu":false, "scoped_socket_removed":true, "checkpoints":frames,
         "proof_boundary":"Actual node/action/duration buttons, offline history, whole-catalogue paging, spacing, pointer-drag list/table scrollbars and persisted node/table choices through production Quit. Owned daemon/database fixtures; no real daemon or packaged/compositor proof."
     })).unwrap()).unwrap();
 }

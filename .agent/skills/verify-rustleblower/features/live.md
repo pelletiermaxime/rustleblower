@@ -128,10 +128,6 @@ error retention, refusal of unknown/invalid/offline targets, and stale-session
 rejection after reconnect. Native shortcut input and real process visibility
 remain separate unverified boundaries.
 
-## Existing journey on the native socket table
-
-The existing eleven-frame `--feature live` journey passes on the new pinned Kit DataTable in `.verification/headless/20261017T043720Z-9cf7c608/result.json` (30.62seconds). Aggregate `.verification/live-table-regression-gpu-result.json` retains the exact source/binary and all ten overlapping final four-case core-source hashes. Actual table row focus replaces the former removed list-row ID; all original225socket paging/filter,113TCP/IPv6, raw copy, PID42 inspection, process fields/error retention, held-update permission, node resources and exact5start/5stop leave/close/restore assertions remain. The newer ten-frame selection/global numeric-header/profile/captured-output input is recorded separately below. A later status-only localization delta is outside this binary; real kernel/daemon/compositor/package/RSS proof is separate.
-
 
 ## Native table selection and captured output
 
@@ -144,15 +140,6 @@ while a new All output contains651; raw socket JSON preserves an unknown maximum
 u64 value. Saving two columns and333/111 widths, stale-file refusal, explicit Reload
 and fresh backend/GPUI stopped restoration are checked through actual controls.
 An independent real AskRule is answered while the first task reply waits.
-
-`.verification/live-table-gpu-result.json` retains the final152-file source,
-immutable binary, ten-frame result and four-case core comparison. Final GPU
-`.verification/headless/20261017T045655Z-0be9c4c2` passes in36.39seconds.
-A failed actual header-cycle attempt exposed a native adapter getting stuck on
-Ascending after refresh; the final run proves the corrected reverse cycle with
-three actual clicks. Earlier failed evidence remains. Fresh backend/GPUI restoration
-is distinct from an OS-process restart. Host kernel data, native compositor,
-packaging and measured RSS are separate from these owned background fixtures.
 
 ## Daemon notification ID routing compatibility
 
@@ -169,8 +156,3 @@ reserved range. The task and policy command namespaces remain shared and unique;
 there is no daemon, timeout, queue-size or firewall-policy change. The integration
 test and native/background task fixtures explicitly reject low task IDs so they
 cannot hide this daemon routing rule by unconditionally echoing every ID.
-
-The old allocator reproduces the fault in `.verification/live-id-before.log`,
-with task ID1. Subsequent exact proof and source hashes are recorded in
-`.verification/live-id-result.json`. This source-contract/owned-fixture proof
-does not substitute for a fresh run against the user's real daemon.

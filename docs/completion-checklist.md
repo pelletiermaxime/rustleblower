@@ -135,7 +135,7 @@ navigation differs.
 | Search/query parity | `src/history/query.rs`, metadata/storage migration and history tools; then rule query/document fields | Conflicts with final table pass and root-shared app composition; split history and rule queries only after agreeing the shared query model. |
 | Remote transport — implemented, focused six-case final hardening proof passed | `src/transport.rs`, `tests/remote_transport.rs`, configuration/startup integration | Backend ownership returns to root for missed-popup notices. Preserve local-only subscription guards; network tests require the owned namespace. |
 | Integrations/version checking | Separate bounded config/worker/result modules per integration | Common notification/action dispatch and prompt hooks require a small reviewed root integration. File-only action support does not require a generic plugin ABI. |
-| Verification — active agent | Common headless harness, scripts and proof reports | One owner for `src/app/headless_tests.rs` and shared scripts; implementations provide small specific hooks/fixtures rather than competing edits. |
+| Verification — active agent | Common headless harness, scripts and proof reports | One owner for `src/app/kit_tests.rs` and its feature modules and shared scripts; implementations provide small specific hooks/fixtures rather than competing edits. |
 
 Complete independently owned functionality first; then reconcile shared
 navigation/action surfaces and rerun impacted journeys. Do not claim the full

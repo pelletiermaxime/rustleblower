@@ -56,6 +56,11 @@ pub(super) struct StatisticsView {
     export_window: Option<AnyWindowHandle>,
 }
 impl StatisticsView {
+    #[cfg(all(test, feature = "headless-tests"))]
+    pub(super) fn test_query_ready(&self) -> bool {
+        self.pending.is_none() && !self.dirty
+    }
+
     pub fn new(window: &mut Window, cx: &mut Context<Dashboard>) -> Self {
         let input = cx.new(|cx| {
             InputState::new(window, cx)

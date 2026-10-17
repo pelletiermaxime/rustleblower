@@ -65,7 +65,6 @@ proves host compositor banner rendering or a physical notification pointer click
 Permission notification alternatives/actions, other desktop lifecycle notifications
 and all upstream per-rule settings remain separate parity work.
 
-
 ## Subscription results
 
 Blocklists → Notifications configures source-compatible `notify` success/error
@@ -81,18 +80,6 @@ The same bounded worker/global toggle handles both kinds. Subscription actions
 open Blocklists, Alert actions open Alerts, including hidden-dashboard restore.
 The active ID's kind is checked on every signal, including reused IDs. Neither
 kind answers prompts. See [implementation contract](../../../../docs/subscription-notifications-plan.md).
-Four focused config/worker cases pass with owned HTTP200/304/404, source
-preservation/stale refusal and cancelled/stale/probe silence. Private D-Bus
-target checks also pass on the combined build; logs are
-`.verification/subscription-notifications-core.log` and
-`.verification/subscription-notifications-dbus-current.log`. The nine-frame journey passes under
-`.verification/headless/20261017T022211Z-996e1089` with actual editor controls,
-save/reopen/Back, external revision refusal, reload/Ctrl+Enter, disable-clear,
-separate hidden Alerts/Blocklists actions and an input-driven permission reply.
-Callbacks are synthetic; HTTP/private-bus tests cover production separately.
-A later copy-only cleanup removed protocol jargon without changing behavior.
-The later sixteen-frame combined journey below includes that copy.
-
 
 ## Missed permission popups
 
@@ -105,20 +92,3 @@ posts a notice; the captured fallback rule determines the action, while current
 notification preferences determine immediate mute and template. The shared
 general toggle and bounded mailbox still apply. The action opens Application
 rules and preserves permission handling independently.
-
-Four focused missed-popup cases and four existing preference regressions pass
-in `.verification/missed-popups-core2.log`, including actual owned gRPC timeout,
-current settings, saturation and UTF-8/template limits. Private D-Bus proof in
-`.verification/missed-popups-dbus.log` passes Rules action routing, stale-kind
-refusal and same-ID replacement across notice kinds.
-
-The combined `--feature desktop-notifications` journey passed sixteen background
-GPU/input frames in `.verification/headless/20261017T024155Z-6f0736eb/result.json`.
-Frames 10–16 cover actual default/custom escaped input/preview/save/reopen,
-per-type mute, whole-save preservation after invalid escape, reset/re-enable,
-and hidden Application rules restoration while a second real AskRule receives
-an input-driven Deny once reply. Callback delivery in the GPU journey is
-synthetic; core and private-bus tests prove production emission and transport
-separately. All PNGs and owned socket/process cleanup pass. Aggregate/source
-hashes: `.verification/missed-popups-result.json`. Host desktop banner/panel
-clicks and native compositor behavior remain separate proof.

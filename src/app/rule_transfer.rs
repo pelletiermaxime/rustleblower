@@ -106,6 +106,15 @@ struct RuleTransfer {
     stop: Arc<AtomicBool>,
     focus: FocusHandle,
 }
+#[cfg(all(test, feature = "headless-tests"))]
+pub(super) fn test_idle(window: &Window, cx: &App) -> bool {
+    let view = gpui_kit::base::Root::read(window, cx)
+        .view()
+        .clone()
+        .downcast::<RuleTransfer>()
+        .unwrap();
+    !view.read(cx).busy
+}
 impl RuleTransfer {
     fn new(
         backend: Handle,

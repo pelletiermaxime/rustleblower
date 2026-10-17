@@ -1,16 +1,16 @@
 name: Linux verification environment
-description: Pinned build tools, GPU dependencies and isolated fixture namespaces
+description: Pinned native build tools and isolated fixture namespaces
 inputs:
   cache-key:
     description: Separate caches for checks/packages and headless test binaries
     default: linux-x86_64
   save-cache:
-    description: Only one parallel GPU runner writes the shared GPU cache
+    description: Only one parallel Kit runner writes the shared Kit cache
     default: "true"
 runs:
   using: composite
   steps:
-    - name: Install Linux build and GPU test dependencies
+    - name: Install Linux native build dependencies
       shell: bash
       run: |
         sudo apt-get update

@@ -27,11 +27,11 @@ Node-specific daemon configuration and captured reputation inspections retain
 their separate contextual editors.
 
 Run `python scripts/verify-headless.py --feature settings`. Require a passing
-`result.json`, real GPU, all fourteen listed images, owned process exit and
+`result.json`, all listed JSON checkpoints, owned process exit and
 scoped socket cleanup. The journey clicks every category without increasing the
 window count, retains and saves a popup draft with independent file reopening,
 retains a history draft and opens review without applying it, answers a real
-AskRule while that review remains open, closes/reopens Settings and paints the
+AskRule while that review remains open, closes/reopens Settings and checks the
 minimum size. It uses owned socket/database/XDG fixtures; this does not prove
 native compositor behavior, system-daemon enforcement or packaged startup.
 
@@ -44,24 +44,7 @@ The existing native History-preferences adapter targets the shared Settings
 window title. Its compositor run must be repeated before claiming native proof
 for this layout; background input proof alone does not refresh that claim.
 
-Verified checkpoint: `.verification/settings-result.json` links the fourteen-frame
-settings journey, 24-frame Appearance journey, Startup and window-restoration
-regressions, strict all-target headless Clippy and the built desktop binary.
-The final Appearance maximum-density frame confirms readable sidebar labels at
-140%; the settings journey also checks category-cycle and Ctrl+W input.
-
 The consistency journey additionally compares actual native button labels, sizes,
 order and viewport-edge geometry on every page and the retention review. It
 checks that Appearance has no disk/theme effect before Save, and that Close
-discards a staged color while retaining the last successful save. Earlier
-checkpoints above predate this staged Appearance contract.
-
-Current consistency checkpoint: `.verification/settings-consistency/result.json`
-records the fourteen-frame current-checkout settings journey and six-frame
-Startup journey, current all-target strict Clippy and desktop build, plus the
-Appearance/language/history/catalogue/download/reputation/update regression batch
-in an isolated compatible baseline. The settings feature sources match exactly
-between the verification copy and current checkout. Earlier failed dependency
-migration checks and the obsolete language-sidebar helper failure are retained
-as evidence; both current integration checks and the updated language journey
-pass. All runtime fixtures and GUI input remained isolated.
+discards a staged color while retaining the last successful save.

@@ -100,8 +100,7 @@ preferences, refuses this target even with replacement enabled and requires its
 bytes unchanged. Use the owned-network wrapper for the full core suite as the
 main skill documents.
 
-`python scripts/verify-headless.py --feature appearance` retains twenty-four real
-GPU frames using actual Kit Settings color/density/palette/reset/reload controls:
+`python scripts/verify-headless.py --feature appearance` checks actual Kit Settings color/density/palette/reset/reload controls:
 
 1. System settings on the test platform's native Light appearance.
 2. Dark dashboard after an actual color choice.
@@ -132,63 +131,21 @@ GPU frames using actual Kit Settings color/density/palette/reset/reload controls
 24. Restoring the owned file and Reload reapplies the native palette. Its catalogue
     bytes remain untouched by preference operations.
 
-The general 48-frame and tray four-frame regressions cover shared navigation and
-existing rule/permission behavior. Inspect the PNGs and require passed result,
-real_gpu, scoped socket cleanup and owned process exit. The exact aggregate is
-`.verification/density-palette-result.json`; the earlier color-only aggregate is
-`.verification/appearance-result.json`. Rebuild desktop after core tests.
-
 The test platform's appearance is fixed Light. This proves System initial/reset
 resolution; it does not prove an actual native OS appearance-change callback.
 Native compositor/input, packaged startup, all-page contrast, complete custom themes,
 whole-table density and broad resource measurement remain separate. Tests never change the
 user's real desktop theme or connect to the installed daemon/system socket.
 
-Density and native palettes have eight focused core cases plus the completed
-24-frame GPU journey at `.verification/headless/20261017T023337Z-b2abf1e2/result.json`.
-Actual device scale is 2: default rem/font 16 becomes exactly 17.6 at density 5;
-the rendered 32-pixel Button becomes 35 instead of 35.2 logical pixels, a 0.4
-physical-pixel rounding difference. Minimum/maximum rem values are 9.6/22.4.
-`density-step-metrics.json` and `density-metrics.json` retain the measured values.
-The observation-only host uses the pinned Kit TestSupportExt; controls are reached
-with actual wheel/pointer/keyboard input inside the Settings viewport, excluding
-its status message and fixed footer. Failed attempts and their layout/observation
-corrections remain in the aggregate. Fixed-width sidebar labels truncate at the
-largest density; final whole-app visual polish remains separately required.
-
-
 ## Language selection proof
-
-`--feature language` now contains eleven background GPU/input frames. The
-completion checkpoint passed at
-`.verification/headless/20261017T053927Z-9be33d16/result.json`.
-It persists French without replacing the active session or unsaved rule editor,
-retains color/density/palette, then runs production startup loading in a fresh
-GPUI context and verifies French plus the pinned Kit Copy translation. Actual
-French rule/history Select titles retain stable enum values and produce exact
-fixture rows. A missing saved language falls back with a warning and unchanged
-file until explicit System repair. It then selects German, Spanish and Japanese
-by real button input and requires each active catalogue and translated History
-label after fresh production startup, retaining three rendered screenshots.
 
 This run exposed horizontally clipped language buttons. The language SettingItem
 now uses the pinned Kit vertical layout with bounded full-width button wrapping.
 The test reaches its group through the real Kit sidebar, using its generated
 index-path ID. It records actual control geometry if a button is unreachable.
 
-All five bundled catalogues are complete; see
-[localization](../../../../docs/localization.md) for current counts and the
-translation verification aggregate at `.verification/translations/result.json`.
-The eleven-frame run predates the final German/Japanese terminology corrections,
-the added Settings label and the concurrent consolidated Settings refactor.
-It proves sampled rendering and saved-language startup at that checkpoint;
-it does not prove the later Settings navigation, every translated layout,
-OS process relaunch, package behavior, RTL or native-speaker review.
-The earlier eight-frame French-only checkpoint remains at
-`.verification/headless/20261017T030406Z-cd9a6a61/result.json`, with its own
-source scope in `.verification/language-final-source/manifest.json`.
+The appearance/language journeys use Save after each committed selection; a
+rejected save retains the previously applied theme. See [Settings](settings.md).
 
-The previous immediate-save UI is superseded by the staged Appearance contract
-in [Settings](settings.md). The focused GPU appearance/language journeys now
-use actual Save input after each committed selection; a rejected save retains
-the previously applied theme.
+Language persistence and fresh-session locale loading use
+`python scripts/verify-headless.py --feature language`.

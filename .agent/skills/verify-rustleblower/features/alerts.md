@@ -75,8 +75,8 @@ check precede atomic publication. Database/WAL/SHM/settings paths are protected.
   Model tests reject encoded/retained/depth overflow, preserve complete Unicode
   text with normalized summaries, enforce age/byte eviction, freeze older pages
   during arrivals and preserve new arrivals during matching deletion.
-- GPU: `python scripts/verify-headless.py --feature alerts`. Require ten PNGs,
-  real GPU, owned child exit and scoped socket removal. Drive Ctrl+5, paging,
+- Kit: `python scripts/verify-headless.py --feature alerts`. Require ten JSON checkpoints,
+  `real_gpu: false`, owned child exit and scoped socket removal. Drive Ctrl+5, paging,
   filters, detail/clipboard, read/delete/cancel, full JSON/CSV export, refusal and
   explicit replacement, a real Deny permission and matching deletion during a
   new arrival. Final search must show No matching retained alerts.
@@ -91,7 +91,7 @@ check precede atomic publication. Database/WAL/SHM/settings paths are protected.
   policy commands and every cleanup flag. This proves native open/search and
   persistence, not every native detail/export/delete control.
 
-## Ten frames
+## Expected observations
 
 Latest; older frozen page; error filter; typed process details; unread empty;
 selected deletion review; existing-export refusal; independent permission;

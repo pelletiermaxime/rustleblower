@@ -45,6 +45,10 @@ and page backward without loading the entire database into memory.
   editor; saving waits for the daemon. Open current rule… reads the current
   catalogue entry rather than editing the historical summary.
 
+The complete captured-selection journey now uses GPUI Kit's test runner. See
+[headless testing](../../../../docs/headless-testing.md) for the suite's JSON
+checkpoints and the separate native/pixel proof boundary.
+
 ## How to get to it (user POV)
 
 - Open the main Rustleblower window; history is its main content.
@@ -61,11 +65,9 @@ Preconditions: the default synthetic fixture supplies 430 events on an isolated 
   selection, combined action filtering, visible toolbar spacing and pointer-drag
   movement to row 200 in both list views and movement in the History table.
   Require saved node/table state after production Quit and owned socket cleanup.
-  Results are recorded in `.verification/browsing/result.json`; package/native
-  compositor behavior and system-daemon changes are outside this proof.
 
 - **Pages/action filter.** Run `python scripts/verify-headless.py`. It clicks
-  `older`, `latest`, and `deny`, asserting the resulting rows. Inspect PNGs 01–04.
+  `older`, `latest`, and `deny`, asserting the resulting rows. Inspect JSON checkpoints 01–04.
 - **Keyboard search.** That flow presses Ctrl+F and types a missing query, then
   Ctrl+A and `firefox`. Require the empty state and matching denied rows.
 - **Foreground search.** Run `python scripts/verify-native.py run --feature history`.
@@ -76,7 +78,7 @@ Preconditions: the default synthetic fixture supplies 430 events on an isolated 
   and expire old rows. The large-record check verifies retained data/files fit
   its 16 MiB test target.
 - **Filters/columns/export.** Run `python scripts/verify-headless.py --feature history-tools`.
-  Require sixteen PNGs and actual filtered rows/files/clipboard assertions. The flow
+  Require sixteen JSON checkpoints and actual filtered rows/files/clipboard assertions. The flow
   checks 144 Rejected rows, combines UID=1001 and command Contains blue1 for 108
   matches, rejects port 65536, saves/reopens table/UID/command columns, clicks the
   actual header through descending then ascending, exports all 108 rows as CSV
@@ -93,21 +95,21 @@ Preconditions: the default synthetic fixture supplies 430 events on an isolated 
   retained 430 fixture rows and all cleanup booleans. Allow rendered frames between
   focus/commit keys. Native pickers, column/export buttons, width dragging and
   horizontal scrolling remain outside this proof.
-  The latest native run also independently reopens its version-3 settings JSON
-  and requires exactly UID Equals 9999, 430 retained rows, zero policy commands
-  and complete cleanup. This proves native input plus durable filter saving;
-  cold restoration and width dragging remain GPU proof.
+  Also independently reopen the version-3 settings JSON and require exactly UID
+  Equals 9999, 430 retained rows, zero policy commands and complete cleanup.
+  This checks native input plus durable filter saving;
+  cold restoration and width dragging require separate native checks.
 - **Details and rule creation.** The background flow inspects Overview, Arguments
   and Matched rule, copies metadata/command line, opens the current rule without
   saving, then confirms a permanent application+destination draft. Inspect
-  `27-connection-overview.png`, `28-connection-arguments.png`,
-  `29-connection-matched-rule.png`, `30-current-matched-rule.png`,
-  `31-rule-from-history.png`. Require source/destination, PID/UID, cwd and argument
+  `27-connection-overview.json`, `28-connection-arguments.json`,
+  `29-connection-matched-rule.json`, `30-current-matched-rule.json`,
+  `31-rule-from-history.json`. Require source/destination, PID/UID, cwd and argument
   assertions plus the confirmed rule's actual operator fields in SQLite.
 - **Limits and naming.** That flow rejects a duplicate new name in the full editor
-  and quick form without sending a command (`32-history-rule-name-collision.png`,
-  `34-quick-rule-name-collision.png`). It ingests oversized arguments, captures
-  `33-limited-connection-details.png` and requires the limit in copied details.
+  and quick form without sending a command (`32-history-rule-name-collision.json`,
+  `34-quick-rule-name-collision.json`). It ingests oversized arguments, captures
+  `33-limited-connection-details.json` and requires the limit in copied details.
   Core tests separately cover schema migration, restart persistence, UTF-8/argument
   limits, refusal to seed incomplete matches, map-order-independent replay
   deduplication, and detail cleanup alongside retention.
@@ -115,7 +117,7 @@ Preconditions: the default synthetic fixture supplies 430 events on an isolated 
 ## Gotchas
 
 - The new selection controls have seven focused core/export checks and concrete
-  native compilation; focused GPU/input proof is pending. Read
+  native compilation; focused Kit input/layout proof is pending. Read
   [captured-selection contract](../../../../docs/history-selection.md) for exact
   descriptor/export limits and pruning semantics. A ceiling excludes later
   arrivals; it does not pin rows against retention.
@@ -128,7 +130,7 @@ Preconditions: the default synthetic fixture supplies 430 events on an isolated 
   history and arbitrary historical rule conditions are excluded.
 - Schema-1 entries have summaries only. New snapshots are limited to 24 KiB;
   incomplete match fields cannot seed rules. UID/PID are the reported numbers.
-- Details/copy/current-rule/draft flows currently have background GPU/input and
+- Details/copy/current-rule/draft flows currently have background Kit input/layout and
   core persistence proof. Native compositor input for these actions, local
   UID-name resolution and live process inspection remain pending.
 - Original NULL legacy metadata and the new cwd metadata revision backfill old
@@ -177,65 +179,11 @@ empty/unavailable values treated as unreported. The optional numbered formula
 now supports nested AND/OR within the eight-condition budget; general SQL and
 unary NOT are outside this grammar.
 
-`tests/history_advanced.rs` covers operators/boundaries/injection, grouped global
-sort/paging/freeze/export, version-1 settings/reopen, invalid partitions and cwd
-backfill/restart preserving old and unknown fields. Existing history tools and
-presentation tests remain regressions. The focused `--feature history-advanced`
-journey passed seven background GPU/input frames at
-`.verification/headless/20261017T023819Z-1739fc2d/result.json`: actual CWD
-starts/not-contains, inclusive port and host suffix controls; two groups and
-root/inner All/Any; exact production rows; matching CWD JSON Lines export; saved
-expression independently reopened; condition removal and clear. Aggregate and
-source hashes: `.verification/history-advanced-result.json`. Process/socket
-cleanup passed. The earlier sixteen history-tools frames remain separate
-regressions; native compositor and old native Tab paths were not rerun.
-
-The focused extension run passed eleven integration cases (four advanced search,
-four presentation and three history tools) in an owned user/network namespace;
-the actual 32-row chunk/readiness/resume unit case also passed. Strict shared
-all-target/all-feature Clippy passed. Logs, namespace proof, exact commands and
-source hashes are preserved in
-`.verification/history-advanced-implementation-20261017T022241Z/result.json`.
-
 The connection-details Inspect process action opens current daemon process data
 for the recorded PID. It keeps the event's node, rejects a queued stale session
 and warns about PID reuse; see [Live inspection](live.md#history-to-process-inspection)
 and `--feature history-process` for focused input/protocol proof and its boundaries.
 
-The presentation slice has four focused core cases (164 full-core tests), strict
-Clippy, sixteen history-tools GPU frames, 48 general/four tray/eleven window-state
-regression frames and the native filter run. Its exact reports, hashes and bounds
-are in `.verification/history-presentation-result.json`. Other pages' saved
-filters/columns, splitters, native resize/cold-restore controls, current packages,
-broad resource measurement and the final whole-app UI/UX pass remain separate.
-
-## Nested formula input proof
-
-[Formula contract](../../../../docs/nested-search-formulas.md) defines the shared
-256-byte ASCII/depth-eight/fifteen-node grammar. The expanded focused journey
-passes nine frames in `.verification/headless/20261017T032543Z-f0b8649d/result.json`
-(47.32 seconds), including all earlier group behavior. Duplicate/out-of-range and
-SQL-like formula Apply preserve the previous rows. Actual `4 OR (1 AND (3 OR 2))`
-input changes the exact row set and exported process identities to five matches;
-independent saved Store and reopened actual Input preserve that expression.
-Group clicks remain inert under formula; removing a condition clears it, and
-Clear restores all six fixtures. Numbered lists, formula/error and export states
-were visually inspected. Full 125-file source copy, PNG hashes, two parser and
-ten affected integration passes, desktop/Clippy scope and retained initial
-harness metadata failures are linked by `.verification/search-formula-result.json`.
-No real daemon/policy, compositor or packaging claim is implied.
-
-## Captured multi-selection input proof
-
-`python scripts/verify-headless.py --feature history-selection` passes nine actual backgroundGPU frames in `.verification/headless/20261017T042722Z-ed034259/result.json` (37.13seconds runtime). Aggregate `.verification/history-selection-gpu-result.json` retains146-file source copy, immutable executable, all PNGs and exact export artifacts. Actual pointer/Shift marks cross a200-row page boundary; Firstpage preserves marks/ceiling, and independent Details focus leaves202 selectedJSONL identities exact. Selectall withone exclusion exports204 rows using only Action/Executable, copies identical CSV bytes and excludes a laterarrival afterRefresh. Actual table marks and Latest/headerSort/typedfilter clearing pass, as does independent Denyonce with exporttools open. Seven core cases separately cover all20sortfields inboth directions, bounds, pruning and outputpreservation. Native compositor/package/RSS and later Live/locale deltas are outside this focused proof.
-
-### 2026-10-17 browsing checkpoint
-
-The seven-frame GPU journey passed at
-`.verification/headless/20261017T060246Z-c979b303/result.json`; all requested
-filter and pointer-drag assertions passed. Eighteen focused storage/catalogue
-tests and eight localization tests passed at the recorded checkpoints. Later
-major dependency upgrades in the shared checkout caused whole-project API/type
-compile errors; this checkpoint does not establish a successful current normal
-desktop build. The aggregate retains compiler logs and exact boundaries in
-`.verification/browsing/result.json`.
+Run `python scripts/verify-headless.py --feature history-advanced` for typed/grouped/formula
+search and matching output. Run `python scripts/verify-headless.py --feature history-selection`
+for cross-page marks, captured output, clipboard equality and independent permission input.

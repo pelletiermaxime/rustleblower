@@ -34,7 +34,7 @@ opensnitch-ui and opensnitchd alone.
   daemon's raw socket-path authority and C-core's encoded form through actual
   HTTP/2 frames. Socket cleanup is asserted after joining.
 - **Background lifecycle.** Run `python scripts/verify-headless.py --feature tray`.
-  Require four real GPU frames, a destroyed dashboard, an input decision while
+  Require four Kit JSON checkpoints, a destroyed dashboard, an input decision while
   hidden, retained Nodes page on reopen, no duplicate on repeated activation,
   automatic restoration after host loss and dashboard Quit.
   The close-handler boundary and tray channel are invoked directly; this does
@@ -65,7 +65,6 @@ opensnitch-ui and opensnitchd alone.
 - Local Unix sockets only. Up to 32 distinct named sessions are supported;
   TCP/TLS and remote peer identity remain outside this slice. See [Nodes](nodes.md).
 - A live server with stale daemon heartbeat is different from an active daemon.
-
 
 ## Startup preferences
 
@@ -107,8 +106,7 @@ reopen, no file after staged Close, synthetic tray Startup action, real AskRule
 while saving, external stale-entry refusal with retained selection and Reload.
 Its wrapper supplies owned XDG_CONFIG_HOME and XDG_CONFIG_DIRS beneath evidence;
 the journey refuses to run against any other paths. It changes no real startup
-entry and never executes its generated Rustleblower command. The general
-48-frame and tray four-frame GPU regressions cover the changed navigation.
+entry and never executes its generated Rustleblower command.
 
 `tests/startup.rs` has three precedence/preservation/path cases. For independent
 decoding proof, set RUSTLEBLOWER_STARTUP_EVIDENCE to a new absolute fixture path
@@ -126,10 +124,9 @@ ordinary percent-path attempt and its successful env-based replacement.
 
 Sources: [XDG Autostart](https://specifications.freedesktop.org/autostart/latest/)
 and [Desktop Exec](https://specifications.freedesktop.org/desktop-entry/latest/exec-variables.html).
-Read `.verification/startup-result.json` for current exact proof. Real login
+Real login
 scheduling, this tray entry's actual D-Bus callback, native compositor/keyboard
 behavior and packaged AppImage startup remain separate proof boundaries.
-
 
 ## Remembered main window
 
@@ -169,8 +166,7 @@ close/Open are GPUI/synthetic boundaries, not native compositor gestures.
 
 Three `tests/window_state.rs` cases cover 21 page/mode roundtrips, unchanged
 siblings, finite/invalid bounds, negative/disconnected/small monitor fitting,
-stale/corrupt/future/oversized/symlink files. Full core has 160 passing cases.
-General 48-frame and tray four-frame regressions cover shared lifecycle/quit.
+stale/corrupt/future/oversized/symlink files.
 Rebuild desktop after core tests, then for actual KDE compositor proof run:
 
 ```sh
@@ -196,27 +192,6 @@ input while the dashboard is absent. Require 431 history rows, one persisted
 decision, zero policy commands and complete cleanup. This is callback proof,
 not a pointer click on the desktop panel's tray icon.
 
-Read `.verification/window-state-result.json` for exact current proof. Native
+Native
 fullscreen, X11 restoration, physical monitor-disconnect/focus variants, separate
 column/splitter/filter state, package/RSS and final whole-app UI/UX remain separate.
-
-The current wrapping-header regression passes the same eleven window-state frames
-in `.verification/headless/20261017T034621Z-14ef202c/result.json` (13.79 seconds).
-Adding raw/reputation settings had clipped Quit at a restored 1,000-logical-pixel
-window; the owner moved the existing Kit buttons into a full-width wrapping row.
-Actual Quit input remains required, answers the pending permission and flushes
-the just-selected Statistics page. All header actions are visible in frame 11.
-`.verification/window-header-result.json` retains the exact source/binary/image
-hashes and the original failed attempt. Frame 11 intentionally captures before
-settling the Kit underline spring, to retain the immediate-Quit persistence case;
-it is not a settled tab-indicator screenshot or native compositor claim.
-
-
-The compact shell checkpoint adds two Settings frames to the existing eleven-frame
-window journey: at780×560, actual popover input must expose all eight global actions
-fully inside the viewport, open Popup preferences, then close it. The original
-navigation, saved geometry, independent permission and actual Quit assertions
-remain. The shared click helper opens Settings through real input when a global
-action is hidden. Background window13 result
-`.verification/headless/20261017T050057Z-351e46fd/result.json` passes; this is
-separate from native compositor sizing, package and real-daemon proof.

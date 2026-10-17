@@ -4,6 +4,10 @@ FerryDock at `/home/maximep/projects/ferrydock` is the architectural reference.
 Prefer the pinned GPUI Kit controls, keep feature state and views together, and
 keep I/O off the UI thread.
 
+The [headless testing guide](headless-testing.md) describes all 42 GPUI Kit
+journeys, their condition waits, isolated fixtures and interaction/layout proof
+boundary. Headless checks no longer capture WGPU screenshots.
+
 `app.rs` composes the dashboard; `app/history_view.rs` owns search, bounded pages,
 stale-query rejection, and virtualized rendering. `app/prompt_window.rs` owns the
 separate permission window. `app/tray.rs` registers a StatusNotifierItem with a
@@ -21,7 +25,7 @@ Clicking the tray icon or its Open entry activates/recreates the dashboard.
 Both tray Quit and the dashboard Quit button cancel the backend. Permission
 window close continues to minimize that popup.
 
-`python scripts/verify-headless.py --feature tray` checks actual GPU/input,
+`python scripts/verify-headless.py --feature tray` checks Kit input/layout,
 close-handler state retention, independent permission input, repeated reopen,
 host-loss recovery and dashboard Quit. Tray callbacks are synthetic in this
 flow. `python scripts/verify-native.py run --feature tray` uses an owned app,
@@ -62,7 +66,7 @@ metadata at 128 KiB/file and 8 MiB total, with a 500 ms scan deadline. Icons cap
 encoded input at 1 MiB; raster decoding caps dimensions at 2048 and allocation at
 16 MiB. SVG rendering uses the existing resvg version with image references
 disabled. Permission controls and RPC deadlines never await icon work. The
-`permission-icons` background GPU journey checks both formats, fallback/reset,
+`permission-icons` background Kit journey checks both formats, fallback/reset,
 and an actual Allow reply while both workers are occupied.
 
 `backend.rs` owns the small Tokio runtime and Unix-socket gRPC server. Each
@@ -187,7 +191,7 @@ review minimizes on native close; its 100 ms task polls progress independently
 of rendering. Once idle it can close normally. A process-global weak window handle
 prevents multiple simultaneous checksum dialogs; a different request asks the user
 to finish/close the existing review. Successful updates invalidate popup probes.
-The focused `--feature checksums` GPU flow covers two hashes, pages, confirmation/
+The focused `--feature checksums` Kit flow covers two hashes, pages, confirmation/
 cancel, held ACK without optimistic cache changes, an independent permission reply,
 stop, failed confirmation, explicit fresh inventory and all remaining pages.
 Native `--feature checksums` proves opening the separate review by keyboard and
@@ -295,7 +299,7 @@ python scripts/cargo.py build --locked
 Keep the desktop build after `test --no-default-features`: Cargo uses the same
 top-level binary path for both feature sets. Native helpers snapshot the built
 executable and verify its identity. The doctor excludes the cfg(test)-only
-headless test module from freshness checks because Cargo does not compile it
+Kit test modules from freshness checks because Cargo does not compile them
 into that binary. Native helper guard regressions run with
 `python -m unittest discover -s tests -p test_native_desktop.py`.
 
@@ -351,7 +355,7 @@ retains the original name. The main window allows only one rule workflow window.
 Only the remaining rules are retained after failure/stop. Cross-page selection
 stores names; payloads are loaded from the disk snapshot before bulk review.
 Bulk applies one command at a time, preserving bounded stream/pending capacities.
-The background GPU flow verifies 201 selected names across pages, all 229 remaining
+The background Kit flow verifies 201 selected names across pages, all 229 remaining
 rules, partial import failure/retry, explicit replacement and a permission popup
 while a bulk acknowledgement is held. Native file-picker and compositor input
 proof remain separate.
@@ -430,8 +434,9 @@ compatibility checks after changes. Rustfmt skips the generated module.
 ## Project verification skill
 
 Read `.agent/skills/verify-rustleblower/SKILL.md` before UI proof. Run
-`python scripts/verify-headless.py` for real GPU rendering and input without
-using the desktop. It preserves twelve PNGs, actions, and result/cleanup reports.
+`python scripts/verify-headless.py --all` for all 42 Kit interaction/layout journeys
+without using the desktop. It preserves JSON checkpoints, actions, and result/cleanup
+reports. These runs use test text metrics and produce no screenshots.
 Foreground checks use `python scripts/verify-native.py doctor` followed by
 `run --feature history` or `run --feature prompts`. The native adapter is derived
 from FerryDock's KDE/Wayland and X11 helper; its license is retained in `LICENSES/`.
@@ -520,7 +525,7 @@ Output is fsynced to a private same-directory file and atomically published only
 after success. Existing targets require explicit replacement; the live DB, WAL,
 SHM and UI preference paths are reserved. Root/directory targets fail without panic.
 
-The focused history-tools GPU flow proves typed UID/command AND filters, invalid
+The focused history-tools Kit flow proves typed UID/command AND filters, invalid
 port preservation, Reject quick filter, saved/reopened columns, both header sort
 directions, sorted next-page navigation, actual CSV/JSON/clipboard contents and
 existing-file preservation. Core tests additionally migrate schema 3 with bounded
@@ -597,7 +602,7 @@ frozen all-page snapshots, search/sort/export/cancellation/reserved paths,
 case-sensitive history deletion, invalid reports and coalescing under a held
 SQLite write lock while a permission is answered. Module tests exercise row,
 byte, node, age and allocation-budget limits. `--feature statistics` adds ten
-real GPU/input frames; native proof currently covers opening/searching and
+Kit input/layout checkpoints; native proof currently covers opening/searching and
 persistence only. Native reset/export/chart/picker gestures, cap-sized output,
 long-running RSS and real daemon enforcement remain separate proof boundaries.
 
@@ -677,7 +682,7 @@ The test fixture never forwards these commands to a system daemon or firewall.
 `tests/nodes.rs` covers two live nodes, crossed ACKs, held rule changes, independent
 permissions, same-node replacement, same-transport fresh generations, old-stream
 closure, fair per-node statistics/flush, confirmed interception/configuration,
-ERROR/persistence/reopen, 32-node admission and offline eviction. The focused GPU
+ERROR/persistence/reopen, 32-node admission and offline eviction. The focused Kit
 journey drives actual node tab/list, rule targeting, cancel/confirm, held ACK,
 another node's prompt, invalid JSON and review/back/apply through Kit controls.
 The Nodes native journey covers read/search/persistence with zero commands.
@@ -732,7 +737,7 @@ Close minimizes during pending ACK; no telemetry or SQLite wait blocks a prompt.
 
 Five model tests cover precise preservation/defaults, removals/scalar parents,
 field/type/size/duration validation, wire auth strings and bounded escaped Unicode
-review paths. The focused eleven-frame GPU journey edits every group, rejects
+review paths. The focused eleven-checkpoint Kit journey edits every group, rejects
 negative limits before sending, switches review/back/JSON/settings, checks exact
 payloads, holds ACK while answering Allow once, verifies persisted success, and
 checks rejected-save preservation. Native verification edits Default action with
@@ -764,7 +769,7 @@ nonregular files, including active sockets.
 
 The Alerts feature map records source contracts and exact bounds. Evidence lives
 in `.verification/alerts-result.json` and the port plan. Native opening/search
-and persistence proof is separate from GPU read/delete/export input proof.
+and persistence proof is separate from Kit read/delete/export input proof.
 Desktop notices use `src/desktop_notifications.rs` for the bounded backend
 mailbox and `src/app/desktop_notifications.rs` for one freedesktop D-Bus worker.
 The resolved zbus version is reused; the pinned GPUI API was inspected but its
@@ -773,7 +778,7 @@ Only SHOW_ALERT with saved notifications enabled publishes. A single latest
 pending notice replaces the active ID at most twice per second; service timeout,
 errors and a one-slot Open action remain independent of SQLite and permissions.
 Popup preferences version 4 adds the toggle and migrates older files as enabled.
-Private-bus transport and background GPU restoration are separate from actual
+Private-bus transport and background Kit restoration are separate from actual
 host banner/pointer proof. See the desktop-notifications feature map. Per-rule
 alert configuration and permission notification actions remain pending.
 
@@ -782,16 +787,16 @@ alert configuration and permission notification actions remain pending.
 Only Linux x86-64 is packaged. `rust-toolchain.toml` pins Rust 1.99.0. The Linux
 workflow installs Ubuntu 24.04 build/graphics dependencies, prepares the scoped
 h2 patch through `scripts/cargo.py`, runs core/helper/Clippy checks and every
-background GPU journey. The 42 GPU/input journeys run in four balanced jobs on
+background Kit journey. The 42 Kit input/layout journeys run in four balanced jobs on
 separate Ubuntu runners; each job runs its own batch serially with private
 sockets, databases and network fixtures. `scripts/headless_suites.py` is the one
 journey inventory and refuses incomplete or duplicate batch coverage. Test
 binaries compile in a distinct step, and each `result.json` reports
 `build_seconds`, `test_seconds` and total `wall_seconds`; missing timings remain
-unknown rather than zero. All screenshots and ownership/cleanup assertions stay
-required. The core/package job and GPU jobs can overlap, but publication waits
-for every job. Release-profile and GPU caches have separate keys; only one GPU
-runner writes the shared GPU cache. A `v*` tag calls the same checks, builds the
+unknown rather than zero. All JSON checkpoints and ownership/cleanup assertions stay
+required. Headless screenshots/pixel checks have been removed; native screenshots remain separate. The core/package job and Kit jobs can overlap, but publication waits
+for every job. Release-profile and Kit caches have separate keys; only one Kit
+runner writes the shared Kit cache. A `v*` tag calls the same checks, builds the
 release and runs `scripts/package-linux.sh`. That script creates `.deb`, `.AppImage` and
 `.tar.gz` assets plus SHA256SUMS. AppImage tools/runtime have pinned checksums;
 graphics drivers and glibc remain host dependencies. Packaging is adapted from
@@ -800,7 +805,7 @@ FerryDock under its retained MIT notice; no macOS or Windows jobs are included.
 `python3 scripts/verify-packages.py` checks checksums and starts packages in
 disposable Ubuntu containers. It verifies version output and the explicit
 missing-display error before any socket is created. It does not contact a host
-daemon. These are installation/library/startup checks, separate from GPU/input
+daemon. These are installation/library/startup checks, separate from Kit input/layout
 proof. A release uses a matching Cargo version, annotated tag and
 `docs/releases/v<version>.md`, and publishes only after all checks/packages pass.
 Releases from v0.3.0 are stable and marked Latest; earlier publications retain
@@ -899,7 +904,7 @@ Use Nodes → System firewall for the bounded cached chain/rule browser and full
 document editor. The verification contract and remaining typed/profile/enable-disable
 scope are in `.agent/skills/verify-rustleblower/features/firewall.md` and
 `docs/system-firewall-plan.md`. `python scripts/verify-headless.py --feature firewall`
-drives the eight-frame GPU journey with real clipboard paste; typing the entire
+drives the eight-checkpoint Kit journey with real clipboard paste; typing the entire
 configuration through TestWindowExt renders every character and is inappropriate
 for this document workflow. The journey also rejects an oversized real paste.
 
@@ -1009,9 +1014,9 @@ python scripts/cargo.py build --locked
 python scripts/verify-native.py run --feature subscriptions
 ```
 
-The GPU wrapper applies network isolation itself for this feature and records
+The Kit verifier applies network isolation itself for this feature and records
 `network.json`. The native journey creates metadata while automatic updates are
-paused, so it never contacts the entered loopback URL. Core/GPU HTTP fixtures are
+paused, so it never contacts the entered loopback URL. Core/Kit HTTP fixtures are
 local plain HTTP; successful public HTTPS, certificate failures, redirects and
 compression need additional specific proof. CI is configured to use the same
 wrapper; local results do not prove a hosted CI run. Canonical data and associated-rule review are now implemented by the next slice
@@ -1047,7 +1052,7 @@ opening the ordinary acknowledged editor; inspection scans all pages but retains
 only sixteen matching rules and 512 KiB. The generic editor displays its captured
 target node. Associated-rule pages are snapshots and must be reopened after edits.
 The core suite checks 221 inventory rules, matching beyond the first page,
-node/directory/type exclusion and unobserved proposals. The GPU flow holds a
+node/directory/type exclusion and unobserved proposals. The Kit flow holds a
 CHANGE_RULE reply while a separate permission is answered, then checks exact
 confirmed data, second-page nested editing and rejected-cache preservation.
 

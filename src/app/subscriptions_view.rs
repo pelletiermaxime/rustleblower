@@ -235,6 +235,13 @@ impl Form {
     }
 }
 impl SubscriptionsView {
+    #[cfg(all(test, feature = "headless-tests"))]
+    pub(super) fn test_query_ready(&self) -> bool {
+        self.pending
+            .as_ref()
+            .is_none_or(|(after, _)| !matches!(after, After::Page))
+    }
+
     pub fn new(window: &mut Window, cx: &mut Context<Dashboard>) -> Self {
         let input = cx.new(|cx| {
             InputState::new(window, cx)
@@ -313,6 +320,10 @@ impl SubscriptionsView {
                 .map(|r| (r.entries.len(), r.changed(), r.conflicts())),
             self.error.as_deref(),
         )
+    }
+    #[cfg(all(test, feature = "headless-tests"))]
+    pub(super) fn test_operation_idle(&self) -> bool {
+        self.pending.is_none() && !self.rule_busy
     }
     #[cfg(all(test, feature = "headless-tests"))]
     pub(super) fn transfer_removals(&self) -> Option<usize> {

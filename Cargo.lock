@@ -6367,7 +6367,6 @@ dependencies = [
  "getrandom 0.4.3",
  "gpui-fast",
  "gpui-fast-platform",
- "gpui-fast-wgpu",
  "gpui-kit",
  "h2",
  "hex",

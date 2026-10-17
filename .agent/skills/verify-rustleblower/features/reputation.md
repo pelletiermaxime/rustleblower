@@ -21,15 +21,6 @@ python scripts/owned_net.py --evidence /absolute/new/evidence/network.json -- \
   python scripts/cargo.py test --no-default-features --locked --offline --lib reputation::tests
 ```
 
-The first seven cases pass in `.verification/reputation-20261016/core.log`, with
-exact source/log hashes in the adjacent `result.json`: typed input/private range/
-exclusion bounds; signed threshold/vote/reputation and safe suggestion semantics;
-secret mode/symlink/size/debug/state/serialized-config and stale-file refusal;
-GET-only/cache/capture/redacted echo; 401/404/429/error/quota/disabled states;
-queue saturation with held-HTTP Reload/stale/cancel/quit; body/timeout limits.
-Network fixtures refuse to run outside an owned mapped-user loopback namespace.
-No real API key, public API request, host daemon or firewall change is involved.
-
 ## Native input contract
 
 The combined settings/report window is an App-global singleton. None may activate
@@ -51,13 +42,6 @@ validated Kit Input rows per category, 128 bytes per row. Pinned TextareaState
 does not expose the validation API, so these bounded fields use Input rows.
 Inputs never contain key contents.
 
-The integrated singleton view/backend/prompt code passes a desktop check in
-`.verification/reputation-20261016/desktop-check.log` (3.57 seconds); strict
-no-default-features/all-target Clippy passes in `core-clippy.log` (3.76 seconds).
-The initial failed integration compile is retained in
-`.verification/reputation-integration-check.log`; it identified unsupported Kit
-Textarea validation/id and width helpers. Rendered/input proof remains separate.
-
 Use test-only `Worker::start_fixture(path, base)` and a dummy owned key file.
 Require actual Kit input for staged/save/reopen, invalid and stale refusal,
 captured/manual scopes, per-subject Unknown/warning/partial states, official
@@ -67,41 +51,14 @@ Verify singleton reuse/replacement and popup destruction independently of
 background worker tests. A desktop compile or core pass does not establish this
 rendered/input/parent-integration boundary or a live-API/package claim.
 
-## Actual GPU/input proof
+## Headless verification
 
-`python scripts/verify-headless.py --feature reputation` passed 15 frames in
-`.verification/headless/20261017T031615Z-c9807eec/result.json` (41.66-second test,
-59.147-second wrapper). `.verification/reputation-result.json` links all PNG
-hashes, the full 118-file precompile snapshot and the current combined 238-case
-core run. The focused seven worker cases are included in that combined count.
-
-Actual Kit input proves default disabled/no HTTP, invalid and stale Save refusal,
+Run `python scripts/verify-headless.py --feature reputation`. Require default disabled/no HTTP, invalid and stale Save refusal,
 save/reopen, bounded exclusion rows, owned GET-only warning/error reports,
 redacted excerpt/copy and cancellation. Real AskRule/Deny completes while HTTP
 is held. Untouched warnings emphasize Reject once; a warning delivered after
 5-minute review preserves the user's duration/Allow decision. Captured inspection
-reuse/replacement, old-result isolation and immediate disable clearing also pass.
+reuse/replacement, old-result isolation and immediate disable clearing are required.
 Only a dummy 0600 key and fixed owned loopback endpoint are used. Official report
 links, public API requests, upload, real credentials, native compositor and
 packaging are outside this proof.
-
-Visual inspection of frames 3/5/10/11/14 found readable settings, reports and
-actual decision buttons. Collapsed frame 10 partly clips its final advanced-details
-row; this is recorded as remaining layout polish. The expanded late-warning
-frame retains readable controls. Subsequent localization/formula changes need
-separate shared regressions; this immutable proof does not imply later-source
-identity.
-
-A later complete rerun closes the prompt layout finding: fifteen frames pass in
-`.verification/headless/20261017T034508Z-037b159a/result.json` (50.76 seconds).
-The corrected prompt keeps preview, decisions and More in a fixed footer while
-content scrolls. Three actual wheel events assert exact unchanged footer bounds
-and entire Reject once/More controls inside the viewport; captured report buttons
-are revealed with actual wheel input. A button touching the exact scroll edge
-is fully visible, so the helper adds no arbitrary inset. Original settings,
-redaction, held-permission and capture/isolation assertions all pass again.
-`.verification/reputation-layout-result.json` retains the full coherent source,
-images, scroll metric artifact and failed helper attempts. Frames 10/14 now show
-complete readable footer/report controls; the original clipping paragraph above
-is historical to its earlier snapshot. Native compositor/package/live API proof
-remains separate.

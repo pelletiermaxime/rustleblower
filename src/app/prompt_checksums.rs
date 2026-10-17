@@ -197,6 +197,20 @@ struct Review {
     message: Option<String>,
     focus: FocusHandle,
 }
+#[cfg(all(test, feature = "headless-tests"))]
+pub(super) fn test_idle(window: &Window, cx: &App) -> bool {
+    let view = gpui_kit::base::Root::read(window, cx)
+        .view()
+        .clone()
+        .downcast::<Review>()
+        .unwrap();
+    let view = view.read(cx);
+    !view.dirty
+        && view.query.is_none()
+        && view.prepare.is_none()
+        && view.change.is_none()
+        && view.job.is_none()
+}
 impl Review {
     fn new(
         backend: Handle,

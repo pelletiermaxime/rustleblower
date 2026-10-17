@@ -66,6 +66,11 @@ impl Drop for AlertsView {
     }
 }
 impl AlertsView {
+    #[cfg(all(test, feature = "headless-tests"))]
+    pub(super) fn test_query_ready(&self) -> bool {
+        self.pending.is_none() && !self.dirty && !self.detail_due
+    }
+
     pub fn new(window: &mut Window, cx: &mut Context<Dashboard>) -> Self {
         let input = cx.new(|cx| {
             InputState::new(window, cx)

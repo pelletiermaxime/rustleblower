@@ -7,6 +7,8 @@ import argparse,json,pathlib,re,sys
 ROOT=pathlib.Path(__file__).resolve().parents[1]
 p=argparse.ArgumentParser();p.add_argument('--output',type=pathlib.Path);p.add_argument('--check',action='store_true');p.add_argument('--require-complete',action='store_true');a=p.parse_args()
 errors=[];catalogues={}
+def is_ui_test(path):
+ return path.name == 'kit_tests.rs' or 'kit_tests' in path.parts
 def pairs(items):
  out={}
  for k,v in items:
@@ -25,7 +27,7 @@ for locale,messages in catalogues.items():
 uses=[];candidates=[];literal_counts={}
 source_keys={value:key for key,value in en.items()}
 for path in sorted((ROOT/'src').rglob('*.rs')):
- if path.name=='headless_tests.rs':continue
+ if is_ui_test(path):continue
  text=path.read_text();relative=str(path.relative_to(ROOT))
  literal_counts[relative]=len(re.findall(r'"(?:[^"\\]|\\.)*"',text))
  for m in re.finditer(r'(?:i18n|crate::i18n)::(?:text|format)\(\s*"([^"]+)"',text):
@@ -58,7 +60,7 @@ for path in sorted((ROOT/'src').rglob('*.rs')):
 status_literals=[];app_format_literals=[];core_validation_literals=[];metadata_literals=[]
 quoted=r'("(?:[^"\\]|\\.)*")'
 for path in sorted((ROOT/'src').rglob('*.rs')):
- if path.name=='headless_tests.rs':continue
+ if is_ui_test(path):continue
  source=path.read_text();relative=str(path.relative_to(ROOT));is_ui=relative.startswith('src/app')
  categories=[]
  if is_ui:
@@ -81,7 +83,7 @@ for path in sorted((ROOT/'src').rglob('*.rs')):
 # not rewrite control strings or assume every diagnostic reaches a view.
 ensure_literals=[]
 for path in sorted((ROOT/'src').rglob('*.rs')):
- if path.name in ('headless_tests.rs','tests.rs'):continue
+ if is_ui_test(path) or path.name == 'tests.rs':continue
  source=path.read_text();relative=str(path.relative_to(ROOT))
  for match in re.finditer(r'ensure!\(([\s\S]*?)\);',source):
   values=[]
@@ -93,7 +95,7 @@ for path in sorted((ROOT/'src').rglob('*.rs')):
    ensure_literals.append({'file':relative,'line':source.count('\n',0,match.start())+1,'literal':value,'catalogued':value in source_keys,'dynamic':bool(re.search(r'\{[^}]*\}',value))})
 unclassified_ui=[]
 for path in sorted((ROOT/'src/app').rglob('*.rs')):
- if path.name=='headless_tests.rs':continue
+ if is_ui_test(path):continue
  source=path.read_text();relative=str(path.relative_to(ROOT))
  for match in re.finditer(quoted,source):
   try:value=json.loads(match.group(1))

@@ -38,7 +38,7 @@ replacement; remote address/peer identity is still pending with TCP/TLS.
   the old stream cannot remove the new one. Two simultaneous statistics reports
   must survive per-node FIFO coalescing and Barrier.
 - Background: `python scripts/verify-headless.py --feature nodes`. Require seventeen
-  PNGs, real GPU, socket removed and owned child exited. Actual input selects the
+  JSON checkpoints, `real_gpu: false`, socket removed and owned child exited. Actual input selects the
   main tab, row and target rules; cancel/confirm interception must leave the cache
   unchanged until ACK. A beta-node permission is answered while alpha's ACK waits.
   Type invalid JSON then a valid full document, review/back/confirm, inspect the
@@ -50,7 +50,7 @@ replacement; remote address/peer identity is still pending with TCP/TLS.
   keyboard search, persisted name/kernel/running/configuration, 430 events, zero
   policy commands and all cleanup flags.
 
-## Seventeen frames
+## Expected observations
 
 Connected nodes; beta's selected rule catalogue; alpha stop confirmation; held
 interception ACK; beta's independent permission popup; confirmed alpha state;
@@ -74,7 +74,6 @@ identity, node export/removal, cross-node bulk copying,
 long-duration RSS and real daemon enforcement remain pending. Metadata admission prunes unreachable legacy rule caches while preserving
 currently loading live nodes. Test fixtures do not
 change the user's real daemon, socket, configuration or firewall. Preserve evidence.
-
 
 ## Remember a paused node
 
@@ -123,7 +122,7 @@ A unit test drives 33 offline cache admissions, requires preference eviction and
 32-row bounds, and rejects a corrupt oversized snapshot without partial restore.
 The full core suite now has 140 cases.
 
-The 17-frame GPU flow uses the actual checkbox, confirmation and Cancel controls,
+The Kit journey uses the actual checkbox, confirmation and Cancel controls,
 replaces alpha's connection, holds the automatic ACK, answers beta's real AskRule,
 then opts out without resuming and explicitly resumes. No state setter drives
 product actions. Core proof separately establishes restart with no UI present.

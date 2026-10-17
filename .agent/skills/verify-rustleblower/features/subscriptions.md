@@ -184,7 +184,7 @@ null counts/units where inherited instead of freezing their current values.
 The source's permissive parser/serialization quirks are not copied: invalid
 resource values are refused and compact durations export as explicit seconds.
 
-`--feature subscription-inheritance` adds twelve GPU frames for individual/default
+`--feature subscription-inheritance` adds twelve Kit checkpoints for individual/default
 count/unit selection, save/reopen, changed default counts and units, count-only
 overrides, invalid dependent refusal, permission input, stale-default guard,
 fresh reopen and legacy absolute preservation. Four core cases add old-v1/v2
@@ -208,8 +208,7 @@ zero-count-clears-both behavior is retained through empty count plus Inherit
 default; unit-only selection is a native consistency extension. Native default changes,
 stale-editor/reopen controls, native bulk-unit gestures, real scheduling timing,
 package/RSS and final UX
-remain separate. Read `.verification/subscription-inheritance-result.json` for
-exact reports/source hashes and the remaining full objective.
+remain separate.
 
 ## Legacy metadata migration
 
@@ -258,11 +257,11 @@ requests, normal downloads and permissions remain independent. No HTTP work occu
 on the UI thread; cancellation does not wait for a worker command queue.
 
 Run `python scripts/verify-headless.py --feature subscription-url` in its owned
-loopback namespace. Require eleven PNGs: empty URL refusal without HTTP; redirect
+loopback namespace. Require eleven JSON checkpoints: empty URL refusal without HTTP; redirect
 and hosts sample; invalid hosts; changed-format HEAD-only; held GET with actual
 AskRule/Deny once; cancel; edit discards stale result; form cancel/reopen; leave/
 return cancellation; and an explicit Save as the first subscription/log mutation.
-The ordinary 61-frame subscription journey remains a separate regression.
+The full subscriptions journey remains a separate regression.
 
 Six `tests/subscription_probe.rs` cases cover the URL/heuristic bounds, HEAD/GET
 403/405/error/redirect/loop/oversized-target handling, split/chunked/long/many-line
@@ -277,7 +276,7 @@ directory when running the focused core test, then run
 It executes only the unmodified pinned pure `is_hosts_file_like` helper against
 nine actual Rust results; no Qt/plugin runtime is started. Native input, actual
 external endpoints, certificate trust failures, compression and package/RSS
-measurements remain separate from those core/GPU proofs.
+measurements remain separate from those core/Kit proofs.
 
 After a desktop rebuild, `python scripts/verify-native.py run --feature subscription-url`
 adds actual KDE keyboard access to the fixed Test URL footer and unsupported-
@@ -285,8 +284,6 @@ scheme refusal before a request can start. Require three PNGs, visible refusal
 OCR, zero subscription/log rows, zero policy commands, 430 history rows and all
 cleanup flags. This uses no external HTTP endpoint and proves native validation
 input, not native successful HTTP/cancellation or a panel pointer click.
-Exact artifact/source hashes and all failed attempts are retained in
-`.verification/subscription-url-test-result.json`.
 
 ## Storage, formats and resource bounds
 
@@ -332,7 +329,6 @@ limits and the distinction from retained direct-list activation.
 ## Verification
 
 - Full core: `python scripts/owned_net.py --evidence /absolute/new/network.json -- python scripts/cargo.py test --no-default-features --locked`.
-  Current suite: **143 passing tests**, including fifteen subscription service and eight configuration/identity cases.
   Coverage includes 70-row catalogue queries, all six canonical inputs, stale
   revisions, locking/reopen, HTTP validators/304/force, stream/header limits,
   errors/timeouts/cancel/edit/remove/shutdown, retained data/budget, independent
@@ -344,9 +340,8 @@ limits and the distinction from retained direct-list activation.
   retained canonical files and explicit format validator invalidation. A real
   constant-memory SQLite trigger delays only the owned subscription transaction;
   the test requires its actual write lock before and after production Ping and
-  AskRule/Allow replies, with 500-ms RPC/decision bounds. A separate kernel-UID probe also passes outside the namespace
-  with UID 1000.
-- GPU: `python scripts/verify-headless.py --feature subscriptions` has **61 frames**.
+  AskRule/Allow replies, with 500-ms RPC/decision bounds. A separate kernel-UID probe checks UID 1000 outside the namespace.
+- Kit: `python scripts/verify-headless.py --feature subscriptions` has **61 frames**.
   It uses actual controls for the complete catalogue/download journey, UID-scoped
   direct and group rule review/cancel/ACK, an independent permission under held
   ACK, associated-rule paging and rejection, concurrent confirmed edit/stale
@@ -364,7 +359,7 @@ limits and the distinction from retained direct-list activation.
   active sources in full replacement, removal review paging, Cancel/apply and
   restoration retaining both bytes and extra fields. No download or implicit
   daemon policy command occurs. Data seeding uses production backend APIs; product actions use input.
-  Require network ownership, real GPU, every PNG and owned socket/process cleanup.
+  Require network ownership, `real_gpu: false`, every JSON checkpoint and owned socket/process cleanup.
 - Transfer reference: `scripts/verify-subscription-interchange.py` loads only
   exact-pin pure Python models/helpers with owned XDG stubs. Nine actual Rust
   decoder cases plus the worker's real action export match effective values.
@@ -386,16 +381,13 @@ limits and the distinction from retained direct-list activation.
   source URLs, unchanged defaults, checked=0, no files/bytes or policy commands,
   430 history rows and every cleanup flag. This is native replacement proof;
   native retained-file restore and archive workflows remain separate.
-- General GPU: the existing **48-frame** application journey passes after the
-  dashboard transfer action/focus-routing changes. Strict Clippy and eight Python helper guards
-  also pass. These are local results, not hosted CI or package execution.
 - Native: after a desktop rebuild, `python scripts/verify-native.py run --feature subscription-collections`
   has **four Wayland captures**: usable empty collection page, current UID 1000 in
   review, the exact directory tail through Tab/End, then empty search after
   keyboard Cancel and restored Ctrl+F routing. It retains zero subscriptions,
   automatic updates paused, zero policy commands, 430 telemetry rows and five
   passing cleanup flags. It makes no HTTP request. Name OCR normalizes typographic
-  dashes; exact wire predicates are checked independently in GPU/core proof.
+  dashes; exact wire predicates are checked independently in Kit/core proof.
   This native flow does not prove saving, membership changes or paging.
 - Native bulk: `python scripts/verify-native.py run --feature subscription-bulk`
   adds eight Wayland captures: UI-created metadata, actual searchable status Select,
@@ -403,7 +395,7 @@ limits and the distinction from retained direct-list activation.
   requires the single expected configuration (only enabled changed), checked=0,
   bytes=0, no file, paused automatic updates, zero policy commands, 430 history
   rows and every cleanup flag. This proves that native mutation path; group/limit
-  controls, review pagination and concurrent-edit refusal have separate GPU/core
+  controls, review pagination and concurrent-edit refusal have separate Kit/core
   proof. Allow rendered frames after opening/filtering the Select before Enter.
 - The separate `--feature subscriptions` native journey remains metadata setup
   proof. Rebuild desktop after no-default-features tests overwrite its binary.
@@ -421,12 +413,6 @@ namespaces. It refuses parent networking, unmapped/root host UID and extra
 interfaces before configuring only its own loopback. There is no host-firewall
 fallback. Preserve previous failed verifier/native runs and their scoped cleanup.
 
-Latest identity/replacement evidence is `.verification/subscription-identity-result.json`;
-first transfer evidence is `.verification/subscription-interchange-result.json`;
-bulk evidence is `.verification/subscription-bulk-result.json`; earlier
-collection UI proof is `.verification/collection-ui-result.json` and other
-backend/canonical reports retain their original scope under `.verification/`.
-
 ## Full parity still open
 
 inactive/old-format inspection and cleanup;
@@ -441,16 +427,8 @@ The metadata archive recovery interface is a separate Rustleblower improvement,
 not a prerequisite invented for OpenSnitch feature parity. Its retained records
 and existing reimport behavior must remain preserved throughout the port.
 
-
 Subscription result notices are now implemented through the existing bounded
 mailbox, with a source-compatible Notifications editor, stale metadata revision
-guard and explicit Blocklists action target. Four core cases, private D-Bus and nine GPU frames pass;
+guard and explicit Blocklists action target. Worker, private D-Bus and Kit input checks cover these notices;
 see [notification contract](desktop-notifications.md) and
 [implementation details](../../../../docs/subscription-notifications-plan.md).
-
-
-Bulk count/unit controls and frozen-default review pass the 61-frame subscription
-journey, 12-frame inheritance regression and 48-frame general regression, plus
-176 core tests and strict Clippy. Exact source hashes and scoped cleanup are in
-`.verification/subscription-bulk-units-result.json`. Native gestures for the new
-bulk unit selectors and full-parity resource/UX checks remain separate.

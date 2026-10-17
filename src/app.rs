@@ -8,14 +8,14 @@ mod connection_details;
 mod daemon_preferences;
 mod desktop_notifications;
 mod firewall_view;
-#[cfg(all(test, feature = "headless-tests"))]
-mod headless_tests;
 mod highlighting;
 mod history_memory;
 mod history_preferences;
 mod history_table;
 mod history_tools;
 mod history_view;
+#[cfg(all(test, feature = "headless-tests"))]
+mod kit_tests;
 mod live_table;
 mod live_tools;
 mod live_view;
@@ -185,6 +185,19 @@ struct Dashboard {
 }
 
 impl Dashboard {
+    #[cfg(all(test, feature = "headless-tests"))]
+    fn test_query_ready(&self) -> bool {
+        match self.screen {
+            Screen::History => self.history.test_idle(),
+            Screen::Rules => self.rules.test_query_ready(),
+            Screen::Statistics => self.statistics.test_query_ready(),
+            Screen::Nodes => self.nodes.test_query_ready(),
+            Screen::Alerts => self.alerts.test_query_ready(),
+            Screen::Live => self.live.test_query_ready(),
+            Screen::Subscriptions => self.subscriptions.test_query_ready(),
+        }
+    }
+
     fn new(backend: Handle, config: Config, window: &mut Window, cx: &mut Context<Self>) -> Self {
         placement::start(window, cx);
         Self::install_close_handler(window, cx.weak_entity(), cx);

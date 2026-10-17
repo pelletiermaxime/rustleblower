@@ -145,6 +145,11 @@ pub(super) struct LiveView {
     capture: crate::live::table::Capture,
 }
 impl LiveView {
+    #[cfg(all(test, feature = "headless-tests"))]
+    pub(super) fn test_query_ready(&self) -> bool {
+        self.pending.is_none()
+    }
+
     pub fn new(backend: &Handle, window: &mut Window, cx: &mut Context<Dashboard>) -> Self {
         let input = cx.new(|cx| {
             InputState::new(window, cx)

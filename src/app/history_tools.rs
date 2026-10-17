@@ -34,6 +34,16 @@ pub(super) enum Message {
     },
 }
 type Picker<T> = Entity<SelectState<SearchableVec<crate::i18n::LocalizedOption<T>>>>;
+#[cfg(all(test, feature = "headless-tests"))]
+pub(super) fn test_idle(window: &Window, cx: &App) -> bool {
+    let view = gpui_kit::base::Root::read(window, cx)
+        .view()
+        .clone()
+        .downcast::<Tools>()
+        .unwrap();
+    !view.read(cx).busy
+}
+
 fn picker<T: Clone + PartialEq + 'static>(
     items: Vec<crate::i18n::LocalizedOption<T>>,
     window: &mut Window,

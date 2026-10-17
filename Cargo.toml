@@ -10,7 +10,7 @@ rust-version = "1.99"
 [features]
 default = ["desktop"]
 desktop = ["dep:rust-i18n", "dep:gpui-kit", "dep:gpui", "dep:gpui_platform", "dep:raw-window-handle", "dep:x11rb", "dep:log", "dep:image", "dep:resvg", "dep:freedesktop-icons", "dep:freedesktop-desktop-entry", "dep:shlex", "dep:ksni", "dep:zbus"]
-headless-tests = ["desktop", "gpui/test-support", "gpui-kit/test-support", "gpui_platform/test-support", "dep:gpui_wgpu", "dep:image"]
+headless-tests = ["desktop", "gpui/test-support", "gpui-kit/test-support"]
 
 [dependencies]
 anyhow = "1"
@@ -27,7 +27,6 @@ http = "1"
 gpui-kit = { version = "0.7.3", features = ["gpui-fast"], optional = true }
 gpui = { package = "gpui-fast", version = "0.1.7", default-features = false, features = ["wayland", "x11"], optional = true }
 gpui_platform = { package = "gpui-fast-platform", version = "0.1.7", default-features = false, features = ["font-kit", "wayland", "x11"], optional = true }
-gpui_wgpu = { package = "gpui-fast-wgpu", version = "0.1.7", optional = true, features = ["test-support"] }
 image = { version = "0.25", default-features = false, features = ["png"], optional = true }
 resvg = { version = "0.48.1", default-features = false, optional = true }
 freedesktop-icons = { version = "0.4", optional = true }

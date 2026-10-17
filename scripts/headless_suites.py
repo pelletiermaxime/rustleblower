@@ -1,53 +1,53 @@
 #!/usr/bin/env python3
-"""Single GPU-journey inventory and balanced, isolated CI batches."""
+"""Single Kit-journey inventory and balanced, isolated CI batches."""
 import argparse
 from collections import Counter
 import re
 
-FEATURE_TESTS = {'browsing': 'browsing::headless_browsing',
- 'settings': 'settings_shell::headless_settings',
- 'tray': 'headless_tray_lifecycle',
- 'permission-icons': 'headless_permission_icons',
- 'permission-actions': 'headless_permission_actions',
- 'all': 'headless_gpu_user_flow',
- 'popup-preferences': 'headless_preferences_controls',
- 'countdown': 'headless_countdown_review',
- 'checksums': 'headless_checksum_review',
- 'history-tools': 'headless_history_tools',
- 'history-advanced': 'headless_history_advanced',
- 'rules-advanced': 'headless_rules_advanced',
- 'updates': 'headless_updates',
- 'language': 'headless_language',
- 'reputation': 'headless_reputation',
- 'raw-downloads': 'headless_raw_downloads',
- 'highlighting': 'headless_highlighting',
- 'catalogue-policy': 'headless_catalogue_policy',
- 'history-selection': 'headless_history_selection',
- 'live-table': 'headless_live_table',
- 'statistics': 'headless_statistics',
- 'nodes': 'headless_nodes',
- 'daemon-preferences': 'headless_daemon_preferences',
- 'alerts': 'headless_alerts',
- 'desktop-notifications': 'headless_desktop_notifications',
- 'live': 'headless_live_tasks',
- 'firewall': 'headless_firewall',
- 'firewall-forms': 'headless_firewall_forms',
- 'firewall-files': 'headless_firewall_files',
- 'firewall-policy': 'headless_firewall_policy',
- 'history-process': 'headless_history_process',
- 'history-preferences': 'headless_history_preferences',
- 'subscriptions': 'headless_subscriptions',
- 'port-ranges': 'headless_port_ranges',
- 'cross-node': 'headless_cross_node_copies',
- 'multi-node-drafts': 'headless_multi_node_drafts',
- 'multi-node-export': 'headless_multi_node_export',
- 'startup': 'headless_startup',
- 'appearance': 'headless_appearance',
- 'window-state': 'headless_window_memory',
- 'subscription-url': 'headless_subscription_url_test',
- 'subscription-inheritance': 'headless_subscription_inheritance'}
+FEATURE_TESTS = {'browsing': 'browsing::journey',
+ 'settings': 'settings::journey',
+ 'tray': 'tray_lifecycle::journey',
+ 'permission-icons': 'permission_icons::journey',
+ 'permission-actions': 'permission_actions::journey',
+ 'all': 'user_flow::journey',
+ 'popup-preferences': 'preferences_controls::journey',
+ 'countdown': 'countdown_review::journey',
+ 'checksums': 'checksum_review::journey',
+ 'history-tools': 'history_tools::journey',
+ 'history-advanced': 'history_advanced::journey',
+ 'rules-advanced': 'rules_advanced::journey',
+ 'updates': 'updates::journey',
+ 'language': 'language::journey',
+ 'reputation': 'reputation::journey',
+ 'raw-downloads': 'raw_downloads::journey',
+ 'highlighting': 'highlighting::journey',
+ 'catalogue-policy': 'catalogue_policy::journey',
+ 'history-selection': 'history_selection::journey',
+ 'live-table': 'live_table::journey',
+ 'statistics': 'statistics::journey',
+ 'nodes': 'nodes::journey',
+ 'daemon-preferences': 'daemon_preferences::journey',
+ 'alerts': 'alerts::journey',
+ 'desktop-notifications': 'desktop_notifications::journey',
+ 'live': 'live_tasks::journey',
+ 'firewall': 'firewall::journey',
+ 'firewall-forms': 'firewall_forms::journey',
+ 'firewall-files': 'firewall_files::journey',
+ 'firewall-policy': 'firewall_policy::journey',
+ 'history-process': 'history_process::journey',
+ 'history-preferences': 'history_preferences::journey',
+ 'subscriptions': 'subscriptions::journey',
+ 'port-ranges': 'port_ranges::journey',
+ 'cross-node': 'cross_node_copies::journey',
+ 'multi-node-drafts': 'multi_node_drafts::journey',
+ 'multi-node-export': 'multi_node_export::journey',
+ 'startup': 'startup::journey',
+ 'appearance': 'appearance::journey',
+ 'window-state': 'window_memory::journey',
+ 'subscription-url': 'subscription_url_test::journey',
+ 'subscription-inheritance': 'subscription_inheritance::journey'}
 
-# Balanced by the measured v0.3.0 journeys (including the two repaired flows).
+# Fixed isolated batches covering every Kit journey once.
 # A batch is serial within its runner; each runner has separate fixture resources.
 SHARDS = (('subscriptions',
   'history-selection',
@@ -96,9 +96,9 @@ SHARDS = (('subscriptions',
 def validate_shards(shards=SHARDS):
     counts = Counter(feature for shard in shards for feature in shard)
     if not shards or any(not shard for shard in shards):
-        raise ValueError("Every GPU batch must contain a journey")
+        raise ValueError("Every Kit batch must contain a journey")
     if set(counts) != set(FEATURE_TESTS) or any(n != 1 for n in counts.values()):
-        raise ValueError("GPU batches must cover every journey exactly once")
+        raise ValueError("Kit batches must cover every journey exactly once")
 
 
 def log_timings(log):

@@ -40,8 +40,8 @@ their exact decimal representation through serde_json arbitrary precision.
   exact Go-duration parsing including i64 nanosecond boundaries, auth spellings,
   escaped paths, Unicode and review limits. Existing node integration tests cover
   held/crossed/stale ACKs, ERROR, SQLite failure and confirmed reopen.
-- GPU: `python scripts/verify-headless.py --feature daemon-preferences`. Require
-  eleven PNGs, real WGPU, child exited and socket removed. Drive every group by
+- Kit: `python scripts/verify-headless.py --feature daemon-preferences`. Require
+  eleven JSON checkpoints, `real_gpu: false`, child exited and socket removed. Drive every group by
   real input; reject a negative statistics limit without sending. Switch review/
   JSON/settings modes and confirm. Inspect actual CHANGE_CONFIG payload for
   edited fields, preserved unknown exact numbers, and absent untouched fields.
@@ -58,7 +58,7 @@ their exact decimal representation through serde_json arbitrary precision.
   no system configuration. Retain failed runs; OCR of small JSON paths can misread
   glyphs, so assert the human label plus before/after values and exact protocol data.
 
-## Eleven frames and boundaries
+## Expected observations
 
 General; Logging; invalid Statistics limit; Firewall & memory; Connection; changed
 field review; Complete JSON; held ACK; independent permission; saved confirmation;

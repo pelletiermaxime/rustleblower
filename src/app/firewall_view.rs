@@ -42,6 +42,16 @@ pub(super) fn bind_keys(cx: &mut App) {
 }
 use forms::{Form, Target};
 
+#[cfg(all(test, feature = "headless-tests"))]
+pub(super) fn test_idle(window: &Window, cx: &App) -> bool {
+    let view = gpui_kit::base::Root::read(window, cx)
+        .view()
+        .clone()
+        .downcast::<FirewallView>()
+        .unwrap();
+    !view.read(cx).busy
+}
+
 pub(super) fn open(
     backend: Handle,
     session: u64,

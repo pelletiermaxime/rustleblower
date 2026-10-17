@@ -33,7 +33,7 @@ its exact key counts, recognized call sites and remaining literal candidates.
 check proves the recognized catalogue references; it does not prove complete
 user-facing coverage or actual input/layout.
 
-Required focused GPU journey (queued with the verification agent): save French
+The current `--feature language` Kit journey saves French
 through `appearance-language-fr`, retain draft/density/palette and active session
 language, independently reopen the JSON; start a new app with saved French;
 check translated navigation and actual French history/rule Select choices still

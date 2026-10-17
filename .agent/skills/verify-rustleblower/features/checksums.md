@@ -26,7 +26,7 @@ after one sent command, exercises a daemon ERROR, then resubscribes with a fresh
 inventory and updates the remaining 33 rules across pages. It checks every saved
 rule against the metadata-preserving expected replacement and clears the warning.
 
-Require nine PNGs, `real_gpu`, scoped socket cleanup, actual wire/cache assertions
+Require nine JSON checkpoints, `real_gpu: false`, scoped socket cleanup, actual wire/cache assertions
 and a passed result. Frames 1–4 show warning/review/next-page/confirmation; 5–7
 show waiting, stopped and error states; 8–9 show all confirmed and cleared warning.
 Stable IDs are `prompt-checksums`, `checksum-next`, `checksum-reload`,
@@ -44,7 +44,7 @@ different hashes. Tab/Space opens the separate review, OCR requires Saved/Report
 values, and input returns to answer the permission. Require an actual once reply,
 persisted decision, zero rule commands and every cleanup boolean. This proves
 opening/reading and returning between windows; it does not prove native update
-buttons. Those have background GPU input, gRPC ACK and persistence proof.
+buttons. Those have Kit input, gRPC ACK and persistence proof.
 
 ## Bounds and limitations
 

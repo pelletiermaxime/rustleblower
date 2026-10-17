@@ -54,6 +54,16 @@ pub(super) struct HistoryView {
 }
 
 impl HistoryView {
+    #[cfg(all(test, feature = "headless-tests"))]
+    pub(super) fn test_idle(&self) -> bool {
+        !self.loading && self.pending.is_none() && !self.dirty
+    }
+
+    #[cfg(all(test, feature = "headless-tests"))]
+    pub(super) fn test_tools_closed(&self) -> bool {
+        self.tools_window.is_none()
+    }
+
     pub fn new(
         history: &History,
         highlighting: crate::highlighting::Handle,

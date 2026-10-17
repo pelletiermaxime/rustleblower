@@ -115,6 +115,11 @@ pub(super) struct PromptWindow {
 }
 impl PromptWindow {
     #[cfg(all(test, feature = "headless-tests"))]
+    pub(super) fn test_icon_loaded(&self) -> bool {
+        self.icon.image.is_some()
+    }
+
+    #[cfg(all(test, feature = "headless-tests"))]
     pub(super) fn reputation_status(&self) -> (bool, bool) {
         (self.reputation.warning(), self.reputation.emphasized())
     }

@@ -19,9 +19,9 @@ lasting Allow buttons remain available while expanded.
 - `permission-icons`: show a matching local desktop app icon beside its name,
   with initials while loading or when lookup fails. Background work never gates
   permission input. Run `python scripts/verify-headless.py --feature permission-icons`;
-  require four PNGs, actual PNG/SVG color assertions, cleared prior-request icons,
+  require four JSON checkpoints, actual PNG/SVG loading/fallback assertions, cleared prior-request icons,
   an Allow reply while both icon workers are held, and owned cleanup. This proves
-  fixture metadata and GPU/protocol behavior, not system-daemon app identification.
+  fixture metadata and Kit/protocol behavior, not system-daemon app identification.
 - `permission-allow`: click Allow forever or Allow for 12 hours and receive an
   allow/always or allow/12h rule in one click, regardless of the saved duration.
 - `permission-deny`: activate Block with its displayed duration by pointer or keyboard.
@@ -71,26 +71,26 @@ Preconditions: run from the root, with an owned socket/database and synthetic
 requests; never generate real firewall traffic just to produce a prompt.
 
 - **Background click and keyboard.** Run `python scripts/verify-headless.py`.
-  Require `05-permission.png`, `06-permissions-complete.png`, and a passing flow.
+  Require `05-permission.json`, `06-permissions-complete.json`, and a passing flow.
   It clicks `allow-forever`, then uses Tab/Space on the next request and checks the
   backend replies. This is UI input with fixture requests, not daemon enforcement.
   Frames 35–40 exercise Forever + command/user/port/checksum + priority/no logging,
   Reject over the real gRPC server, live-detail copying, pending-to-observed rule
   promotion, reset to saved duration/default options, and a five-minute network Allow.
-  Require all six images and the successful wire/cache assertions. Wheel events
+  Require all six JSON checkpoints and the successful wire/cache assertions. Wheel events
   reach lower conditions; the fixture never sets the choice directly.
   Frames 41–43 save a 12-hour executable default with priority/no logging, verify
   those fields in the next real gRPC reply, then disable popups and require
   immediate deny/once without a queued prompt. The focused
   `python scripts/verify-headless.py --feature popup-preferences` separately
-  drives the controls and verifies disk reopening with thirteen PNGs, including
+  drives the controls and verifies disk reopening with thirteen JSON checkpoints, including
   invalid-timeout feedback, advanced settings, five initial popup bounds and a
   queued corner-to-center transition. Production-window Tab/Space is also checked.
   Frames 44–48 save four conditions and Reject fallback, verify the actual
   resulting RPC rule, display unavailable default fields, and expire a one-second
   request to Reject once despite a lasting duration selection.
 - **Simple scopes and direct actions.** Run `python scripts/verify-headless.py --feature permission-actions`.
-  Require six PNGs, actual allow/always and allow/12h replies, app-only scope,
+  Require six JSON checkpoints, actual allow/always and allow/12h replies, app-only scope,
   explicit clearing of saved address/port restrictions, exact hostname and IP
   scopes without port/wildcard, keyboard radio selection, preserved custom
   conditions/metadata, disabled simple choices for unknown executable, unchanged
@@ -109,7 +109,7 @@ requests; never generate real firewall traffic just to produce a prompt.
   Require the named protocol tests to pass, including client deadline/shutdown.
   This proves wire replies and stale-ID rejection separately from native controls.
 - **Countdown review.** Run `python scripts/verify-headless.py --feature countdown`.
-  Require four PNGs, actual Allow/Deny RPC replies and persisted input decisions.
+  Require four JSON checkpoints, actual Allow/Deny RPC replies and persisted input decisions.
   Pointer opening and keyboard Tab must each keep a two-second request pending
   beyond its ordinary timeout; the next request must start with a fresh timer.
   The full flow separately checks initially expanded review and ordinary expiry
@@ -142,18 +142,10 @@ requests; never generate real firewall traffic just to produce a prompt.
   or minimizing a reviewed window does not restart its original countdown.
 - A lasting reply is not an installation ACK. Pending entries cannot be edited
   or bulk-mutated until reported by the daemon or replaced by a fresh inventory.
-- Advanced options have background GPU input and synthetic gRPC proof; native
+- Advanced options have Kit input and synthetic gRPC proof; native
   compositor input and installation by the real daemon remain unverified.
 - The compositor can refuse window activation. Fallback remains independent of UI.
 - Tab needs an initial focus handle and a rendered frame before activation.
 - A decision in history records the chosen reply, not daemon enforcement.
 - Native close/minimize and restoration are source-backed entry points; the
   current automated foreground flow does not assert those compositor behaviors.
-
-## Release font regression
-
-The checksum journey explicitly uses DejaVu Sans, matching Ubuntu runners, and
-retains `checksum-after-first-click.png`. Pausing review must keep its status
-on one line so the review button does not move between pointer down/up. The
-status puts the finite request limit and fallback before the review label.
-The focused checksum and countdown journeys must pass through actual input.

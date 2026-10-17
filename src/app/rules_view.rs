@@ -85,6 +85,11 @@ pub(super) struct RulesView {
 }
 
 impl RulesView {
+    #[cfg(all(test, feature = "headless-tests"))]
+    pub(super) fn test_query_ready(&self) -> bool {
+        self.pending_query.is_none() && (!self.dirty || self.query.node.is_empty())
+    }
+
     pub(super) fn editor_closed(&mut self) {
         self.creating = false;
         self.page = Page::default();
