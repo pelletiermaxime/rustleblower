@@ -294,6 +294,7 @@ fn journey(test_cx: &mut TestAppContext) {
         })
         .unwrap();
     assert_eq!(head_width, 333.);
+    fit_table_column(&mut cx, main, 0);
     // Pinned Kit cycles Default -> Descending -> Ascending -> Default.
     // Two actual clicks reach Ascending from the initially unsorted header.
     for _ in 0..2 {

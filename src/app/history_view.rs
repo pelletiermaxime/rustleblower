@@ -55,6 +55,11 @@ pub(super) struct HistoryView {
 
 impl HistoryView {
     #[cfg(all(test, feature = "headless-tests"))]
+    pub(super) fn test_selected(&self) -> Option<i64> {
+        self.selected
+    }
+
+    #[cfg(all(test, feature = "headless-tests"))]
     pub(super) fn test_idle(&self) -> bool {
         !self.loading && self.pending.is_none() && !self.dirty
     }

@@ -1,7 +1,7 @@
 use super::model::*;
 use futures_util::StreamExt;
 use std::{
-    io::Write,
+    io::{BufWriter, Write},
     path::Path,
     sync::{
         Arc,
@@ -10,6 +10,26 @@ use std::{
     time::Duration,
 };
 use tokio_util::sync::CancellationToken;
+
+const NORMALIZE_BATCH: usize = 64 * 1024;
+
+async fn normalize_chunk(
+    validator: &mut super::format::Normalizer,
+    output: &mut impl Write,
+    chunk: &[u8],
+    cancel: &CancellationToken,
+) -> Result<(), String> {
+    // HTTP may deliver several ready chunks in one poll. Bound synchronous
+    // parsing/writing work and explicitly give control requests a turn.
+    for part in chunk.chunks(NORMALIZE_BATCH) {
+        if cancel.is_cancelled() {
+            return Err("Cancelled".into());
+        }
+        validator.push(part, output)?;
+        tokio::task::yield_now().await;
+    }
+    Ok(())
+}
 pub(super) enum Download {
     Updated {
         file: tempfile::NamedTempFile,
@@ -80,6 +100,9 @@ pub(super) async fn fetch(
         .tempfile_in(tmp)
         .map_err(|e| e.to_string())?;
     let mut validator = super::format::Normalizer::new(row.spec.format.clone(), max);
+    // Normalized lists contain many short lines. Buffer them instead of making
+    // two filesystem writes per entry on the subscription runtime's only thread.
+    let mut output = BufWriter::with_capacity(NORMALIZE_BATCH, file.as_file_mut());
     let mut stream = response.bytes_stream();
     let mut count = 0;
     loop {
@@ -92,20 +115,43 @@ pub(super) async fn fetch(
         if count > max {
             return Err("Stream exceeds the configured byte limit".into());
         }
-        validator.push(&chunk, &mut file)?;
+        normalize_chunk(&mut validator, &mut output, &chunk, &cancel).await?;
         bytes.store(count, Ordering::Relaxed);
     }
-    validator.finish(&mut file)?;
+    validator.finish(&mut output)?;
     if cancel.is_cancelled() {
         return Err("Cancelled".into());
     }
-    file.flush()
-        .and_then(|_| file.as_file().sync_all())
-        .map_err(|e| e.to_string())?;
+    output.flush().map_err(|e| e.to_string())?;
+    drop(output);
+    file.as_file().sync_all().map_err(|e| e.to_string())?;
     Ok(Download::Updated {
         file,
         bytes: validator.bytes,
         etag,
         modified,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_ready_large_chunk_yields_and_observes_cancellation_before_its_end() {
+        let data = b"0.0.0.0 bounded.example\n".repeat(20_000);
+        let mut validator = super::super::format::Normalizer::new(Format::Hosts, data.len() as u64);
+        let mut output = Vec::new();
+        let cancel = CancellationToken::new();
+        let (result, ()) = tokio::join!(
+            normalize_chunk(&mut validator, &mut output, &data, &cancel),
+            async {
+                tokio::task::yield_now().await;
+                cancel.cancel();
+            }
+        );
+        assert_eq!(result.unwrap_err(), "Cancelled");
+        assert!(!output.is_empty());
+        assert!(output.len() < data.len());
+    }
 }

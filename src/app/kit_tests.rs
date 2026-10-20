@@ -276,6 +276,72 @@ fn keyboard_button(cx: &mut TestAppContext, window: AnyWindowHandle, id: &'stati
     }
     panic!("{id} must be reachable with Tab");
 }
+
+// Exercise Kit's resize handle through pointer input, including mouse release.
+fn fit_table_column(cx: &mut TestAppContext, window: AnyWindowHandle, index: usize) {
+    use gpui::InputEvent as _;
+    flush(cx);
+    let before = cx
+        .update_window(window, |_, w, _| {
+            w.within("table")
+                .find(("col-header", index))
+                .bounds()
+                .size
+                .width
+        })
+        .unwrap();
+    cx.update_window(window, |_, w, cx| {
+        let header = w.within("table").find(("col-header", index)).bounds();
+        let position = gpui::point(header.right() - px(2.), header.center().y);
+        w.dispatch_event(
+            gpui::MouseMoveEvent {
+                position,
+                pressed_button: None,
+                modifiers: Default::default(),
+            }
+            .to_platform_input(),
+            cx,
+        );
+        w.render_frame(cx);
+        w.dispatch_event(
+            gpui::MouseDownEvent {
+                position,
+                button: gpui::MouseButton::Left,
+                click_count: 2,
+                ..Default::default()
+            }
+            .to_platform_input(),
+            cx,
+        );
+        w.render_frame(cx);
+        w.dispatch_event(
+            gpui::MouseUpEvent {
+                position,
+                button: gpui::MouseButton::Left,
+                click_count: 2,
+                ..Default::default()
+            }
+            .to_platform_input(),
+            cx,
+        );
+    })
+    .unwrap();
+    flush(cx);
+    let after = cx
+        .update_window(window, |_, w, _| {
+            w.within("table")
+                .find(("col-header", index))
+                .bounds()
+                .size
+                .width
+        })
+        .unwrap();
+    assert!(after >= px(40.) && after <= px(2000.));
+    assert!(
+        (after - before).abs() > px(4.),
+        "Double-click must fit the visible column ({before:?} -> {after:?})"
+    );
+}
 fn click_prompt_option(cx: &mut TestAppContext, window: AnyWindowHandle, id: gpui::ElementId) {
     for _ in 0..64 {
         let clicked = cx

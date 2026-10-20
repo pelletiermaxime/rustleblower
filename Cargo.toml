@@ -1,19 +1,25 @@
 [package]
 name = "rustleblower"
-version = "0.4.0"
+version = "0.4.1"
 edition = "2024"
 license = "MIT"
 description = "A small native OpenSnitch frontend"
 repository = "https://github.com/pelletiermaxime/rustleblower"
 rust-version = "1.99"
 
+[workspace]
+members = ["crates/rustleblower-dev"]
+resolver = "3"
+
 [features]
 default = ["desktop"]
 desktop = ["dep:rust-i18n", "dep:gpui-kit", "dep:gpui", "dep:gpui_platform", "dep:raw-window-handle", "dep:x11rb", "dep:log", "dep:image", "dep:resvg", "dep:freedesktop-icons", "dep:freedesktop-desktop-entry", "dep:shlex", "dep:ksni", "dep:zbus"]
 headless-tests = ["desktop", "gpui/test-support", "gpui-kit/test-support"]
+hot-reload = ["desktop", "gpui/hot-reload", "dep:env_logger"]
 
 [dependencies]
 anyhow = "1"
+env_logger = { version = "0.11", default-features = false, optional = true }
 chrono = { version = "0.4", default-features = false, features = ["std"] }
 clap = { version = "4", features = ["derive"] }
 futures-util = "0.3"
@@ -24,9 +30,10 @@ getrandom = "0.4.3"
 h2 = { version = "=0.4.20", features = ["opensnitch-uds-authority"] }
 hex = "0.4"
 http = "1"
-gpui-kit = { version = "0.7.3", features = ["gpui-fast"], optional = true }
-gpui = { package = "gpui-fast", version = "0.1.7", default-features = false, features = ["wayland", "x11"], optional = true }
-gpui_platform = { package = "gpui-fast-platform", version = "0.1.7", default-features = false, features = ["font-kit", "wayland", "x11"], optional = true }
+# Kit and direct engine consumers share the same Fast backend.
+gpui-kit = { version = "0.8.0", features = ["gpui-fast"], optional = true }
+gpui = { package = "gpui-fast", version = "0.1.10", default-features = false, features = ["wayland", "x11"], optional = true }
+gpui_platform = { package = "gpui-fast-platform", version = "0.1.10", default-features = false, features = ["font-kit", "wayland", "x11"], optional = true }
 image = { version = "0.25", default-features = false, features = ["png"], optional = true }
 resvg = { version = "0.48.1", default-features = false, optional = true }
 freedesktop-icons = { version = "0.4", optional = true }

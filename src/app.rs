@@ -37,6 +37,7 @@ mod settings;
 mod startup_view;
 mod statistics_view;
 mod subscriptions_view;
+mod table_layout;
 mod tray;
 mod updates_view;
 mod window_memory;

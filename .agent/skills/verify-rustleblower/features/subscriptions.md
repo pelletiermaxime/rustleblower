@@ -287,6 +287,21 @@ input, not native successful HTTP/cancellation or a panel pointer click.
 
 ## Storage, formats and resource bounds
 
+Downloads buffer normalized output in 64 KiB and yield between at most 64 KiB
+of parsing, including when HTTP chunks are already buffered. The large-chunk
+cancellation test runs on a single-thread runtime and requires cancellation
+before the whole ready chunk is consumed. The 20 MiB publication-budget test
+retains its existing request/status deadlines and last-good-file assertions.
+
+`backend::subscription_tests::permissions_reply_while_a_real_bulk_sql_transaction_is_busy`
+holds the backend's actual subscription connection inside an SQLite UPDATE
+hook. It waits for explicit entry, independently proves the real write lock,
+requires Ping and Allow within the existing 500 ms deadlines while the bulk
+reply remains pending, then releases the hook and checks both committed rows.
+The hook/setup entry point exists only in library test builds. This replaces
+the CPU-speed-dependent 20-million-step recursive SQL trigger and its startup
+sleep. Run the normal no-default-features core suite to include this test.
+
 One separate worker/current-thread Tokio runtime owns a separate WAL SQLite DB,
 manager directory lock and all HTTP/filesystem I/O. Its errors do not stop the
 server or permissions. A second manager refuses the same directory. The command

@@ -19,3 +19,9 @@ Run `python scripts/verify-headless.py --feature live-table`. Require numeric
 header sorting in both directions, Shift selection across pages, exact frozen
 CSV/JSON output, save/reopen/stale/reload behavior, stopped restoration and
 independent permission input while a live update is held.
+
+The journey also double-clicks the first column's resize handle and requires a
+changed rendered width. Kit 0.8.0 measures at most the loaded 200-row page, with
+bounded text shaping. The fitted width enters the existing staged presentation;
+use the view tools' Save to persist it. This is Kit input/layout proof; compositor
+pointer delivery and physical font metrics require a native run.

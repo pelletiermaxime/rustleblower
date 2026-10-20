@@ -1,0 +1,24 @@
+[package]
+name = "rustleblower-dev"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# DX 0.7.10 skips the tip package's library when building a hot patch.
+# Keep Rustleblower as a workspace dependency and reuse its real entry point.
+# https://github.com/DioxusLabs/dioxus/issues/5778
+[[bin]]
+name = "rustleblower-dev"
+path = "../../src/main.rs"
+
+[dependencies]
+rustleblower = { path = "../..", default-features = false }
+anyhow = "1"
+tokio = { version = "1", features = ["rt", "time"] }
+log = "0.4"
+env_logger = { version = "0.11", default-features = false, optional = true }
+
+[features]
+default = ["desktop"]
+desktop = ["rustleblower/desktop"]
+hot-reload = ["desktop", "rustleblower/hot-reload", "dep:env_logger"]

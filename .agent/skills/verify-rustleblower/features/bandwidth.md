@@ -43,6 +43,10 @@ the desktop process. Preserve logs and failed reports under `.verification/`.
 
 ## Remaining proof
 
+The Kit bandwidth journey also double-clicks the Application column's resize
+handle, requiring a changed rendered width with the same 225 matches. Fitting
+measures the loaded 100-row page and remains session-local like manual resizing.
+
 The user has passed all nine live-kernel byte/attribution cases on the current
 kernel. The updated path-capture collector also passes three short-lived curl
 cases and the original nine byte cases (see evidence below). Broader concurrency,

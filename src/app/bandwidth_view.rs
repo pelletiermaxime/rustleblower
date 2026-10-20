@@ -249,6 +249,16 @@ impl TableDelegate for Rows {
             _ => bandwidth::bytes(row.sent),
         }
     }
+    fn fit_column(
+        &mut self,
+        index: usize,
+        window: &mut Window,
+        cx: &mut Context<TableState<Self>>,
+    ) -> Option<Pixels> {
+        Some(super::table_layout::fit_column(
+            self, index, false, window, cx,
+        ))
+    }
     fn render_td(
         &mut self,
         row: usize,

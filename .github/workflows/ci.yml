@@ -48,6 +48,8 @@ jobs:
           python3 scripts/bandwidth/test_transport.py --build target/bandwidth
       - name: Clippy
         run: python3 scripts/cargo.py clippy --all-targets --all-features --locked -- -D warnings
+      - name: Development hot reload launcher
+        run: python3 scripts/cargo.py check -p rustleblower-dev --features hot-reload --locked
       - name: Core protocol and persistence tests
         run: python3 scripts/owned_net.py --evidence .verification/core-network.json -- python3 scripts/cargo.py test --no-default-features --locked
       - name: Private desktop notification bus tests

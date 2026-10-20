@@ -174,6 +174,20 @@ impl TableDelegate for Rows {
             .map(|row| self.columns[column].field.text(row))
             .unwrap_or_default()
     }
+    fn fit_column(
+        &mut self,
+        index: usize,
+        window: &mut Window,
+        cx: &mut Context<TableState<Self>>,
+    ) -> Option<Pixels> {
+        Some(super::table_layout::fit_column(
+            self,
+            index,
+            index == 0,
+            window,
+            cx,
+        ))
+    }
     fn render_tr(
         &mut self,
         row: usize,

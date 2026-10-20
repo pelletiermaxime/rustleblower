@@ -383,6 +383,16 @@ fn journey(test_cx: &mut TestAppContext) {
         after_width > before_width + px(30.),
         "Actual Kit resize must change the visible header width"
     );
+    let selected = cx.read_entity(&view, |v, _| v.history.test_selected());
+    fit_table_column(&mut cx, window.into(), 1);
+    assert_eq!(
+        cx.read_entity(&view, |v, _| v.history.test_selected()),
+        selected
+    );
+    assert_eq!(
+        cx.read_entity(&view, |v, _| v.history.query.sort),
+        Some((Field::Time, true))
+    );
     wait_for(&mut cx, |cx| {
         cx.read_entity(&view, |v, _| v.history.memory.settled())
     });

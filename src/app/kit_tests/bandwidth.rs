@@ -108,6 +108,11 @@ fn journey(test_cx: &mut TestAppContext) {
         window,
         &evidence.join("03-live-application-rates.json"),
     );
+    fit_table_column(&mut cx, window, 0);
+    assert_eq!(
+        cx.read_entity(&view, |v, _| v.bandwidth.snapshot.matches),
+        225
+    );
     click(&mut cx, window, "bandwidth-next");
     wait_for(&mut cx, |cx| {
         cx.read_entity(&view, |v, _| v.bandwidth.snapshot.query.offset == 100)

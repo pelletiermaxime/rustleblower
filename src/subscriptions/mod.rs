@@ -184,6 +184,21 @@ impl Worker {
         root: &Path,
         notices: Arc<crate::desktop_notifications::Mailbox>,
     ) -> Self {
+        Self::start_with_setup(root, notices, |_| {})
+    }
+    #[cfg(test)]
+    pub(crate) fn start_with_connection_setup(
+        root: &Path,
+        notices: Arc<crate::desktop_notifications::Mailbox>,
+        setup: impl FnOnce(&mut rusqlite::Connection) + Send + 'static,
+    ) -> Self {
+        Self::start_with_setup(root, notices, |store| setup(&mut store.db))
+    }
+    fn start_with_setup(
+        root: &Path,
+        notices: Arc<crate::desktop_notifications::Mailbox>,
+        setup: impl FnOnce(&mut Store) + Send + 'static,
+    ) -> Self {
         let (tx, rx) = mpsc::channel(32);
         let (state_tx, state) = watch::channel(State::default());
         let cancel = CancellationToken::new();
@@ -202,7 +217,8 @@ impl Worker {
             .name("rustleblower-subscriptions".into())
             .spawn(move || {
                 let result = (|| -> Result<(), String> {
-                    let store = Store::open(&path)?;
+                    let mut store = Store::open(&path)?;
+                    setup(&mut store);
                     let rt = tokio::runtime::Builder::new_current_thread()
                         .max_blocking_threads(2)
                         .enable_all()

@@ -3,6 +3,13 @@
 Users browse recent daemon reports, filter by executable/destination and action,
 and page backward without loading the entire database into memory.
 
+Double-click a table column's resize handle to fit its header and the loaded
+page's contents. Kit 0.8.0 adds padding and enforces column limits; shaping is
+bounded to 200 rows and 512 characters per cell. The `history-tools` journey
+exercises this pointer gesture, requires a changed rendered width and preserves
+the selected row and sort. Fitted widths use the same saved view as manual
+resizing. Native pointer/font proof remains separate.
+
 ## Sub-features
 
 - `history-node`: use the searchable node dropdown beside search. All nodes is

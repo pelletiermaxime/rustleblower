@@ -1,4 +1,4 @@
-use anyhow::{Result, anyhow};
+use anyhow::{Context as _, Result, anyhow};
 use rustleblower::{
     backend::Backend,
     config::{Config, Decision},
@@ -12,11 +12,21 @@ use std::{
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 async fn request(h: &Handle, r: Request) -> Result<Reply> {
+    let operation = match &r {
+        Request::Get(id) => format!("Get({id})"),
+        Request::Save { previous, .. } => format!("Save({previous:?})"),
+        Request::Settings => "Settings".into(),
+        Request::SaveSettings { .. } => "SaveSettings".into(),
+        Request::Refresh { id, .. } => format!("Refresh({id})"),
+        Request::ReviewBulk { .. } => "ReviewBulk".into(),
+        _ => "request".into(),
+    };
     tokio::time::timeout(
         Duration::from_secs(3),
         h.request(r).map_err(anyhow::Error::msg)?,
     )
-    .await??
+    .await
+    .with_context(|| format!("Subscription {operation} exceeded its 3-second reply deadline"))??
     .map_err(anyhow::Error::msg)
 }
 async fn save(h: &Handle, previous: Option<(u64, u64)>, spec: Spec) -> Result<u64> {
@@ -1419,120 +1429,5 @@ async fn bulk_group_limits_fail_before_writes_and_format_refresh_is_explicit() -
         "Bulk edits perform no implicit download"
     );
     worker.join();
-    Ok(())
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn permissions_reply_while_a_real_bulk_sql_transaction_is_busy() -> Result<()> {
-    use subscriptions::bulk::{Patch, Scope};
-    let dir = tempfile::tempdir()?;
-    let options = Config {
-        transport: Default::default(),
-        socket: dir.path().join("ui.sock"),
-        database: dir.path().join("history.sqlite3"),
-        prompt_timeout: 30,
-        timeout_action: Decision::Deny,
-        history_days: 7,
-        history_mib: 16,
-        headless: true,
-    };
-    let backend = Backend::start(options.clone())?;
-    let h = &backend.handle.subscriptions;
-    let mut daemon = daemon(&options.socket).await?;
-    daemon
-        .subscribe(protocol::ClientConfig {
-            name: "bulk-permission-fixture".into(),
-            ..Default::default()
-        })
-        .await?;
-    let a = save(h, None, spec("http://127.0.0.1:1/unused", "Busy bulk A")).await?;
-    let b = save(h, None, spec("http://127.0.0.1:1/unused", "Busy bulk B")).await?;
-    let review = bulk_review(
-        h,
-        Scope::Selected(vec![a, b]),
-        Patch {
-            enabled: Some(false),
-            ..Default::default()
-        },
-    )
-    .await?;
-    let db = rusqlite::Connection::open(h.root.join("subscriptions.sqlite3"))?;
-    db.busy_timeout(Duration::ZERO)?;
-    // Only this owned DB is delayed. Constant-memory SQL holds the real worker's
-    // actual write transaction while production RPCs and permission decisions run.
-    db.execute_batch(&format!("CREATE TRIGGER owned_bulk_delay BEFORE UPDATE ON subscriptions WHEN OLD.id={a} BEGIN SELECT (WITH RECURSIVE steps(x) AS (VALUES(0) UNION ALL SELECT x+1 FROM steps WHERE x<20000000) SELECT max(x) FROM steps); END;"))?;
-    let mut applying = h
-        .request(Request::ApplyBulk(review))
-        .map_err(anyhow::Error::msg)?;
-    let busy = || -> Result<bool> {
-        match db.execute_batch("BEGIN IMMEDIATE;") {
-            Ok(()) => {
-                db.execute_batch("ROLLBACK;")?;
-                Ok(false)
-            }
-            Err(e) if e.sqlite_error_code() == Some(rusqlite::ErrorCode::DatabaseBusy) => Ok(true),
-            Err(e) => Err(e.into()),
-        }
-    };
-    // Give the worker the first write opportunity. Repeated BEGIN probes before
-    // it upgrades its read snapshot can themselves cause SQLITE_BUSY_SNAPSHOT.
-    tokio::time::sleep(Duration::from_millis(100)).await;
-    assert!(
-        busy()?,
-        "The owned trigger must be holding the actual write lock"
-    );
-    assert!(matches!(
-        applying.try_recv(),
-        Err(tokio::sync::oneshot::error::TryRecvError::Empty)
-    ));
-    tokio::time::timeout(
-        Duration::from_millis(500),
-        daemon.ping(protocol::PingRequest::default()),
-    )
-    .await??;
-    let mut asking = daemon.clone();
-    let ask = tokio::spawn(async move {
-        asking
-            .ask_rule(protocol::Connection {
-                process_path: "/usr/bin/bulk-isolation".into(),
-                ..Default::default()
-            })
-            .await
-    });
-    tokio::time::timeout(Duration::from_millis(500), async {
-        loop {
-            if let Some(prompt) = backend.handle.prompts.snapshot().first() {
-                backend.handle.decide(prompt.id, Decision::Allow);
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(1)).await;
-        }
-    })
-    .await?;
-    let answer = tokio::time::timeout(Duration::from_millis(500), ask)
-        .await???
-        .into_inner();
-    assert_eq!(answer.action, "allow");
-    assert!(
-        busy()?,
-        "The actual subscription SQL transaction must still overlap the permission reply"
-    );
-    assert!(matches!(
-        applying.try_recv(),
-        Err(tokio::sync::oneshot::error::TryRecvError::Empty)
-    ));
-    assert!(matches!(
-        tokio::time::timeout(Duration::from_secs(30), applying)
-            .await??
-            .map_err(anyhow::Error::msg)?,
-        Reply::BulkApplied(2)
-    ));
-    assert!(!get(h, a).await?.spec.enabled);
-    assert!(!get(h, b).await?.spec.enabled);
-    db.execute_batch("DROP TRIGGER owned_bulk_delay;")?;
-    drop(db);
-    drop(daemon);
-    backend.join();
-    assert!(!options.socket.exists());
     Ok(())
 }

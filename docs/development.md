@@ -4,7 +4,56 @@ FerryDock at `/home/maximep/projects/ferrydock` is the architectural reference.
 Prefer the pinned GPUI Kit controls, keep feature state and views together, and
 keep I/O off the UI thread.
 
-The [headless testing guide](headless-testing.md) describes all 42 GPUI Kit
+## Development hot reload
+
+The desktop uses GPUI Kit 0.8.0 and GPUI Fast 0.1.10, as in FerryDock.
+Install Dioxus CLI **0.7.10**, matching GPUI Fast's Subsecond protocol:
+
+```sh
+cargo install dioxus-cli --version 0.7.10 --locked
+bash scripts/dev-hot-reload.sh
+```
+
+`RUSTLEBLOWER_DX=/absolute/path/to/dx` selects an existing CLI. The script
+prepares the checksum-verified OpenSnitch transport patch and runs DX with the
+native renderer, `--hot-patch`, the `hot-reload` feature and locked dependencies.
+It retains the current Wayland/X11 selection. Its socket, database and preferences
+live under `.verification/dev`; set `RUSTLEBLOWER_DEV_DIR` to use another directory.
+Existing sockets are refused, never removed. This isolated UI has no daemon data
+until a fixture or explicitly configured daemon connects to its development socket.
+Additional script arguments go to `dx serve`, for example `--port 8081`.
+An explicit `--args` replaces the default application arguments.
+
+The unpublished `rustleblower-dev` workspace package shares `src/main.rs` with the
+normal binary and depends on Rustleblower's library. This follows FerryDock's
+workaround for [Dioxus #5778](https://github.com/DioxusLabs/dioxus/issues/5778):
+DX 0.7.10 otherwise skips changes in the top package's library when making patches.
+Normal Cargo builds and release packaging keep using `rustleblower`.
+
+Edit view render methods or the helpers they call to patch the running UI while
+retaining compatible in-memory state. Restart for state-struct layout changes,
+startup changes or long-lived worker changes. Custom element layout/prepaint/paint
+methods are outside GPUI's current patch boundary. The first DX build may need its
+nightly toolchain and takes longer than subsequent patches. Hot reload is
+experimental and active only in debug builds with the optional feature enabled.
+
+The development executable needs a connection to DX's loopback server (normally
+`127.0.0.1:8080`). If OpenSnitch denies it, the window can open while DX reports
+`Ignoring hotpatch since there is no ASLR reference`. Allow that development
+connection and restart the development session; a full rebuild can change its path.
+
+## Content-sized table columns
+
+Double-click a column's resize handle in History, Live sockets or Data usage to
+fit its header and the loaded page's contents. Measurement uses at most 200 rows
+and 512 characters per cell, with a 1200 px content cap. Kit adds padding and
+clamps to the column's limits. History and Live keep their existing width-save
+paths; fitting does not change sorting, filters or selection. Data usage widths
+remain session-local, as with manual resizing.
+
+## Architecture and verification
+
+The [headless testing guide](headless-testing.md) describes all 43 GPUI Kit
 journeys, their condition waits, isolated fixtures and interaction/layout proof
 boundary. Headless checks no longer capture WGPU screenshots.
 

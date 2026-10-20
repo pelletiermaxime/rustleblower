@@ -198,6 +198,20 @@ impl Backend {
         config: Config,
         overrides: crate::history::storage::Overrides,
     ) -> Result<Self> {
+        Self::start_with_subscription_worker(
+            config,
+            overrides,
+            crate::subscriptions::Worker::start_with_notices,
+        )
+    }
+    fn start_with_subscription_worker(
+        config: Config,
+        overrides: crate::history::storage::Overrides,
+        subscriptions_worker: impl FnOnce(
+            &std::path::Path,
+            Arc<crate::desktop_notifications::Mailbox>,
+        ) -> crate::subscriptions::Worker,
+    ) -> Result<Self> {
         // Desktop dependencies can also enable Ring. Select a default explicitly
         // before Tonic constructs TLS configs; preserve a caller's installed provider.
         let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
@@ -243,7 +257,7 @@ impl Backend {
             overrides,
         )?;
         let desktop_notices = Arc::new(crate::desktop_notifications::Mailbox::default());
-        let subscriptions = crate::subscriptions::Worker::start_with_notices(
+        let subscriptions = subscriptions_worker(
             &config
                 .database
                 .parent()
@@ -1034,3 +1048,6 @@ fn parse_timeout(value: &str) -> Option<Duration> {
         _ => None,
     }
 }
+
+#[cfg(test)]
+mod subscription_tests;

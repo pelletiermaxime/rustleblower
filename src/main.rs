@@ -2,6 +2,9 @@ use anyhow::Result;
 use rustleblower::{backend::Backend, config::Config};
 
 fn main() -> Result<()> {
+    #[cfg(all(feature = "hot-reload", debug_assertions))]
+    env_logger::init();
+
     #[cfg(feature = "desktop")]
     graphics_diagnostics();
     let (config, storage_overrides) = Config::parse_launch();
