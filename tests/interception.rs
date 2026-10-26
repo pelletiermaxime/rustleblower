@@ -47,7 +47,13 @@ async fn subscribe(
         config: "{\"Future\":true}".into(),
         ..Default::default()
     };
-    assert_eq!(client.subscribe(config.clone()).await?.into_inner(), config);
+    let mut reply = client.subscribe(config.clone()).await?.into_inner();
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&reply.config)?,
+        serde_json::json!({"DefaultAction": "deny", "Future": true})
+    );
+    reply.config = config.config.clone();
+    assert_eq!(reply, config);
     backend.handle.history.flush().await?;
     Ok(backend.handle.node(name).unwrap().id)
 }

@@ -63,6 +63,81 @@ fn connection() -> protocol::Connection {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn subscribe_denies_connected_fallback_and_preserves_reported_configuration() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let cfg = config(dir.path());
+    let backend = Backend::start(cfg.clone())?;
+    let mut daemon = connect(&cfg.socket).await?;
+    for document in [
+        r#"{"DefaultAction":"allow","DefaultDuration":"always","Future":{"number":18446744073709551616123,"enabled":true}}"#,
+        r#"{"DefaultAction":"reject","InterceptUnknown":false}"#,
+        r#"{"DefaultAction":"deny","Server":{"Address":"unix:///unchanged.sock"}}"#,
+        r#"{"Future":[1,"preserved",null]}"#,
+        "",
+    ] {
+        let reported = protocol::ClientConfig {
+            id: 123,
+            name: "connected-default".into(),
+            version: "reported-kernel".into(),
+            config: document.into(),
+            is_firewall_running: true,
+            rules: vec![protocol::Rule {
+                name: "existing-allow".into(),
+                action: "allow".into(),
+                enabled: true,
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let mut reply = daemon.subscribe(reported.clone()).await?.into_inner();
+        let mut expected = if document.is_empty() {
+            serde_json::json!({})
+        } else {
+            serde_json::from_str::<serde_json::Value>(document)?
+        };
+        expected["DefaultAction"] = "deny".into();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&reply.config)?,
+            expected
+        );
+        reply.config = document.into();
+        assert_eq!(reply, reported, "all other subscription fields stay intact");
+        backend.handle.history.flush().await?;
+        assert_eq!(
+            rustleblower::nodes::detail(&cfg.database, "connected-default")?.config,
+            document,
+            "the cache must retain the daemon's reported configuration"
+        );
+    }
+    drop(daemon);
+    backend.join();
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn malformed_subscription_config_cannot_establish_a_session() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let cfg = config(dir.path());
+    let backend = Backend::start(cfg.clone())?;
+    let mut daemon = connect(&cfg.socket).await?;
+    for document in ["not-json", "[]", "null"] {
+        let error = daemon
+            .subscribe(protocol::ClientConfig {
+                name: "invalid-config".into(),
+                config: document.into(),
+                ..Default::default()
+            })
+            .await
+            .unwrap_err();
+        assert_eq!(error.code(), tonic::Code::InvalidArgument);
+        assert!(backend.handle.status().sessions.is_empty());
+    }
+    drop(daemon);
+    backend.join();
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn timeout_and_shutdown_use_each_requests_captured_preference_overrides() -> Result<()> {
     use rustleblower::preferences::Popup;
     let dir = tempfile::tempdir()?;
@@ -501,9 +576,10 @@ async fn early_ping_survives_subscribe_and_replay_without_history_loss() -> Resu
         config: "{\"DefaultAction\":\"allow\"}".into(),
         ..Default::default()
     };
+    let reply = client.subscribe(settings.clone()).await?.into_inner();
     assert_eq!(
-        client.subscribe(settings.clone()).await?.into_inner(),
-        settings
+        serde_json::from_str::<serde_json::Value>(&reply.config)?,
+        serde_json::json!({"DefaultAction": "deny"})
     );
     assert_eq!(backend.handle.status().session.unwrap().version, "1.7.2");
     client.ping(ping).await?;

@@ -60,7 +60,15 @@ fn inventory(name: &str) -> protocol::ClientConfig {
 }
 async fn subscribe(client: &mut UiClient<Channel>, name: &str, backend: &Backend) -> Result<u64> {
     let config = inventory(name);
-    assert_eq!(client.subscribe(config.clone()).await?.into_inner(), config);
+    let mut reply = client.subscribe(config.clone()).await?.into_inner();
+    let mut expected: serde_json::Value = serde_json::from_str(&config.config)?;
+    expected["DefaultAction"] = "deny".into();
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&reply.config)?,
+        expected
+    );
+    reply.config = config.config.clone();
+    assert_eq!(reply, config);
     backend.handle.history.flush().await?;
     Ok(backend.handle.node(name).unwrap().id)
 }

@@ -717,8 +717,10 @@ impl Ui for Service {
             .ok_or_else(|| RpcStatus::failed_precondition("Missing transport identity"))?;
         let previous = info.session.load(Ordering::Acquire);
         let id = info.ids.fetch_add(1, Ordering::Relaxed) + 1;
-        let config = request.into_inner();
+        let mut config = request.into_inner();
         let saved = crate::nodes::Saved::prepare(&config).map_err(RpcStatus::resource_exhausted)?;
+        let connected_config =
+            crate::nodes::connected_config(&config.config).map_err(RpcStatus::invalid_argument)?;
         let name = info
             .peer
             .node_key(&config.name)
@@ -800,7 +802,9 @@ impl Ui for Service {
                 self.handle.history.enqueue(session.name.clone(), batch);
             }
         }
-        // Return the daemon's configuration unchanged. Subscription must not alter policy.
+        // Keep the reported configuration in the cache, and override only the
+        // connected fallback in the reply, as opensnitch-ui does.
+        config.config = connected_config;
         Ok(Response::new(config))
     }
 

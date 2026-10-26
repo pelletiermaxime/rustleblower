@@ -16,6 +16,18 @@ lasting Allow buttons remain available while expanded.
 
 ## Sub-features
 
+- `permission-connected-default`: Subscribe returns `DefaultAction: deny` for the
+  daemon's connected fallback, matching opensnitch-ui even when its saved default
+  is Allow. Only the reply changes; cached reported configuration, existing rules
+  and daemon disk configuration remain intact. The popup timeout action is
+  independent. Empty configuration receives Deny; invalid/non-object JSON is
+  rejected before establishing a session. The protocol tests
+  `subscribe_denies_connected_fallback_and_preserves_reported_configuration` and
+  `malformed_subscription_config_cannot_establish_a_session` cover these boundaries,
+  including unknown fields and exact large numbers. Real packet enforcement needs
+  its own owned daemon/network-namespace check with a saved Allow configuration,
+  an allowed download control and a second zero-byte attempt before prompt expiry;
+  protocol replies alone do not prove enforcement. Never use the system socket.
 - `permission-icons`: show a matching local desktop app icon beside its name,
   with initials while loading or when lookup fails. Background work never gates
   permission input. Run `python scripts/verify-headless.py --feature permission-icons`;

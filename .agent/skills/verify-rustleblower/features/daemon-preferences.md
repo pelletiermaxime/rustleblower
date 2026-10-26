@@ -21,6 +21,9 @@ ACK waits minimizes the editor. Popup defaults remain separate.
 
 Connection settings describe the daemon client. Editing them does not add TCP/TLS
 listeners to Rustleblower. Certificate paths belong to the daemon's machine.
+The saved Default action applies when the UI is disconnected. Rustleblower returns
+Deny for the connected fallback during Subscribe without changing this document;
+unanswered popup behavior remains a separate preference.
 
 ## Source contract
 

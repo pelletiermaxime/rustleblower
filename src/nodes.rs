@@ -62,6 +62,23 @@ pub fn validate_config(text: &str) -> Result<serde_json::Value, String> {
     }
     Ok(value)
 }
+
+pub(crate) fn connected_config(text: &str) -> Result<String, String> {
+    let mut value = if text.is_empty() {
+        serde_json::json!({})
+    } else {
+        validate_config(text)?
+    };
+    // Like opensnitch-ui, deny unmatched traffic while a permission is pending.
+    // This subscription reply changes only the connected daemon's in-memory
+    // fallback; its reported configuration and on-disk policy stay intact.
+    value["DefaultAction"] = "deny".into();
+    let reply = serde_json::to_string(&value).map_err(|error| error.to_string())?;
+    if reply.len() > CONFIG_BYTES {
+        return Err("Connected daemon configuration exceeds 64 KiB".into());
+    }
+    Ok(reply)
+}
 pub(crate) struct Saved {
     pub kernel: String,
     pub config: String,

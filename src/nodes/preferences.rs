@@ -71,7 +71,7 @@ pub const FIELDS: &[Field] = &[
         label: "Default action",
         group: General,
         kind: Choice(ACTIONS),
-        hint: "Fallback policy owned by this daemon.",
+        hint: "Fallback when the UI is disconnected. Rustleblower uses Deny while connected.",
     },
     Field {
         id: "daemon-default-duration",
