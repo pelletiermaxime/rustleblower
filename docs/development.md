@@ -4,6 +4,49 @@ FerryDock at `/home/maximep/projects/ferrydock` is the architectural reference.
 Prefer the pinned GPUI Kit controls, keep feature state and views together, and
 keep I/O off the UI thread.
 
+## Build and run
+
+Building from source requires Rust 1.99, Python 3.12+, `patch` and the Linux
+libraries needed by the desktop backend. From the repository root:
+
+```sh
+python3 scripts/cargo.py run --locked
+```
+
+The launcher prepares the transport patch on its first run. Read the
+[resource limits](resource-limits.md) for queue, payload and storage bounds.
+
+## Try it without changing the daemon
+
+In one terminal:
+
+```sh
+mkdir -p .verification/demo
+python scripts/cargo.py run --locked -- --socket "$PWD/.verification/demo/ui.sock" \
+  --database "$PWD/.verification/demo/history.sqlite3"
+```
+
+In another, with OpenSnitch's Python package installed:
+
+```sh
+python scripts/fake-daemon.py --socket "$PWD/.verification/demo/ui.sock"
+```
+
+The fixture reports synthetic events and asks two permission questions. It makes
+no network connections to the displayed destinations and changes no firewall rules.
+It also supplies synthetic application rules and acknowledges edits to its own
+in-memory catalogue. Add `--reject-rule-changes` to exercise an error response.
+
+## Verification entry points
+
+Use `python scripts/verify-headless.py` for background Kit interaction and layout
+checks. For an owned foreground session, build first, then run
+`python scripts/verify-native.py doctor` and
+`python scripts/verify-native.py run --feature history` (or `--feature prompts`).
+The [verification skill](../.agent/skills/verify-rustleblower/SKILL.md) documents
+launch, doctor, drive, evidence, cleanup and the feature map. See
+[headless testing](headless-testing.md) for the exact proof boundaries.
+
 ## Development hot reload
 
 The desktop uses GPUI Kit 0.8.0 and GPUI Fast 0.1.10, as in FerryDock.
