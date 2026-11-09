@@ -96,7 +96,8 @@ def main():
     # The real daemon starts Subscribe asynchronously and may report traffic
     # first. Exercise that ordering every time instead of masking the race.
     timings = [ping(args.events)]
-    assert client.Subscribe(config, timeout=2).config == config.config
+    expected_config = {**json.loads(config.config), "DefaultAction": "deny"}
+    assert json.loads(client.Subscribe(config, timeout=2).config) == expected_config
     for number in range(args.alerts):
         response=client.PostAlert(proto.Alert(id=number,type=proto.Alert.WARNING,action=proto.Alert.SHOW_ALERT,priority=proto.Alert.HIGH,text=f"Synthetic daemon alert {number:03}"),timeout=1)
         assert response.id==number

@@ -6,5 +6,5 @@ license = "MIT"
 publish = false
 
 [dependencies]
-tonic-prost-build = "=0.14.6"
+tonic-prost-build = "=0.14.9"
 prost-build = "=0.14.4"

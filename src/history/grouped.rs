@@ -244,7 +244,7 @@ pub fn permit() -> Option<Permit> {
         .ok()
         .map(|owned| Permit { _owned: owned })
 }
-fn deadline(db: &Connection, stop: Arc<AtomicBool>) -> Result<()> {
+fn deadline(db: &mut Connection, stop: Arc<AtomicBool>) -> Result<()> {
     let started = Instant::now();
     db.progress_handler(
         10_000,
@@ -266,8 +266,8 @@ pub fn capture(
         !stop.load(Ordering::Relaxed),
         "Grouped history capture stopped"
     );
-    let (file, db) = export::snapshot(database, &stop)?;
-    deadline(&db, stop.clone())?;
+    let (file, mut db) = export::snapshot(database, &stop)?;
+    deadline(&mut db, stop.clone())?;
     let maximum: i64 = db.query_row("SELECT coalesce(max(id),0) FROM events", [], |row| {
         row.get(0)
     })?;
@@ -316,12 +316,12 @@ impl Snapshot {
             !stop.load(Ordering::Relaxed),
             "Grouped history read stopped"
         );
-        let db = Connection::open_with_flags(
+        let mut db = Connection::open_with_flags(
             self.file.path(),
             OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
         )?;
         db.execute_batch("PRAGMA query_only=ON; PRAGMA cache_size=-512; PRAGMA mmap_size=0; PRAGMA temp_store=FILE;")?;
-        deadline(&db, stop)?;
+        deadline(&mut db, stop)?;
         Ok(db)
     }
     pub fn detail(&self, id: i64, stop: Arc<AtomicBool>) -> Result<Option<super::details::Detail>> {
@@ -470,8 +470,8 @@ mod tests {
         drop(snapshot);
         assert!(!private_path.exists());
         assert!(permit().is_some());
-        let db = Connection::open_in_memory()?;
-        deadline(&db, Arc::new(AtomicBool::new(true)))?;
+        let mut db = Connection::open_in_memory()?;
+        deadline(&mut db, Arc::new(AtomicBool::new(true)))?;
         let result=db.query_row("WITH RECURSIVE work(n) AS (VALUES(1) UNION ALL SELECT n+1 FROM work WHERE n<1000000) SELECT sum(n) FROM work",[],|row|row.get::<_,i64>(0));
         assert!(
             matches!(result,Err(rusqlite::Error::SqliteFailure(error,_)) if error.code==rusqlite::ErrorCode::OperationInterrupted)

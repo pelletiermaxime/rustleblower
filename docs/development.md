@@ -49,7 +49,7 @@ launch, doctor, drive, evidence, cleanup and the feature map. See
 
 ## Development hot reload
 
-The desktop uses GPUI Kit 0.8.0 and GPUI Fast 0.1.10, as in FerryDock.
+The desktop uses GPUI Kit 0.9.1 and GPUI Fast 0.1.14.
 Install Dioxus CLI **0.7.10**, matching GPUI Fast's Subsecond protocol:
 
 ```sh

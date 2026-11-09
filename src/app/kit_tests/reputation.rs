@@ -44,7 +44,7 @@ fn journey(test_cx: &mut TestAppContext) {
                 );
                 w.render_frame(cx);
                 w.dispatch_event(
-                    gpui::ScrollWheelEvent {
+                    gpui::ScrollEvent {
                         position,
                         delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.), px(direction))),
                         ..Default::default()
@@ -185,7 +185,7 @@ fn journey(test_cx: &mut TestAppContext) {
                 );
                 w.render_frame(cx);
                 w.dispatch_event(
-                    gpui::ScrollWheelEvent {
+                    gpui::ScrollEvent {
                         position: body.center(),
                         delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.), px(direction))),
                         ..Default::default()
@@ -505,7 +505,7 @@ fn journey(test_cx: &mut TestAppContext) {
             );
             w.render_frame(cx);
             w.dispatch_event(
-                gpui::ScrollWheelEvent {
+                gpui::ScrollEvent {
                     position,
                     delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.), px(-180.))),
                     ..Default::default()

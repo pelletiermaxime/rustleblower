@@ -15,7 +15,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             &[root.join("proto")],
         )?;
     let generated = fs::read_to_string(output.join("protocol.rs"))?;
-    let header = "// SPDX-License-Identifier: MIT\n// Generated from Rustleblower's proto/rustleblower.proto.\n// Generator: tonic-prost-build 0.14.6 / prost-build 0.14.4.\n// Regenerate with the locked tools/protocol-generator crate; see proto/README.md.\n";
+    let header = "// SPDX-License-Identifier: MIT\n// Generated from Rustleblower's proto/rustleblower.proto.\n// Generator: tonic-prost-build 0.14.9 / prost-build 0.14.4.\n// Regenerate with the locked tools/protocol-generator crate; see proto/README.md.\n";
     fs::write(root.join("src/protocol.rs"), format!("{header}{generated}"))?;
     Ok(())
 }

@@ -35,8 +35,8 @@ and a supported graphics driver.
 ### AppImage
 
 ```sh
-chmod +x rustleblower-0.4.1-linux-x86_64.AppImage
-./rustleblower-0.4.1-linux-x86_64.AppImage
+chmod +x rustleblower-0.4.2-linux-x86_64.AppImage
+./rustleblower-0.4.2-linux-x86_64.AppImage
 ```
 
 Without FUSE, add `--appimage-extract-and-run` to the launch command.
@@ -44,7 +44,7 @@ Without FUSE, add `--appimage-extract-and-run` to the launch command.
 ### Debian / Ubuntu
 
 ```sh
-sudo apt install ./rustleblower_0.4.1_amd64.deb
+sudo apt install ./rustleblower_0.4.2_amd64.deb
 rustleblower
 ```
 
