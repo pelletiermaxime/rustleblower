@@ -23,6 +23,8 @@ fn main() -> Result<()> {
         "This build requires --headless; enable the desktop feature for GPUI"
     );
     let backend = Backend::start_with_storage(config.clone(), storage_overrides)?;
+    #[cfg(feature = "desktop")]
+    let socket = config.socket.clone();
     let (popup_preferences, timeout, fallback) = backend.handle.popup_policy();
     eprintln!(
         "Rustleblower listening on {}. History: {}. Unanswered prompts: {} once {}.",
@@ -39,10 +41,19 @@ fn main() -> Result<()> {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?;
-        runtime.block_on(async { backend.handle.cancel.cancelled().await });
+        runtime.block_on(async {
+            if backend.handle.wait_until_listening().await {
+                rustleblower::updates::signal_ready();
+            }
+            backend.handle.cancel.cancelled().await;
+        });
     } else {
         #[cfg(feature = "desktop")]
         rustleblower::app::run(backend.handle.clone(), config);
+    }
+    #[cfg(feature = "desktop")]
+    if let Some(restart) = backend.handle.updates.take_restart() {
+        return restart.after_shutdown(backend, &socket);
     }
     backend.join();
     Ok(())

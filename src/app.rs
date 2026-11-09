@@ -138,6 +138,7 @@ pub fn run(backend: Handle, config: Config) {
             bind_keys(cx);
             appearance::init(&config.database, cx);
             let backend = backend.clone();
+            let readiness = backend.clone();
             let config = config.clone();
             let result = window_memory::open(backend, config, cx);
             match result {
@@ -150,6 +151,13 @@ pub fn run(backend: Handle, config: Config) {
                     cx.set_global(DashboardOwner {
                         _dashboard: dashboard,
                     });
+                    cx.background_executor()
+                        .spawn(async move {
+                            if readiness.wait_until_listening().await {
+                                crate::updates::signal_ready();
+                            }
+                        })
+                        .detach();
                 }
                 Err(e) => {
                     eprintln!("Cannot open Rustleblower window: {e:#}");
@@ -401,7 +409,9 @@ impl Dashboard {
         if self.screen != Screen::Live || self.main_window.is_none() {
             self.live.pause();
         }
-        if self.backend.cancel.is_cancelled() && !self.quitting {
+        if !self.quitting
+            && (self.backend.cancel.is_cancelled() || self.backend.updates.restart_requested())
+        {
             self.quit(None, cx);
             return;
         }

@@ -35,16 +35,23 @@ and a supported graphics driver.
 ### AppImage
 
 ```sh
-chmod +x rustleblower-0.4.3-linux-x86_64.AppImage
-./rustleblower-0.4.3-linux-x86_64.AppImage
+chmod +x rustleblower-0.4.4-linux-x86_64.AppImage
+./rustleblower-0.4.4-linux-x86_64.AppImage
 ```
 
 Without FUSE, add `--appimage-extract-and-run` to the launch command.
 
+On an updater-enabled AppImage, open **Settings → Updates**, select
+**Rustleblower** with prereleases off, enable **Check automatically** and
+**Download stable Rustleblower AppImage updates**, then save. **Check now** downloads a
+newer stable release when downloads are enabled. Once the download is verified,
+choose **Restart to update**. The restart briefly disconnects OpenSnitch and
+keeps the AppImage at its existing path. Its directory must be writable.
+
 ### Debian / Ubuntu
 
 ```sh
-sudo apt install ./rustleblower_0.4.3_amd64.deb
+sudo apt install ./rustleblower_0.4.4_amd64.deb
 rustleblower
 ```
 

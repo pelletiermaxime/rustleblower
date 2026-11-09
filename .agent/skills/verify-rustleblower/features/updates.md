@@ -1,8 +1,9 @@
 # Release checking
 
 Read [source contract and native limits](../../../../docs/update-checker-plan.md).
-This ports the configured schedule/notice intent of the pinned OpenSnitch
-versionchecker plugin. It never downloads or installs software.
+The release checker follows the schedule and notice behavior of the pinned
+OpenSnitch versionchecker plugin. An opt-in FerryDock-style updater stages
+verified stable releases for Linux x86-64 AppImage launches.
 
 The worker is disabled for automatic network checks by default. Explicit manual
 Check now uses saved target/prerelease settings and is itself network opt-in.
@@ -40,3 +41,20 @@ not establish rendered/input, desktop delivery, packaged or live-API proof.
 Run `python scripts/verify-headless.py --feature updates` for settings input,
 save/reopen/stale refusal, opt-in traffic, manual results, cancellation, singleton
 reuse and permission input during a held loopback HTTP request.
+
+The journey also enables AppImage downloads via Kit input, stages a checksummed
+loopback fixture, and clicks **Restart to update**. It requires the normal
+dashboard quit path and an intact installed file. Separate process tests under
+`updates::appimage::tests` prove socket release before launch, rebound socket
+connectivity, rollback and foreign-socket preservation.
+
+To check an owned package built from the current source, set
+`RUSTLEBLOWER_TEST_APPIMAGE` to its absolute path and run
+
+```sh
+python scripts/cargo.py test --lib --no-default-features --locked \
+  updates::appimage::tests::packaged_appimage_rebinds_after_shutdown -- --ignored --exact
+```
+
+This checks the real AppImage runtime and restarted backend using an owned
+socket in headless mode.

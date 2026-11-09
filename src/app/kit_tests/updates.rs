@@ -2,8 +2,9 @@ use super::*;
 
 #[gpui_kit::test]
 fn journey(test_cx: &mut TestAppContext) {
-    use crate::updates::{Outcome, Target, Unit, Worker};
+    use crate::updates::{AppImageState, Outcome, Target, Unit, Worker};
     use gpui::InputEvent as _;
+    use sha2::{Digest, Sha256};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     fn ready(cx: &mut TestAppContext, w: AnyWindowHandle, id: &'static str) {
         for _ in 0..60 {
@@ -110,6 +111,9 @@ fn journey(test_cx: &mut TestAppContext) {
     });
     let notices = Arc::new(Mutex::new(Vec::<crate::updates::Notice>::new()));
     let out = notices.clone();
+    let image = dir.path().join("installed.AppImage");
+    let original = "\u{7f}ELF0000AI\u{2}0original";
+    std::fs::write(&image, original).unwrap();
     let worker = Worker::start_fixture(
         crate::updates::path_for(&config.database),
         Some(Arc::new(move |notice| {
@@ -118,6 +122,7 @@ fn journey(test_cx: &mut TestAppContext) {
             notices.push(notice);
         })),
         &base,
+        Some(image.clone()),
     )
     .unwrap();
     let updates = worker.handle();
@@ -382,7 +387,69 @@ fn journey(test_cx: &mut TestAppContext) {
             .all(|p| p.starts_with("GET /releases/latest "))
     );
     checkpoint(&mut cx, w, &evidence.join("11-disabled-saved-updates.json"));
-    click(&mut cx, w, "updates-close");
+    reveal(&mut cx, w, "updates-download-appimage".into());
+    click(&mut cx, w, "updates-download-appimage");
+    click(&mut cx, w, "updates-save");
+    state(&mut cx, &updates, |s| s.settings.download_appimage);
+    let update = "\u{7f}ELF0000AI\u{2}0replacement";
+    let name = "rustleblower-99.0.0-linux-x86_64.AppImage";
+    let sums = format!("{}  {name}\n", hex::encode(Sha256::digest(update)));
+    let release = serde_json::json!({
+        "tag_name": "v99.0.0",
+        "assets": [
+            {"name": name, "size": update.len()},
+            {"name": "SHA256SUMS", "size": sums.len()}
+        ]
+    });
+    hold.store(true, Ordering::Release);
+    responses.lock().unwrap().extend([
+        (200, release.to_string(), false),
+        (200, sums, false),
+        (200, update.into(), true),
+    ]);
+    ready(&mut cx, w, "updates-check");
+    click(&mut cx, w, "updates-check");
+    state(&mut cx, &updates, |s| {
+        matches!(s.appimage, Some(AppImageState::Downloading(_)))
+            && hits.load(Ordering::SeqCst) == 7
+    });
+    let mut asking = daemon.clone();
+    let ask = runtime.spawn(async move {
+        asking
+            .ask_rule(protocol::Connection {
+                process_path: "/owned/appimage-download-permission".into(),
+                ..Default::default()
+            })
+            .await
+            .unwrap()
+            .into_inner()
+    });
+    let popup = permission_window(&mut cx, &view);
+    click(&mut cx, popup, "deny-once");
+    assert_eq!(runtime.block_on(ask).unwrap().action, "deny");
+    assert!(matches!(
+        updates.state().appimage,
+        Some(AppImageState::Downloading(_))
+    ));
+    hold.store(false, Ordering::Release);
+    state(&mut cx, &updates, |s| {
+        matches!(s.appimage, Some(AppImageState::Ready(_)))
+    });
+    wait_window(&mut cx, w, |window, _| {
+        window.try_find("updates-restart-appimage").is_some()
+    });
+    reveal(&mut cx, w, "updates-restart-appimage".into());
+    checkpoint(
+        &mut cx,
+        w,
+        &evidence.join("12-verified-appimage-ready.json"),
+    );
+    assert_eq!(std::fs::read_to_string(&image).unwrap(), original);
+    assert!(!updates.restart_requested());
+    click(&mut cx, w, "updates-restart-appimage");
+    wait_for(&mut cx, |cx| view.read(cx).quitting);
+    assert!(updates.take_restart().is_some());
+    assert_eq!(std::fs::read_to_string(&image).unwrap(), original);
     drop(view);
     shutdown(cx);
     drop(daemon);
@@ -392,5 +459,5 @@ fn journey(test_cx: &mut TestAppContext) {
     drop(handle);
     backend.join();
     assert!(!config.socket.exists());
-    std::fs::write(evidence.join("headless.json"),serde_json::to_vec_pretty(&serde_json::json!({"status":"passed","framework":"gpui-kit","real_gpu":false,"scoped_socket_removed":true,"checkpoints":["01-update-defaults-no-network.json","02-invalid-update-interval.json","03-update-preferences-reopened.json","04-unreported-daemon-no-network.json","05-newer-official-release.json","06-current-release.json","07-release-check-rate-limited.json","08-permission-during-held-release.json","09-cancel-and-notice-window-reuse.json","10-stale-update-save-refused.json","11-disabled-saved-updates.json"],"proof_boundary":"Actual Kit release preferences controls/save/reopen/invalid/stale/reload, owned network HTTP available/current/rate-limit/cancel, no traffic before opt-in/manual check or with unknown daemon version, real permission reply while HTTP held, synthetic Updates callback preserves in-flight job and reuses window, exact persisted preferences. Fixed loopback-only test endpoint; no official network, package download/install, release-page click or host banner/native compositor proof."})).unwrap()).unwrap();
+    std::fs::write(evidence.join("headless.json"),serde_json::to_vec_pretty(&serde_json::json!({"status":"passed","framework":"gpui-kit","real_gpu":false,"scoped_socket_removed":true,"checkpoints":["01-update-defaults-no-network.json","02-invalid-update-interval.json","03-update-preferences-reopened.json","04-unreported-daemon-no-network.json","05-newer-official-release.json","06-current-release.json","07-release-check-rate-limited.json","08-permission-during-held-release.json","09-cancel-and-notice-window-reuse.json","10-stale-update-save-refused.json","11-disabled-saved-updates.json","12-verified-appimage-ready.json"],"proof_boundary":"Kit release preferences, owned HTTP checks and cancellation, real permission reply while HTTP is held, and notification routing. The AppImage flow stages verified loopback fixture bytes. The restart button requests backend shutdown while the original file is intact. Separate process tests cover package replacement and socket rebinding."})).unwrap()).unwrap();
 }

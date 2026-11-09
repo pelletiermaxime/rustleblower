@@ -1,6 +1,7 @@
-//! Opt-in release checks. This worker never installs software or participates in
-//! daemon permission admission. URLs are fixed; settings and payloads are bounded.
+//! Opt-in release checks and AppImage staging, independent of permission admission.
+mod appimage;
 use anyhow::{Result, ensure};
+pub use appimage::{Restart, State as AppImageState, signal_ready};
 use futures_util::StreamExt;
 use semver::Version;
 use serde::{Deserialize, Serialize};
@@ -56,6 +57,8 @@ pub struct Settings {
     pub unit: Unit,
     pub target: Target,
     pub include_prereleases: bool,
+    #[serde(default)]
+    pub download_appimage: bool,
 }
 impl Default for Settings {
     fn default() -> Self {
@@ -66,10 +69,15 @@ impl Default for Settings {
             unit: Unit::Hours,
             target: Target::Application,
             include_prereleases: false,
+            download_appimage: false,
         }
     }
 }
 impl Settings {
+    fn stages_appimage(&self) -> bool {
+        self.download_appimage && self.target == Target::Application && !self.include_prereleases
+    }
+
     pub fn duration(&self) -> Result<Duration> {
         let seconds = u64::from(self.interval) * self.unit.seconds();
         ensure!(
@@ -145,6 +153,7 @@ pub struct State {
     pub checked_at: Option<u64>,
     pub completed_checks: u64,
     pub next_due: Option<u64>,
+    pub appimage: Option<AppImageState>,
 }
 #[derive(Clone, Debug)]
 pub struct Notice {
@@ -158,6 +167,7 @@ pub enum Command {
     CheckNow,
     Cancel,
     Reload,
+    PrepareRestart,
     Save {
         expected_revision: Option<String>,
         settings: Settings,
@@ -173,6 +183,7 @@ pub struct Handle {
     daemon: watch::Sender<Option<TargetVersion>>,
     stop: watch::Sender<bool>,
     state: Arc<Mutex<State>>,
+    restart: Arc<Mutex<Option<Restart>>>,
 }
 impl Handle {
     pub fn request(
@@ -202,6 +213,12 @@ impl Handle {
     pub fn state(&self) -> State {
         self.state.lock().unwrap().clone()
     }
+    pub fn restart_requested(&self) -> bool {
+        self.restart.lock().unwrap().is_some()
+    }
+    pub fn take_restart(&self) -> Option<Restart> {
+        self.restart.lock().unwrap().take()
+    }
     /// Latest-only bounded input; daemon-reported metadata, never a package guess.
     pub fn set_daemon(&self, daemon: Option<TargetVersion>) {
         let daemon = daemon.and_then(TargetVersion::bounded);
@@ -227,10 +244,22 @@ impl Worker {
     /// `path` is a dedicated preferences file, normally `path_for(database)`.
     /// The callback must use a nonblocking bounded mailbox; it runs on this worker.
     pub fn start(path: PathBuf, notify: Option<Notify>) -> Self {
-        Self::start_at(path, notify, Endpoints::Official)
+        Self::start_at(path, notify, Endpoints::Official, || None)
+    }
+    pub(crate) fn start_for_launch(path: PathBuf, notify: Option<Notify>, desktop: bool) -> Self {
+        Self::start_at(path, notify, Endpoints::Official, move || {
+            desktop
+                .then(appimage::Installation::detect)
+                .and_then(Result::ok)
+        })
     }
     #[cfg(all(test, feature = "headless-tests"))]
-    pub(crate) fn start_fixture(path: PathBuf, notify: Option<Notify>, base: &str) -> Result<Self> {
+    pub(crate) fn start_fixture(
+        path: PathBuf,
+        notify: Option<Notify>,
+        base: &str,
+        appimage: Option<PathBuf>,
+    ) -> Result<Self> {
         require_fixture_namespace()?;
         ensure!(base.len() <= 128, "fixture origin too long");
         let url = reqwest::Url::parse(base)?;
@@ -254,9 +283,15 @@ impl Worker {
             path,
             notify,
             Endpoints::Fixture(base.trim_end_matches('/').into()),
+            move || appimage.and_then(|path| appimage::Installation::open(path).ok()),
         ))
     }
-    fn start_at(path: PathBuf, notify: Option<Notify>, endpoints: Endpoints) -> Self {
+    fn start_at(
+        path: PathBuf,
+        notify: Option<Notify>,
+        endpoints: Endpoints,
+        installation: impl FnOnce() -> Option<appimage::Installation> + Send + 'static,
+    ) -> Self {
         let (commands, rx) = mpsc::channel(8);
         let (daemon, daemon_rx) = watch::channel(None);
         let (stop, stop_rx) = watch::channel(false);
@@ -273,12 +308,15 @@ impl Worker {
             checked_at: None,
             completed_checks: 0,
             next_due: None,
+            appimage: None,
         }));
+        let restart = Arc::new(Mutex::new(None));
         let handle = Handle {
             commands,
             daemon,
             stop,
             state: state.clone(),
+            restart: restart.clone(),
         };
         let thread = std::thread::Builder::new()
             .name("release-checks".into())
@@ -297,6 +335,8 @@ impl Worker {
                             daemon_rx,
                             stop_rx,
                             state.clone(),
+                            installation(),
+                            restart,
                         ));
                         // Cancelling HTTP cannot interrupt a running OS DNS
                         // lookup. Bound the join wait; at most two resolver
@@ -467,11 +507,14 @@ struct Release {
     draft: bool,
     #[serde(default)]
     prerelease: bool,
+    #[serde(default)]
+    assets: Vec<appimage::Asset>,
 }
 struct Checked {
     outcome: Outcome,
     latest: Option<String>,
     url: Option<String>,
+    appimage: Option<Result<appimage::Candidate>>,
 }
 impl Checked {
     fn outcome(outcome: Outcome) -> Self {
@@ -479,6 +522,7 @@ impl Checked {
             outcome,
             latest: None,
             url: None,
+            appimage: None,
         }
     }
 }
@@ -487,8 +531,13 @@ async fn check(
     settings: Settings,
     target: TargetVersion,
     endpoints: Endpoints,
+    appimage: bool,
 ) -> Checked {
-    let result = tokio::time::timeout(TIMEOUT, fetch(client, &settings, &target, &endpoints)).await;
+    let result = tokio::time::timeout(
+        TIMEOUT,
+        fetch(client, &settings, &target, &endpoints, appimage),
+    )
+    .await;
     match result {
         Ok(Ok(result)) => result,
         Ok(Err(error))
@@ -509,6 +558,7 @@ async fn fetch(
     settings: &Settings,
     target: &TargetVersion,
     endpoints: &Endpoints,
+    appimage: bool,
 ) -> Result<Checked> {
     let Some(installed) = version(&target.version) else {
         return Ok(Checked::outcome(Outcome::UnknownCurrentVersion));
@@ -560,13 +610,13 @@ async fn fetch(
         .filter(|r| !r.draft && r.tag_name.len() <= 128)
         .filter_map(|r| {
             let v = version(&r.tag_name)?;
-            (settings.include_prereleases || (!r.prerelease && v.pre.is_empty()))
-                .then_some((v, r.tag_name))
+            (settings.include_prereleases || (!r.prerelease && v.pre.is_empty())).then_some((v, r))
         })
         .max_by(|a, b| a.0.cmp_precedence(&b.0));
-    let Some((latest, tag)) = latest else {
+    let Some((latest, release)) = latest else {
         return Ok(Checked::outcome(Outcome::NoComparableRelease));
     };
+    let tag = release.tag_name;
     let repo = match settings.target {
         Target::Application => "pelletiermaxime/rustleblower",
         Target::SelectedDaemon => "evilsocket/opensnitch",
@@ -577,17 +627,23 @@ async fn fetch(
         .map_err(|_| anyhow::anyhow!("invalid release base"))?
         .pop_if_empty()
         .push(&tag);
+    let newer = latest.cmp_precedence(&installed).is_gt();
     Ok(Checked {
-        outcome: if latest.cmp_precedence(&installed).is_gt() {
+        outcome: if newer {
             Outcome::Available
         } else {
             Outcome::Current
         },
         latest: Some(latest.to_string()),
         url: Some(url.to_string()),
+        appimage: (newer && appimage && latest.build.is_empty())
+            .then(|| appimage::Candidate::new(&tag, latest.to_string(), &release.assets)),
     })
 }
 type Inflight = std::pin::Pin<Box<dyn std::future::Future<Output = Checked> + Send>>;
+type Download =
+    std::pin::Pin<Box<dyn std::future::Future<Output = Result<appimage::Pending>> + Send>>;
+#[allow(clippy::too_many_arguments)]
 async fn run(
     path: PathBuf,
     notify: Option<Notify>,
@@ -596,12 +652,18 @@ async fn run(
     mut daemon: watch::Receiver<Option<TargetVersion>>,
     mut stop: watch::Receiver<bool>,
     state: Arc<Mutex<State>>,
+    installation: Option<appimage::Installation>,
+    restart: Arc<Mutex<Option<Restart>>>,
 ) {
     let mut client: Option<reqwest::Client> = None;
     let mut model = state.lock().unwrap().clone();
     load(&path, &mut model);
+    let installation = installation.map(Arc::new);
+    model.appimage = installation.as_ref().map(|_| AppImageState::Idle);
     let mut due = schedule(&model.settings, model.settings.check_on_start);
     let mut inflight: Option<Inflight> = None;
+    let mut download: Option<Download> = None;
+    let mut staged: Option<appimage::Pending> = None;
     let mut context: Option<TargetVersion> = None;
     let mut last_notice: Option<(Target, String, String, String)> = None;
     loop {
@@ -628,16 +690,47 @@ async fn run(
             }
             request = rx.recv() => {
                 let Some(request) = request else { break; };
+                if model.appimage == Some(AppImageState::Restarting) {
+                    let _ = request.reply.send(Err("Rustleblower is preparing to restart".into()));
+                    continue;
+                }
                 let result: Result<()> = match request.command {
                     Command::CheckNow => {
                         if model.busy { Err(anyhow::anyhow!("A release check is already running")) }
                         else { due = Some(tokio::time::Instant::now()); Ok(()) }
                     }
-                    Command::Cancel => { inflight = None; model.busy = false; model.outcome = Outcome::Cancelled; due = schedule(&model.settings, false); Ok(()) }
-                    Command::Reload => { inflight = None; model.busy = false; load(&path, &mut model); due = schedule(&model.settings, false); Ok(()) }
+                    Command::Cancel => {
+                        inflight = None;
+                        if download.take().is_some() { model.appimage = Some(AppImageState::Idle); }
+                        model.busy = false; model.outcome = Outcome::Cancelled; due = schedule(&model.settings, false); Ok(())
+                    }
+                    Command::Reload => {
+                        inflight = None; download = None; staged = None;
+                        model.appimage = installation.as_ref().map(|_| AppImageState::Idle);
+                        model.busy = false; load(&path, &mut model); due = schedule(&model.settings, false); Ok(())
+                    }
+                    Command::PrepareRestart => {
+                        if !model.busy && let (Some(pending), Some(installation)) = (staged.take(), &installation) {
+                            match pending.prepare(installation.clone()) {
+                                Ok(prepared) => {
+                                    model.appimage = Some(AppImageState::Restarting);
+                                    due = None;
+                                    *restart.lock().unwrap() = Some(prepared);
+                                }
+                                Err(error) => model.appimage = Some(AppImageState::Failed(error.to_string())),
+                            }
+                            Ok(())
+                        } else {
+                            Err(anyhow::anyhow!("No verified AppImage is ready to install"))
+                        }
+                    }
                     Command::Save { expected_revision, settings } => {
                         match save(&path, &expected_revision, &settings) {
-                            Ok(revision) => { inflight = None; model.busy = false; model.settings = settings; model.revision = revision; model.warning = None; model.latest = None; model.release_url = None; model.outcome = if model.settings.enabled { Outcome::Idle } else { Outcome::Disabled }; due = schedule(&model.settings, false); Ok(()) }
+                            Ok(revision) => {
+                                inflight = None; download = None; staged = None;
+                                model.appimage = installation.as_ref().map(|_| AppImageState::Idle);
+                                model.busy = false; model.settings = settings; model.revision = revision; model.warning = None; model.latest = None; model.release_url = None; model.outcome = if model.settings.enabled { Outcome::Idle } else { Outcome::Disabled }; due = schedule(&model.settings, false); Ok(())
+                            }
                             Err(error) => Err(error),
                         }
                     }
@@ -659,11 +752,38 @@ async fn run(
                     }
                 }
                 due = schedule(&model.settings, false);
+                if let (Some(candidate), Some(installation)) = (checked.appimage, &installation) {
+                    match candidate {
+                        Ok(candidate) if staged.as_ref().is_none_or(|pending| pending.version != candidate.version) => {
+                            staged = None;
+                            model.appimage = Some(AppImageState::Downloading(candidate.version.clone()));
+                            model.busy = true;
+                            due = None;
+                            let installation = installation.clone();
+                            let endpoints = endpoints.clone();
+                            download = Some(Box::pin(async move { appimage::download(&installation, candidate, endpoints).await }));
+                        }
+                        Err(error) if staged.is_none() => model.appimage = Some(AppImageState::Failed(error.to_string())),
+                        _ => {}
+                    }
+                }
                 if model.outcome == Outcome::RateLimited && let Some(next) = &mut due {
                     *next = (*next).max(tokio::time::Instant::now() + Duration::from_secs(60));
                 }
             }
-            _ = tokio::time::sleep_until(wake), if inflight.is_none() && due.is_some() => {
+            downloaded = async { match download.as_mut() { Some(job) => job.await, None => std::future::pending().await } } => {
+                download = None;
+                model.busy = false;
+                due = schedule(&model.settings, false);
+                match downloaded {
+                    Ok(pending) => {
+                        model.appimage = Some(AppImageState::Ready(pending.version.clone()));
+                        staged = Some(pending);
+                    }
+                    Err(error) => model.appimage = Some(AppImageState::Failed(error.to_string())),
+                }
+            }
+            _ = tokio::time::sleep_until(wake), if inflight.is_none() && download.is_none() && due.is_some() => {
                 due = None;
                 context = model.current.clone();
                 match context.clone().filter(|v| version(&v.version).is_some()) {
@@ -675,7 +795,8 @@ async fn run(
                             }
                         }
                         let client = client.as_ref().unwrap().clone(); let settings = model.settings.clone(); let endpoints = endpoints.clone();
-                        inflight = Some(Box::pin(async move { check(&client, settings, target, endpoints).await }));
+                        let appimage = installation.is_some() && settings.stages_appimage();
+                        inflight = Some(Box::pin(async move { check(&client, settings, target, endpoints, appimage).await }));
                     }
                     None => { model.outcome = Outcome::UnknownCurrentVersion; model.checked_at = Some(now()); model.completed_checks = model.completed_checks.saturating_add(1); due = schedule(&model.settings, false); }
                 }
@@ -733,6 +854,7 @@ fn safe_error(error: &anyhow::Error) -> String {
     if text == "preferences changed on disk; reload before saving"
         || text == "interval must be between one second and 365 days"
         || text == "A release check is already running"
+        || text == "No verified AppImage is ready to install"
     {
         text
     } else {

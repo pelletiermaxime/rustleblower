@@ -75,6 +75,7 @@ pub struct Handle {
     pub history: History,
     pub status: Arc<Mutex<Status>>,
     pub cancel: CancellationToken,
+    server_ready: tokio::sync::watch::Receiver<bool>,
     pub timeout_action: Decision,
     pub prompt_timeout: u64,
     pub preferences: Arc<crate::preferences::Store>,
@@ -92,6 +93,11 @@ pub struct Handle {
 }
 
 impl Handle {
+    pub async fn wait_until_listening(&self) -> bool {
+        let mut ready = self.server_ready.clone();
+        ready.wait_for(|listening| *listening).await.is_ok()
+    }
+
     pub fn connection_count(&self) -> usize {
         crate::transport::MAX_CONNECTIONS - self.connections.available_permits()
     }
@@ -266,9 +272,10 @@ impl Backend {
             desktop_notices.clone(),
         );
         let update_notices = desktop_notices.clone();
-        let updates = crate::updates::Worker::start(
+        let updates = crate::updates::Worker::start_for_launch(
             crate::updates::path_for(&config.database),
             Some(Arc::new(move |notice| update_notices.post_update(&notice))),
+            cfg!(feature = "desktop") && !config.headless,
         );
         let reputation =
             crate::reputation::Worker::start(crate::reputation::path_for(&config.database));
@@ -295,6 +302,7 @@ impl Backend {
         );
         let control = Arc::new(Control::new(history.history.health.catalogues.clone()));
         let live = Arc::new(crate::live::Tasks::new(control.clone()));
+        let (server_ready, readiness) = tokio::sync::watch::channel(false);
         let handle = Handle {
             listener: address,
             connections: Arc::new(Semaphore::new(crate::transport::MAX_CONNECTIONS)),
@@ -307,6 +315,7 @@ impl Backend {
             history: history.history.clone(),
             status: Arc::new(Mutex::new(Status::default())),
             cancel: CancellationToken::new(),
+            server_ready: readiness,
             timeout_action: config.timeout_action,
             prompt_timeout: config.prompt_timeout,
             preferences,
@@ -368,23 +377,17 @@ impl Backend {
                             }
                         });
                         let signal_cancel = server_handle.cancel.clone();
-                        tokio::spawn(async move {
-                            let Ok(mut terminate) = tokio::signal::unix::signal(
-                                tokio::signal::unix::SignalKind::terminate(),
-                            ) else {
-                                return;
-                            };
-                            let Ok(mut interrupt) = tokio::signal::unix::signal(
-                                tokio::signal::unix::SignalKind::interrupt(),
-                            ) else {
-                                return;
-                            };
-                            tokio::select! {
-                                _ = terminate.recv() => signal_cancel.cancel(),
-                                _ = interrupt.recv() => signal_cancel.cancel(),
-                                _ = signal_cancel.cancelled() => {},
-                            }
-                        });
+                        let terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate());
+                        let interrupt = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt());
+                        if let (Ok(mut terminate), Ok(mut interrupt)) = (terminate, interrupt) {
+                            tokio::spawn(async move {
+                                tokio::select! {
+                                    _ = terminate.recv() => signal_cancel.cancel(),
+                                    _ = interrupt.recv() => signal_cancel.cancel(),
+                                    _ = signal_cancel.cancelled() => {},
+                                }
+                            });
+                        }
                         let incoming=listener.incoming()?;
                         let ids = Arc::new(AtomicU64::new(history::now_nanos() as u64));
                         let connection_history = server_handle.history.clone();
@@ -428,6 +431,7 @@ impl Backend {
                                 },
                             })})))
                         });
+                        server_ready.send_replace(true);
                         rpc_server
                             .concurrency_limit_per_connection(64)
                             .max_concurrent_streams(64)

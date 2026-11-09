@@ -9,6 +9,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 fn defaults_intervals_versions_and_distinct_paths_are_explicit() {
     let mut settings = Settings::default();
     assert!(!settings.enabled);
+    assert!(!settings.download_appimage);
     assert!(settings.check_on_start);
     assert_eq!(settings.duration().unwrap(), Duration::from_secs(43200));
     settings.interval = 0;
@@ -46,6 +47,93 @@ fn defaults_intervals_versions_and_distinct_paths_are_explicit() {
         .bounded()
         .is_none()
     );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn appimage_background_check_stages_only_verified_assets_and_waits_for_restart() {
+    let fixture = Fixture::start().await;
+    let dir = tempfile::tempdir().unwrap();
+    let installed = dir.path().join("installed.AppImage");
+    let original = "\u{7f}ELF0000AI\u{2}0old";
+    let replacement = "\u{7f}ELF0000AI\u{2}0updated";
+    let name = "rustleblower-99.0.0-linux-x86_64.AppImage";
+    std::fs::write(&installed, original).unwrap();
+    let sums = format!(
+        "{}  {name}\n",
+        hex::encode(Sha256::digest(replacement.as_bytes()))
+    );
+    let release = serde_json::json!({
+        "tag_name": "v99.0.0",
+        "assets": [
+            {"name": name, "size": replacement.len(), "browser_download_url": "https://invalid.example/other"},
+            {"name": "SHA256SUMS", "size": sums.len()}
+        ]
+    }).to_string();
+    let path = dir.path().join("updates.json");
+    save(
+        &path,
+        &None,
+        &Settings {
+            enabled: true,
+            download_appimage: true,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    fixture.push(Response::json(&release));
+    fixture.push(Response::json(&sums));
+    fixture.push(Response::json("\u{7f}ELF0000AI\u{2}0corrupt"));
+    let source = installed.clone();
+    let worker = Worker::start_at(
+        path,
+        None,
+        Endpoints::Fixture(fixture.endpoint.clone()),
+        move || Some(appimage::Installation::open(source).unwrap()),
+    );
+    let handle = worker.handle();
+    wait(&handle, |state| matches!(&state.appimage, Some(AppImageState::Failed(error)) if error.contains("SHA-256"))).await;
+    assert!(!handle.restart_requested());
+    assert_eq!(std::fs::read_to_string(&installed).unwrap(), original);
+
+    fixture.push(Response::json(&release));
+    fixture.push(Response::json(&sums));
+    fixture.push(Response {
+        delay: Duration::from_millis(300),
+        ..Response::json(replacement)
+    });
+    command(&handle, Command::CheckNow).await;
+    wait(&handle, |state| {
+        state.appimage == Some(AppImageState::Downloading("99.0.0".into()))
+    })
+    .await;
+    assert!(
+        handle
+            .request(Command::PrepareRestart)
+            .await
+            .unwrap()
+            .is_err()
+    );
+    wait(&handle, |state| {
+        state.appimage == Some(AppImageState::Ready("99.0.0".into()))
+    })
+    .await;
+    assert_eq!(std::fs::read_to_string(&installed).unwrap(), original);
+    assert!(!handle.restart_requested());
+    assert_eq!(
+        command(&handle, Command::PrepareRestart).await.appimage,
+        Some(AppImageState::Restarting)
+    );
+    assert!(handle.take_restart().is_some());
+    assert_eq!(std::fs::read_to_string(&installed).unwrap(), original);
+    assert_eq!(
+        &fixture.paths.lock().unwrap()[..3],
+        &[
+            "GET /releases/latest HTTP/1.1",
+            "GET /SHA256SUMS HTTP/1.1",
+            "GET /rustleblower-99.0.0-linux-x86_64.AppImage HTTP/1.1",
+        ]
+    );
+    worker.join();
 }
 
 #[test]
@@ -167,7 +255,12 @@ impl Fixture {
         self.responses.lock().unwrap().push_back(response);
     }
     fn worker(&self, path: PathBuf, notify: Option<Notify>) -> Worker {
-        Worker::start_at(path, notify, Endpoints::Fixture(self.endpoint.clone()))
+        Worker::start_at(
+            path,
+            notify,
+            Endpoints::Fixture(self.endpoint.clone()),
+            || None,
+        )
     }
 }
 impl Drop for Fixture {
@@ -520,6 +613,7 @@ async fn owned_http_total_timeout_and_release_count_bound_are_enforced() {
         settings.clone(),
         target.clone(),
         Endpoints::Fixture(fixture.endpoint.clone()),
+        false,
     )
     .await;
     assert!(matches!(checked.outcome, Outcome::Failed(_)));
@@ -533,6 +627,7 @@ async fn owned_http_total_timeout_and_release_count_bound_are_enforced() {
         settings,
         target,
         Endpoints::Fixture(fixture.endpoint.clone()),
+        false,
     )
     .await;
     assert_eq!(

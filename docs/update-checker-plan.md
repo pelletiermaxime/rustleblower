@@ -41,9 +41,28 @@ drafts, and selects the highest comparable semantic version among that bounded
 page. It does not claim to search all historical releases. Build metadata does
 not make an equal semantic version newer. API-provided release links are ignored;
 the link is constructed from the official repository and validated semantic tag.
-Checks do not download or install software, change the daemon, or update the UI
-package automatically. Custom API URLs, arbitrary actions and credentials are
-outside this native slice.
+
+## AppImage updates
+
+Linux x86-64 AppImage launches expose an opt-in download setting. A successful
+stable Rustleblower check then downloads the exact versioned AppImage and
+`SHA256SUMS` from the official release. The worker bounds both assets, validates
+the AppImage header, and verifies the digest before offering **Restart to
+update**. The AppImage stays at its original path until that action. Daemon
+checks, prerelease checks, Debian packages and archives use the release link.
+
+The worker stages the candidate beside the original AppImage under an
+installation-specific lock. Restart prepares a rollback link, follows the
+normal application shutdown, joins the backend and checks that the Unix socket
+path is free. The old process then replaces the AppImage atomically and starts
+the new process with the original arguments. The new process acknowledges
+startup after acquiring its endpoint and opening the desktop window. On
+startup failure, the supervisor restores the previous AppImage after the owned
+child group exits. If the group fails to exit, the backup remains available.
+A foreign socket blocks relaunch.
+
+The installer and rollback path adapt FerryDock's MIT-licensed updater. See
+[FerryDock MIT notice](../LICENSES/FerryDock-MIT.txt).
 
 Resources are explicit: one worker, one in-flight request, eight queued commands,
 one latest daemon snapshot, 10-second total/5-second connection deadlines, at

@@ -1,5 +1,5 @@
 //! Staged native release-check preferences; network checks use saved settings.
-use crate::updates::{Command, Handle, Settings, State, Target, Unit};
+use crate::updates::{AppImageState, Command, Handle, Settings, State, Target, Unit};
 use gpui::{prelude::*, *};
 #[cfg(feature = "headless-tests")]
 use gpui_kit::TestSupportExt;
@@ -214,10 +214,64 @@ impl View {
             cx,
         );
     }
+
+    fn appimage(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
+        let state = self.saved.appimage.as_ref()?;
+        let restarting = matches!(state, AppImageState::Restarting);
+        let status = match state {
+            AppImageState::Idle => {
+                crate::i18n::tr("Stable Rustleblower releases can be downloaded in the background")
+            }
+            AppImageState::Downloading(version) => crate::i18n::tr_args(
+                "Downloading Rustleblower %{version}…",
+                &[("version", version)],
+            ),
+            AppImageState::Ready(version) => crate::i18n::tr_args(
+                "Rustleblower %{version} is verified and ready to install",
+                &[("version", version)],
+            ),
+            AppImageState::Restarting => {
+                crate::i18n::tr("Restarting to install the verified AppImage…")
+            }
+            AppImageState::Failed(error) => error.clone(),
+        };
+        Some(
+            div()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .child(
+                    Checkbox::new("updates-download-appimage")
+                        .label(crate::i18n::tr(
+                            "Download stable Rustleblower AppImage updates",
+                        ))
+                        .checked(self.draft.download_appimage)
+                        .disabled(self.pending || restarting)
+                        .on_change(cx.listener(|this, enabled: &bool, _, cx| {
+                            this.draft.download_appimage = *enabled;
+                            cx.notify();
+                        })),
+                )
+                .child(div().text_sm().child(crate::i18n::tr(
+                    "Applies to checks for Rustleblower with prereleases turned off.",
+                )))
+                .child(div().text_sm().child(status))
+                .when(matches!(state, AppImageState::Ready(_)), |container| {
+                    container.child(
+                        Button::new("updates-restart-appimage")
+                            .label(crate::i18n::tr("Restart to update"))
+                            .disabled(self.pending || self.saved.busy)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.send(Command::PrepareRestart, false, window, cx)
+                            })),
+                    )
+                }),
+        )
+    }
 }
 impl Render for View {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let busy = self.pending;
+        let busy = self.pending || self.saved.appimage == Some(AppImageState::Restarting);
         let scroll = div()
             .id("updates-scroll")
             .flex_1()
@@ -240,6 +294,7 @@ impl Render for View {
                 .child(div().child(crate::i18n::tr("Check for updates to")))
                 .child(div().h_8().flex_shrink_0().child(Select::new(&self.target).id("updates-target").disabled(busy)))
                 .child(Checkbox::new("updates-prereleases").label(crate::i18n::tr("Include prereleases")).checked(self.draft.include_prereleases).disabled(busy).on_change(cx.listener(|this, value: &bool, _, cx| { this.draft.include_prereleases = *value; cx.notify(); })))
+                .children(self.appimage(cx))
                 .child(div().border_t_1().border_color(cx.theme().border).pt_4().child(crate::i18n::presentation(&self.saved.outcome.label())))
                 .child(div().child(crate::i18n::tr_args("Current: %{arg0}", &[("arg0", &(self.saved.current.as_ref().map(|v| format!("{} — {}", v.node, v.version)).unwrap_or_else(|| "selected daemon version unavailable".into())).to_string())])))
                 .child(div().child(crate::i18n::tr_args("Latest: %{arg0}", &[("arg0", (self.saved.latest.as_deref().unwrap_or("not available")))])))
