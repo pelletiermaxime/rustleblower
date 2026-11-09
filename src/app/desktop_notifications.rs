@@ -178,10 +178,9 @@ async fn connected(
     stop: &CancellationToken,
 ) -> anyhow::Result<()> {
     let proxy = zbus::Proxy::new(connection, DESTINATION, PATH, DESTINATION).await?;
-    // Subscribe before Notify to avoid losing an immediate activation. Proxy subscriptions
-    // resolve the service owner; other session-bus clients cannot spoof an action.
-    let mut invoked = proxy.receive_signal("ActionInvoked").await?;
-    let mut closed = proxy.receive_signal("NotificationClosed").await?;
+    // Subscribe before Notify to catch immediate activations. One owner-filtered
+    // stream keeps dismissals and activations in the order the bus delivered them.
+    let mut signals = proxy.receive_all_signals().await?;
     let mut current = 0;
     let mut current_target = Target::Alerts;
     let mut latest = None;
@@ -196,21 +195,25 @@ async fn connected(
                     mailbox.coalesced.fetch_add(1, Ordering::Relaxed);
                 }
             }
-            signal = invoked.next() => {
+            signal = signals.next() => {
                 let Some(signal) = signal else { break };
-                if let Ok((id, action)) = signal.body().deserialize::<(u32, String)>()
-                    && id != 0 && id == current
-                    && (action == "default" || action == current_target.action())
-                {
-                    let _ = actions.try_send(current_target);
-                    close(&proxy, current).await;
-                    current = 0;
-                }
-            }
-            signal = closed.next() => {
-                let Some(signal) = signal else { break };
-                if let Ok((id, _)) = signal.body().deserialize::<(u32, u32)>() && id == current {
-                    current = 0;
+                match signal.header().member().map(|name| name.as_str()) {
+                    Some("ActionInvoked") => {
+                        if let Ok((id, action)) = signal.body().deserialize::<(u32, String)>()
+                            && id != 0 && id == current
+                            && (action == "default" || action == current_target.action())
+                        {
+                            let _ = actions.try_send(current_target);
+                            close(&proxy, current).await;
+                            current = 0;
+                        }
+                    }
+                    Some("NotificationClosed") => {
+                        if let Ok((id, _)) = signal.body().deserialize::<(u32, u32)>() && id == current {
+                            current = 0;
+                        }
+                    }
+                    _ => {}
                 }
             }
             _ = interval.tick() => {

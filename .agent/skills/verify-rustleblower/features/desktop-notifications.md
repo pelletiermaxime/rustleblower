@@ -30,9 +30,10 @@ Eight queued summaries (512 bytes plus a 128-byte node), one latest pending noti
 one known active notification and one pending open action bound retained state.
 Bursts coalesce into the latest pending notice and replace the known active ID at
 most twice per second. Individual archive records are independent. Queue skips
-and errors have separate desktop feedback in Alerts. Two signal queues inherit
-the connection's 16-message bound. Connection setup has a two-second timeout;
-methods have one second; retries wait two seconds. No desktop I/O runs on GPUI or
+and errors have separate desktop feedback in Alerts. One bounded, owner-filtered
+signal stream preserves the order of dismissals and activations. Connection
+setup times out after two seconds and methods after one second. Retries wait two
+seconds. No desktop I/O runs on GPUI or
 the permission executor. Shutdown cancels the worker and best-effort closes its
 known ID. An uncertain Notify timeout may leave a server-owned notice without a
 known ID; notices request a ten-second lifetime and the desktop controls expiry.
