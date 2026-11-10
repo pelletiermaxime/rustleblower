@@ -203,7 +203,7 @@ async fn connected(
                             && id != 0 && id == current
                             && (action == "default" || action == current_target.action())
                         {
-                            let _ = actions.try_send(current_target);
+                            let _ = actions.try_send(current_target.clone());
                             close(&proxy, current).await;
                             current = 0;
                         }
@@ -535,7 +535,7 @@ mod tests {
             },
             "",
             "owned-host",
-            "timeout",
+            None,
         );
         let missed = received(&mut posts).await;
         assert!(missed.title.contains("Missed permission popup"));
@@ -548,9 +548,9 @@ mod tests {
             missed.actions,
             [
                 "default",
-                "Open application rules",
-                "open-rules",
-                "Open application rules"
+                "Open connection details",
+                "open-connection",
+                "Open connection details"
             ]
         );
         service
@@ -573,10 +573,10 @@ mod tests {
                 PATH,
                 DESTINATION,
                 "ActionInvoked",
-                &(missed.id, "open-rules"),
+                &(missed.id, "open-connection"),
             )
             .await?;
-        assert_eq!(received(&mut action).await, Target::Rules);
+        assert_eq!(received(&mut action).await, Target::MissedPermission(None));
         assert_eq!(received(&mut closed).await, missed.id);
         mailbox.post_update(&crate::updates::Notice {
             target: crate::updates::Target::SelectedDaemon,
@@ -602,7 +602,7 @@ mod tests {
                 PATH,
                 DESTINATION,
                 "ActionInvoked",
-                &(update.id, "open-rules"),
+                &(update.id, "open-connection"),
             )
             .await?;
         assert!(

@@ -144,17 +144,6 @@ fn preference_migration_reopen_validation_and_bounded_mailbox() -> Result<()> {
         missed_popup_template: "<b>%rule.action%</b> & %conn.dsthost%".into(),
         ..Default::default()
     };
-    for reason in [
-        "decision",
-        "overload",
-        "popups-disabled",
-        "shutdown",
-        "reconnected",
-        "disconnected",
-    ] {
-        missed::post_timeout(&mailbox, &prefs, &con, &rule, "", "", reason);
-    }
-    assert!(rx.try_recv().is_err());
     for prefs in [
         Popup {
             desktop_notifications: false,
@@ -165,15 +154,15 @@ fn preference_migration_reopen_validation_and_bounded_mailbox() -> Result<()> {
             ..prefs.clone()
         },
     ] {
-        missed::post_timeout(&mailbox, &prefs, &con, &rule, "", "", "timeout");
+        missed::post_timeout(&mailbox, &prefs, &con, &rule, "", "", None);
     }
     assert!(rx.try_recv().is_err());
     for _ in 0..CAPACITY + 3 {
-        missed::post_timeout(&mailbox, &prefs, &con, &rule, "", "", "timeout");
+        missed::post_timeout(&mailbox, &prefs, &con, &rule, "", "", None);
     }
     assert_eq!(mailbox.skipped.load(Ordering::Relaxed), 3);
     let notice = rx.try_recv().unwrap();
-    assert_eq!(notice.target, Target::Rules);
+    assert_eq!(notice.target, Target::MissedPermission(None));
     assert_eq!(notice.urgency(), 1);
     assert!(notice.title().contains("Missed permission"));
     assert_eq!(
@@ -250,7 +239,20 @@ async fn timeout_uses_actual_captured_fallback_but_current_notice_settings() -> 
         .into_inner();
     assert_eq!((&*rule.action, &*rule.duration), ("reject", "once"));
     let notice = notices.try_recv()?;
-    assert_eq!(notice.target, Target::Rules);
+    let Target::MissedPermission(Some(key)) = notice.target else {
+        panic!("timeout notice did not carry its history key");
+    };
+    let detail = backend
+        .handle
+        .history
+        .timeout_detail(key)
+        .unwrap()
+        .await?
+        .unwrap()
+        .unwrap();
+    assert_eq!(detail.row.reason, "timeout");
+    assert_eq!(detail.row.action, "reject");
+    assert_eq!(detail.matched_rule().unwrap().name, rule.name);
     assert_eq!(notice.summary, "New reject|api.example.test|owned-daemon|");
     assert!(notices.try_recv().is_err());
     let mut ask = daemon.clone();

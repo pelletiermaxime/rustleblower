@@ -47,6 +47,14 @@ pub struct Row {
     pub metadata: metadata::Metadata,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EventKey {
+    node: String,
+    fingerprint: [u8; 32],
+}
+
+pub type DetailReply = oneshot::Receiver<Result<Option<details::Detail>, String>>;
+
 #[derive(Clone, Default)]
 pub struct Query {
     pub node: String,
@@ -329,7 +337,7 @@ enum Command {
         oneshot::Sender<std::result::Result<Page, String>>,
     ),
     Detail(
-        i64,
+        DetailTarget,
         oneshot::Sender<std::result::Result<Option<details::Detail>, String>>,
     ),
     StatisticsReset(
@@ -448,7 +456,9 @@ impl Worker {
                             let _ =
                                 reply.send(query_page(&db, &query).map_err(|e| format!("{e:#}")));
                         }
-                        Command::Detail(id,reply)=>{let _=reply.send(query_detail(&db,id).map_err(|e|format!("{e:#}")));}
+                        Command::Detail(target, reply) => {
+                            let _ = reply.send(target.read(&db).map_err(|error| format!("{error:#}")));
+                        }
                         Command::ReplaceRules { session, node, rules, _permit } => {
                             if !health.catalogues.current(session,&node){continue;}
                             match rules::replace(&mut db, &node, &rules) {
@@ -816,6 +826,16 @@ impl History {
         }
     }
 
+    pub(crate) fn ingest_timeout(&self, node: String, event: Event) -> Option<EventKey> {
+        let batch = self.prepare(vec![event], "timeout")?;
+        let key = EventKey {
+            node: bounded(&node, 128),
+            fingerprint: batch.events[0].fingerprint,
+        };
+        self.enqueue(node, batch);
+        Some(key)
+    }
+
     // Early connection reports share exactly the same budget as queued writes.
     pub(crate) fn prepare(&self, events: Vec<Event>, reason: &str) -> Option<Batch> {
         if events.is_empty() {
@@ -899,12 +919,17 @@ impl History {
         self.tx.try_send(Command::Query(Box::new(query), tx)).ok()?;
         Some(rx)
     }
-    pub fn detail(
-        &self,
-        id: i64,
-    ) -> Option<oneshot::Receiver<std::result::Result<Option<details::Detail>, String>>> {
+    pub fn detail(&self, id: i64) -> Option<DetailReply> {
+        self.request_detail(DetailTarget::Id(id))
+    }
+
+    pub fn timeout_detail(&self, key: EventKey) -> Option<DetailReply> {
+        self.request_detail(DetailTarget::Timeout(key))
+    }
+
+    fn request_detail(&self, target: DetailTarget) -> Option<DetailReply> {
         let (tx, rx) = oneshot::channel();
-        self.tx.try_send(Command::Detail(id, tx)).ok()?;
+        self.tx.try_send(Command::Detail(target, tx)).ok()?;
         Some(rx)
     }
 
@@ -1174,6 +1199,36 @@ pub(crate) fn read_row(record: &rusqlite::Row<'_>) -> rusqlite::Result<Row> {
         node: record.get(8)?,
         metadata,
     })
+}
+
+enum DetailTarget {
+    Id(i64),
+    Timeout(EventKey),
+}
+
+impl DetailTarget {
+    fn read(self, db: &Connection) -> Result<Option<details::Detail>> {
+        use rusqlite::OptionalExtension;
+        let id = match self {
+            Self::Id(id) => id,
+            Self::Timeout(key) => {
+                let lookup =
+                    "SELECT id FROM events WHERE node=? AND fingerprint=? AND reason='timeout'";
+                let id = db
+                    .query_row(
+                        lookup,
+                        params![key.node, key.fingerprint.as_slice()],
+                        |row| row.get(0),
+                    )
+                    .optional()?;
+                let Some(id) = id else {
+                    return Ok(None);
+                };
+                id
+            }
+        };
+        query_detail(db, id)
+    }
 }
 
 fn query_detail(db: &Connection, id: i64) -> Result<Option<details::Detail>> {

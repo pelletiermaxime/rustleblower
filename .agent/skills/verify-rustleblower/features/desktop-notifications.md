@@ -91,5 +91,7 @@ The input encodes newlines as `\n`, tabs as `\t` and backslashes as `\\`;
 malformed escapes refuse the complete save. Only an unanswered AskRule timeout
 posts a notice; the captured fallback rule determines the action, while current
 notification preferences determine immediate mute and template. The shared
-general toggle and bounded mailbox still apply. The action opens Application
-rules and preserves permission handling independently.
+general toggle and bounded mailbox still apply. The action restores History and
+opens the exact connection details without changing its saved sort or filters.
+If the event is unavailable, History explains that. The timeout reply is
+once-only and neither storage nor opening the notification gates it.

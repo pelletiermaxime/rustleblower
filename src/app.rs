@@ -423,18 +423,16 @@ impl Dashboard {
             .as_mut()
             .and_then(|n| n.open_requested())
         {
+            use crate::desktop_notifications::Target;
             match target {
-                crate::desktop_notifications::Target::Updates => self.open_updates(cx),
-                crate::desktop_notifications::Target::RawDownloads => self.open_raw_downloads(cx),
-                target => {
-                    self.screen = match target {
-                        crate::desktop_notifications::Target::Alerts => Screen::Alerts,
-                        crate::desktop_notifications::Target::Subscriptions => {
-                            Screen::Subscriptions
-                        }
-                        crate::desktop_notifications::Target::Rules => Screen::Rules,
-                        crate::desktop_notifications::Target::Updates
-                        | crate::desktop_notifications::Target::RawDownloads => unreachable!(),
+                Target::Updates => self.open_updates(cx),
+                Target::RawDownloads => self.open_raw_downloads(cx),
+                Target::MissedPermission(event) => self.open_missed_permission(event, cx),
+                Target::Alerts | Target::Subscriptions => {
+                    self.screen = if target == Target::Alerts {
+                        Screen::Alerts
+                    } else {
+                        Screen::Subscriptions
                     };
                     self.show_dashboard(cx);
                 }

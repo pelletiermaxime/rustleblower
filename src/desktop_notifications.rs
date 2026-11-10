@@ -8,29 +8,29 @@ use tokio::sync::mpsc;
 
 pub mod missed;
 pub const CAPACITY: usize = 8;
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Target {
     Alerts,
     Subscriptions,
-    Rules,
+    MissedPermission(Option<history::EventKey>),
     Updates,
     RawDownloads,
 }
 impl Target {
-    pub fn action(self) -> &'static str {
+    pub fn action(&self) -> &'static str {
         match self {
             Self::Alerts => "open-alerts",
             Self::Subscriptions => "open-subscriptions",
-            Self::Rules => "open-rules",
+            Self::MissedPermission(_) => "open-connection",
             Self::Updates => "open-updates",
             Self::RawDownloads => "open-raw-downloads",
         }
     }
-    pub fn label(self) -> &'static str {
+    pub fn label(&self) -> &'static str {
         match self {
             Self::Alerts => "Open alerts",
             Self::Subscriptions => "Open subscriptions",
-            Self::Rules => "Open application rules",
+            Self::MissedPermission(_) => "Open connection details",
             Self::Updates => "Open updates",
             Self::RawDownloads => "Open raw downloads",
         }
@@ -49,7 +49,7 @@ impl Notice {
         match self.target {
             Target::Alerts => format!("Rustleblower — {}", alerts::severity(self.severity)),
             Target::Subscriptions => "Rustleblower — List subscriptions".into(),
-            Target::Rules => "Rustleblower — Missed permission popup".into(),
+            Target::MissedPermission(_) => "Rustleblower — Missed permission popup".into(),
             Target::Updates => "Rustleblower — Update available".into(),
             Target::RawDownloads => "Rustleblower — Raw downloads".into(),
         }

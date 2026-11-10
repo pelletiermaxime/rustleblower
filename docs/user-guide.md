@@ -436,15 +436,19 @@ minimized when a tray is unavailable).
 ## Allow an application after a missed prompt
 
 If a permission popup times out, Rustleblower can show a desktop notification
-with the applied action. **Open application rules** takes you to the rules page.
+with the applied action. **Open connection details** shows the exact timed-out
+connection, including the fallback action. The fallback applies once. To find
+older misses, filter History by **Event reason** equal to `timeout`.
 Use the **Missed popups** tab in popup preferences to turn these notices off,
 customize their text or restore the default. The template preview shows the
 expanded message; `\n` inserts a line break, `\t` a tab and `\\` a backslash.
 The general desktop-notification preference also applies.
 
-Open **Application rules**, search for the executable or rule name, and select
-the matching rule. Choose **Allow** to change its action while preserving its
-conditions, duration, priority, and logging settings. To add a rule for an
+To allow the same connection next time, open **Application rule…** or
+**Application + destination…** from its details and save an allow rule.
+If the application already has a rule, find it by executable or name in
+**Application rules**. Choose **Allow** to change its action while preserving
+its conditions, duration, priority, and logging settings. To add a rule for an
 application that has none, choose **New application rule**, enter its absolute
 executable path, and choose **Allow always**. A narrower existing deny rule can
 still take precedence according to the daemon's rule ordering; review matching

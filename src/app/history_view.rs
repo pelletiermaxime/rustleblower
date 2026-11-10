@@ -1,6 +1,6 @@
 mod nodes;
 use super::Dashboard;
-use crate::history::{History, Page, Query};
+use crate::history::{DetailReply, EventKey, History, Page, Query};
 use gpui::{prelude::*, *};
 #[cfg(feature = "headless-tests")]
 use gpui_kit::TestSupportExt;
@@ -36,7 +36,8 @@ pub(super) struct HistoryView {
     table_top: bool,
     selected: Option<i64>,
     marks: Option<Arc<crate::history::selection::Selection>>,
-    detail_loading: bool,
+    detail_task: Option<Task<()>>,
+    detail_error: Option<String>,
     pub(super) detail_window: Option<AnyWindowHandle>,
     actions_tx: std::sync::mpsc::SyncSender<super::connection_details::OpenRule>,
     pub(super) actions_rx: std::sync::mpsc::Receiver<super::connection_details::OpenRule>,
@@ -174,7 +175,8 @@ impl HistoryView {
             table_top: true,
             selected: None,
             marks: None,
-            detail_loading: false,
+            detail_task: None,
+            detail_error: None,
             detail_window: None,
             actions_tx,
             actions_rx,
@@ -433,27 +435,59 @@ impl HistoryView {
 }
 
 impl Dashboard {
-    fn open_history_detail(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.history.detail_loading {
+    fn open_history_detail(&mut self, cx: &mut Context<Self>) {
+        if self.history.detail_task.is_some() {
             return;
         }
         let Some(id) = self.history.selected else {
             return;
         };
-        let Some(reply) = self.backend.history.detail(id) else {
-            self.history.error = Some(crate::i18n::tr(
+        self.load_history_detail(
+            self.backend.history.detail(id),
+            "This event expired from history; select a newer event",
+            cx,
+        );
+    }
+
+    pub(super) fn open_missed_permission(
+        &mut self,
+        event: Option<EventKey>,
+        cx: &mut Context<Self>,
+    ) {
+        self.screen = super::Screen::History;
+        self.show_dashboard(cx);
+        self.history.detail_task = None;
+        if let Some(old) = self.history.detail_window.take() {
+            let _ = old.update(cx, |_, window, _| window.remove_window());
+        }
+        let unavailable = "This missed permission is no longer available in history";
+        if let Some(key) = event {
+            self.load_history_detail(self.backend.history.timeout_detail(key), unavailable, cx);
+        } else {
+            self.history.detail_error = Some(crate::i18n::tr(unavailable));
+        }
+    }
+
+    fn load_history_detail(
+        &mut self,
+        reply: Option<DetailReply>,
+        unavailable: &'static str,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(reply) = reply else {
+            self.history.detail_error = Some(crate::i18n::tr(
                 "History is busy; try opening the details again",
             ));
             cx.notify();
             return;
         };
-        self.history.detail_loading = true;
-        cx.spawn_in(window, async move |this, cx| {
+        self.history.detail_error = None;
+        self.history.detail_task = Some(cx.spawn(async move |this, cx| {
             let result = reply
                 .await
                 .unwrap_or_else(|_| Err("History worker stopped".into()));
-            let _ = this.update_in(cx, |this, _, cx| {
-                this.history.detail_loading = false;
+            let _ = this.update(cx, |this, cx| {
+                this.history.detail_task = None;
                 match result {
                     Ok(Some(detail)) => {
                         if let Some(old) = this.history.detail_window.take() {
@@ -468,24 +502,19 @@ impl Dashboard {
                         ) {
                             Ok(window) => this.history.detail_window = Some(window),
                             Err(error) => {
-                                this.history.error = Some(crate::i18n::tr_args(
+                                this.history.detail_error = Some(crate::i18n::tr_args(
                                     "Cannot open connection details: %{error}",
                                     &[("error", &format!("{:#}", error))],
                                 ))
                             }
                         }
                     }
-                    Ok(None) => {
-                        this.history.error = Some(crate::i18n::tr(
-                            "This event expired from history; select a newer event",
-                        ))
-                    }
-                    Err(error) => this.history.error = Some(error),
+                    Ok(None) => this.history.detail_error = Some(crate::i18n::tr(unavailable)),
+                    Err(error) => this.history.detail_error = Some(error),
                 }
                 cx.notify();
             });
-        })
-        .detach();
+        }));
         cx.notify();
     }
     pub(super) fn render_history(&mut self, cx: &mut Context<Self>) -> Div {
@@ -760,7 +789,7 @@ impl Dashboard {
             .child(div().flex().items_center().gap_2().flex_wrap()
                 .child(div().w(px(220.)).min_w_0().child(Select::new(&self.history.nodes.picker).id("history-node")))
                 .child(div().id("history-search").flex_1().min_w(px(220.)).child(Input::new(&self.history.input)))
-                .child(Button::new("history-details").ghost().label(crate::i18n::tr("Details…")).disabled(self.history.selected.is_none()||self.history.detail_loading).on_click(cx.listener(|this,_,window,cx|this.open_history_detail(window,cx))))
+                .child(Button::new("history-details").ghost().label(crate::i18n::tr("Details…")).disabled(self.history.selected.is_none()||self.history.detail_task.is_some()).on_click(cx.listener(|this,_,_,cx|this.open_history_detail(cx))))
                 .child(Button::new("history-tools").label(crate::i18n::tr("Filters, columns & export…")).on_click(cx.listener(|this,_,_,cx|{
                     if let Some(handle)=this.history.tools_window {let _=handle.update(cx,|_,window,_|window.activate_window());return;}
                     match super::history_tools::open(this.backend.history.clone(),this.history.query.clone(),this.history.marks.clone(),this.history.tools_tx.clone(),cx){Ok(handle)=>this.history.tools_window=Some(handle),Err(error)=>this.history.error=Some(error.to_string())}cx.notify();
@@ -784,6 +813,7 @@ impl Dashboard {
             .child(div().text_xs().text_color(muted).child(if self.history.options.refresh_seconds==0{crate::i18n::tr("Manual refresh. History continues to be recorded.")}else{crate::i18n::tr_args("Display refresh: every %{arg0} second(s)", &[("arg0", &format!("{}", self.history.options.refresh_seconds))])}))
             .when_some(self.backend.history.health.metadata_warning(),|v,e|v.child(super::banner(e,cx)))
             .when_some(self.history.error.clone(),|v,e|v.child(super::banner(e,cx)))
+            .when_some(self.history.detail_error.clone(),|v,e|v.child(super::banner(e,cx)))
             .when_some(self.history.nodes.error.clone(),|v,e|v.child(super::banner(e,cx)))
             .when_some(self.history.memory.error(),|v,e|v.child(super::banner(e,cx)))
             .child(div().flex_1().min_h_0().flex().flex_col().border_1().border_color(border).rounded_lg().overflow_hidden()

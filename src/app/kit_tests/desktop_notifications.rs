@@ -476,6 +476,36 @@ fn journey(test_cx: &mut TestAppContext) {
             .missed_popup_notifications
     );
     click(&mut cx, preferences, "preferences-close");
+    cx.update_window(restored, |_, window, cx| {
+        window.within("main-tabs").click(0usize, cx);
+    })
+    .unwrap();
+    click(&mut cx, restored, "allow");
+    assert_eq!(
+        cx.read_entity(&view, |v, _| v.history.query.action.clone()),
+        "allow"
+    );
+
+    let mut mailbox = backend.handle.desktop_notices.take_receiver().unwrap();
+    let timed_out = runtime.block_on(async {
+        let mut request = tonic::Request::new(protocol::Connection {
+            process_path: "/owned/missed-permission".into(),
+            dst_host: "missed.example".into(),
+            ..Default::default()
+        });
+        request.set_timeout(Duration::from_secs(1));
+        daemon.ask_rule(request).await.unwrap().into_inner()
+    });
+    assert_eq!((&*timed_out.action, &*timed_out.duration), ("deny", "once"));
+    let missed = std::iter::from_fn(|| mailbox.try_recv().ok())
+        .find(|notice| {
+            matches!(
+                notice.target,
+                crate::desktop_notifications::Target::MissedPermission(Some(_))
+            )
+        })
+        .expect("the actual timeout queued an actionable notice");
+
     let mut asking = daemon.clone();
     let request = runtime.spawn(async move {
         asking
@@ -496,23 +526,28 @@ fn journey(test_cx: &mut TestAppContext) {
     })
     .unwrap();
     flush(&mut cx);
-    actions
-        .try_send(crate::desktop_notifications::Target::Rules)
-        .unwrap();
-    flush(&mut cx);
-    let restored = cx.read_entity(&view, |v, _| {
-        assert!(v.screen == crate::app::Screen::Rules);
-        v.main_window.unwrap()
+    actions.try_send(missed.target).unwrap();
+    wait_for(&mut cx, |cx| view.read(cx).history.detail_window.is_some());
+    let detail = cx.read_entity(&view, |v, _| {
+        assert!(v.screen == crate::app::Screen::History);
+        assert!(v.main_window.is_some());
+        assert_eq!(v.history.query.action, "allow");
+        v.history.detail_window.unwrap()
     });
+    click(&mut cx, detail, "connection-copy");
+    let copied = cx.update(|cx| cx.read_from_clipboard().unwrap().text().unwrap());
+    assert!(copied.contains("/owned/missed-permission\n"));
+    assert!(copied.contains("Action: deny\nReason: timeout\n"));
+    assert!(copied.contains(&timed_out.name));
     assert_eq!(
         backend.handle.prompts.snapshot().len(),
         1,
-        "Opening rules from a missed-popup notice never answers another request"
+        "Opening a missed connection never answers another request"
     );
     checkpoint(
         &mut cx,
-        restored,
-        &evidence.join("16-missed-action-restores-rules.json"),
+        detail,
+        &evidence.join("16-missed-action-opens-connection.json"),
     );
     click(&mut cx, popup, "deny-once");
     assert_eq!(runtime.block_on(request).unwrap().action, "deny");
@@ -522,6 +557,6 @@ fn journey(test_cx: &mut TestAppContext) {
     shutdown(cx);
     backend.join();
     assert!(!config.socket.exists());
-    std::fs::write(evidence.join("headless.json"),serde_json::to_vec_pretty(&serde_json::json!({"status":"passed","framework":"gpui-kit","real_gpu":false,"scoped_socket_removed":true,"checkpoints":["01-notifications-muted.json","02-notifications-enabled.json","03-notice-permission-hidden.json","04-alert-action-restored.json","05-subscription-notice-settings.json","06-subscription-notice-stale-refused.json","07-subscription-notice-reloaded.json","08-subscription-notice-disabled.json","09-subscription-action-restored.json","10-missed-default-template.json","11-missed-custom-preview.json","12-missed-template-reopened.json","13-missed-notices-muted.json","14-missed-invalid-escape-refused.json","15-missed-default-reset.json","16-missed-action-restores-rules.json"],"proof_boundary":"Actual general and subscription Kit toggles/save/reopen, custom fields, Back preservation, external metadata stale refusal, reload and Ctrl+Enter, disable-clears-source messages, archive while generally muted, missed-popup tab/default/custom escaped message/save/reopen/mute/invalid-escape refusal/reset, production close boundary and distinct Alerts/Blocklists/Rules callback restoration, two real gRPC permissions answered by GPUI input. Notification callbacks are synthetic; owned HTTP worker, actual missed-timeout RPC and private-bus tests prove production outcomes and transport separately. No host desktop banner proof."})).unwrap()).unwrap();
+    std::fs::write(evidence.join("headless.json"),serde_json::to_vec_pretty(&serde_json::json!({"status":"passed","framework":"gpui-kit","real_gpu":false,"scoped_socket_removed":true,"checkpoints":["01-notifications-muted.json","02-notifications-enabled.json","03-notice-permission-hidden.json","04-alert-action-restored.json","05-subscription-notice-settings.json","06-subscription-notice-stale-refused.json","07-subscription-notice-reloaded.json","08-subscription-notice-disabled.json","09-subscription-action-restored.json","10-missed-default-template.json","11-missed-custom-preview.json","12-missed-template-reopened.json","13-missed-notices-muted.json","14-missed-invalid-escape-refused.json","15-missed-default-reset.json","16-missed-action-opens-connection.json"],"proof_boundary":"Actual general and subscription Kit toggles/save/reopen, custom fields, Back preservation, external metadata stale refusal, reload and Ctrl+Enter, disable-clears-source messages, archive while generally muted, missed-popup tab/default/custom escaped message/save/reopen/mute/invalid-escape refusal/reset, production close boundary and distinct Alerts/Blocklists/connection details callback restoration, two real gRPC permissions answered by GPUI input and one timeout. The timeout's exact notice opens its Deny details while History is filtered to Allowed. Notification callbacks are synthetic; private-bus tests prove transport separately. No host desktop banner proof."})).unwrap()).unwrap();
     std::fs::write(evidence.join("actions.json"),serde_json::to_vec_pretty(&["Disable desktop notifications through actual checkbox and Save; independently reopen preferences and retain SHOW_ALERT","Enable and save; close preferences and retain dashboard through production close boundary","Deliver real AskRule while dashboard absent; notification callback restores Alerts without answering","Deny once through actual GPUI input; require real reply and owned cleanup"]).unwrap()).unwrap();
 }

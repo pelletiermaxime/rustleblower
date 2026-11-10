@@ -1,6 +1,7 @@
 //! Bounded, single-pass expansion of the pinned UI's missed-popup template.
 use super::{Mailbox, Notice, Target};
 use crate::{
+    history::EventKey,
     preferences::Popup,
     protocol::{Connection, Rule},
 };
@@ -159,12 +160,9 @@ pub fn post_timeout(
     rule: &Rule,
     node: &str,
     hostname: &str,
-    reason: &str,
+    event: Option<EventKey>,
 ) {
-    if reason != "timeout"
-        || !preferences.desktop_notifications
-        || !preferences.missed_popup_notifications
-    {
+    if !preferences.desktop_notifications || !preferences.missed_popup_notifications {
         return;
     }
     let name = if connection.process_path.is_empty() {
@@ -183,7 +181,7 @@ pub fn post_timeout(
         crate::history::bounded(&connection.process_path, 128)
     };
     mailbox.enqueue(Notice {
-        target: Target::Rules,
+        target: Target::MissedPermission(event),
         node: crate::history::bounded(
             &name
                 .chars()

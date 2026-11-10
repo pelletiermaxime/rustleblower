@@ -918,6 +918,17 @@ impl Ui for Service {
             .map(|rule| *rule)
             .unwrap_or_else(|| prompts::once_rule(&safe, decision, id));
         if reason == "timeout" {
+            // Enqueue the history record before publishing its lookup key. A
+            // notification click can then query the same FIFO worker immediately.
+            let event = self.handle.history.ingest_timeout(
+                node,
+                protocol::Event {
+                    unixnano: history::now_nanos(),
+                    connection: Some(safe.clone()),
+                    rule: Some(rule.clone()),
+                    time: String::new(),
+                },
+            );
             // Notification preferences apply immediately; the rule/fallback
             // above remains captured. This bounded snapshot has no I/O.
             let notice_preferences = self.handle.preferences.snapshot();
@@ -928,8 +939,9 @@ impl Ui for Service {
                 &rule,
                 &node_text,
                 &hostname,
-                reason,
+                event,
             );
+            return Ok(Response::new(rule));
         }
         if reason == "decision"
             && rule.duration != "once"
